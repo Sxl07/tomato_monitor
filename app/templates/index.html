@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="card">
+    <h2>Configuración de prueba</h2>
+    <p class="muted">
+        Esta versión ya ejecuta el pipeline candidato actual desde la mini app.
+    </p>
+
+    {% if message %}
+    <div class="alert success">
+        {{ message }}
+    </div>
+    {% endif %}
+
+    {% if error_message %}
+    <div class="alert error">
+        {{ error_message }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/pipeline/run" class="form-grid">
+        <div class="field">
+            <label for="strategy_name">Nombre de estrategia</label>
+            <input type="text" id="strategy_name" name="strategy_name" value="{{ default_form.strategy_name }}" required>
+        </div>
+
+        <div class="field">
+            <label for="video_index">Índice de video</label>
+            <input type="number" id="video_index" name="video_index" value="{{ default_form.video_index }}" min="0" required>
+        </div>
+
+        <div class="field">
+            <label for="min_frames_between_detections">Min frames entre detecciones</label>
+            <input type="number" id="min_frames_between_detections" name="min_frames_between_detections" value="{{ default_form.min_frames_between_detections }}" min="1" required>
+        </div>
+
+        <div class="field">
+            <label for="max_frames_without_detection">Max frames sin detección</label>
+            <input type="number" id="max_frames_without_detection" name="max_frames_without_detection" value="{{ default_form.max_frames_without_detection }}" min="1" required>
+        </div>
+
+        <div class="field field-full">
+            <label for="max_frames_to_process">Max frames a procesar</label>
+            <input type="text" id="max_frames_to_process" name="max_frames_to_process" value="{{ default_form.max_frames_to_process }}" placeholder="Vacío = procesar todo el video">
+        </div>
+
+        <div class="checks field-full">
+            <label class="check">
+                <input type="checkbox" name="use_scene_gate" {% if default_form.use_scene_gate %}checked{% endif %}>
+                Usar scene gate
+            </label>
+
+            <label class="check">
+                <input type="checkbox" name="save_detection_snapshots" {% if default_form.save_detection_snapshots %}checked{% endif %}>
+                Guardar snapshots
+            </label>
+
+            <label class="check">
+                <input type="checkbox" name="save_detection_crops" {% if default_form.save_detection_crops %}checked{% endif %}>
+                Guardar crops
+            </label>
+
+            <label class="check">
+                <input type="checkbox" name="save_annotated_video" {% if default_form.save_annotated_video %}checked{% endif %}>
+                Guardar video anotado
+            </label>
+        </div>
+
+        <div class="actions field-full">
+            <button type="submit" class="btn-primary">Ejecutar pipeline</button>
+        </div>
+    </form>
+</section>
+
+{% if last_session_name %}
+<section class="card">
+    <h2>Última sesión ejecutada</h2>
+    <p><strong>{{ last_session_name }}</strong></p>
+    <p>
+        <a class="link-button" href="/sessions/{{ last_session_name }}">Abrir detalle de la sesión</a>
+    </p>
+</section>
+{% endif %}
+
+{% if summary %}
+<section class="card">
+    <h2>Resumen de métricas</h2>
+    <div class="summary-grid">
+        {% for key, value in summary.items() %}
+        <div class="summary-item">
+            <span class="summary-key">{{ key }}</span>
+            <span class="summary-value">{{ value }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{% if generated_paths %}
+<section class="card">
+    <h2>Archivos generados</h2>
+    <ul class="path-list">
+        {% for key, value in generated_paths.items() %}
+        <li>
+            <strong>{{ key }}:</strong>
+            <span class="path-value">{{ value }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
+
+<section class="card">
+    <h2>Sesiones recientes</h2>
+
+    {% if sessions %}
+        <ul class="session-list">
+            {% for session in sessions %}
+                <li>
+                    <a class="session-link" href="/sessions/{{ session }}">{{ session }}</a>
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p class="muted">Todavía no se encontraron sesiones en outputs/experiments.</p>
+    {% endif %}
+</section>
+{% endblock %}

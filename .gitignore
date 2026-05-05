@@ -1,0 +1,22 @@
+# Entornos virtuales
+.venv/
+venv/
+ENV/
+env/
+bin/
+lib/
+include/
+share/
+
+# Python cache y compilados
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribución / Empaquetado
+dist/
+build/
+*.egg-info/
+
+# Variables de entorno (¡Seguridad!)
+.env

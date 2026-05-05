@@ -1,0 +1,2 @@
+strategy_name,video_name,total_frames,detector_runs,detector_skips,detector_run_ratio,avg_total_frame_sec,effective_fps,avg_detector_frame_sec,avg_skipped_frame_sec,avg_propagation_sec,unique_tracks_detected,total_health_executions,total_maturity_executions
+full_detection,video_02.mp4,163,163,0,1.0,5.8203224579999295,0.171811786583322,5.8203224579999295,0.0,0.0,29,28,26
