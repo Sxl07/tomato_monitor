@@ -9,7 +9,7 @@ class GetSessionDetailUseCase:
         self.artifact_repository = artifact_repository
 
     def execute(self, session_name: str, summary_dto) -> SessionDetailDTO:
-        session_dirs = self.artifact_repository.ensure_session_dirs(session_name)
+        session_dirs = self.artifact_repository.get_session_dirs(session_name)
 
         return SessionDetailDTO(
             session_name=session_name,

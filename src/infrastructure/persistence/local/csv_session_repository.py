@@ -52,6 +52,11 @@ class CsvSessionRepository(SessionRepository):
         sessions.sort(key=lambda s: s.started_at, reverse=True)
         return sessions[:limit]
 
+    def delete(self, session_id: str) -> None:
+        rows = self._read_all_rows()
+        filtered = [row for row in rows if row["session_id"] != session_id]
+        self._write_rows(filtered)
+
     def _read_all_rows(self) -> list[dict]:
         if not self.csv_path.exists():
             return []

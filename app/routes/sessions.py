@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.dependencies import get_artifact_repository, get_session_service
@@ -15,7 +15,7 @@ templates = Jinja2Templates(directory="app/templates")
 
 def _safe_snapshot_path(session_name: str, filename: str) -> Path:
     artifact_repository = get_artifact_repository()
-    session_dirs = artifact_repository.ensure_session_dirs(session_name)
+    session_dirs = artifact_repository.get_session_dirs(session_name)
 
     snapshot_path = (session_dirs["snapshot_annotated_dir"] / filename).resolve()
     expected_parent = session_dirs["snapshot_annotated_dir"].resolve()
@@ -43,7 +43,11 @@ def list_sessions():
 @router.get("/{session_name}")
 def session_detail(request: Request, session_name: str):
     session_service = get_session_service()
-    detail = session_service.get_session_detail(session_name)
+
+    try:
+        detail = session_service.get_session_detail(session_name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Sesión no encontrada.")
 
     return templates.TemplateResponse(
         request,
@@ -61,6 +65,13 @@ def session_detail(request: Request, session_name: str):
             "per_detection_csv": detail.per_detection_csv,
         },
     )
+
+
+@router.post("/{session_name}/delete")
+def delete_session(session_name: str):
+    session_service = get_session_service()
+    session_service.delete_session(session_name)
+    return RedirectResponse(url="/", status_code=303)
 
 
 @router.get("/{session_name}/snapshot/{filename}")

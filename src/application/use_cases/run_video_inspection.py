@@ -52,7 +52,7 @@ class RunVideoInspectionUseCase:
 
         summary = InspectionSummaryDTO.from_dict(summary_dict)
 
-        session_dir = self.artifact_repository.ensure_session_dirs(session_name)
+        session_dir = self.artifact_repository.create_session_dirs(session_name)
 
         generated_paths = {
             "session_dir": str(session_dir["session_dir"]),

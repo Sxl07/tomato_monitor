@@ -7,6 +7,9 @@
     <p>
         <a class="link-button" href="/">← Volver al inicio</a>
     </p>
+    <form method="post" action="/sessions/{{ session_name }}/delete" style="margin-top: 12px;">
+        <button type="submit" class="btn-danger">Eliminar sesión</button>
+    </form>
 </section>
 
 {% if summary %}

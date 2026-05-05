@@ -38,10 +38,14 @@ class SessionService:
         return InspectionSummaryDTO.from_dict(rows[0])
 
     def get_session_detail(self, session_name: str) -> SessionDetailDTO:
-        session_dirs = self.artifact_repository.ensure_session_dirs(session_name)
+        session_dirs = self.artifact_repository.get_session_dirs(session_name)
         summary = self.read_summary_csv(session_dirs["reports_dir"] / "summary.csv")
 
         return self.get_session_detail_use_case.execute(
             session_name=session_name,
             summary_dto=summary,
         )
+
+    def delete_session(self, session_name: str) -> None:
+        self.artifact_repository.delete_session_artifacts(session_name)
+        self.session_repository.delete(session_name)
