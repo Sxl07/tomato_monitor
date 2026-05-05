@@ -106,7 +106,7 @@ tomato_monitor/
 │   ├── routes/
 │   │   ├── ui.py                   # Ruta principal (GET /)
 │   │   ├── pipeline.py             # Ruta para ejecutar pipeline (POST /pipeline/run)
-│   │   └── sessions.py             # Rutas de sesiones (CRUD + snapshots)
+│   │   └── sessions.py             # Rutas de sesiones (consulta, eliminación + snapshots)
 │   ├── templates/
 │   │   ├── base.html               # Template base con header
 │   │   ├── index.html              # Página principal con formulario
@@ -157,7 +157,7 @@ tomato_monitor/
 │       │   │   ├── csv_inspection_repository.py
 │       │   │   ├── file_artifact_repository.py
 │       │   │   └── file_utils.py
-│       │   └── cloud/             # Persistencia cloud (preparado)
+│       │   └── cloud/             # Persistencia cloud futura (estructura preparada, no activa aún)
 │       │       └── postgres_session_repository.py
 │       └── vision/                # Motor de visión por computador
 │           ├── detectron_detector.py       # Detector con Detectron2
@@ -184,8 +184,10 @@ tomato_monitor/
 │   └── smoke_test_maturity.py
 │
 ├── models/                         # Modelos entrenados (.pth)
-│   └── health_model/
-│       └── model.pth               # ResNet-18 para clasificación de sanidad
+│   ├── health_model/
+│   │   └── model.pth               # ResNet-18 para clasificación de sanidad
+│   └── modelo_d2/
+│       └── model.pth               # Modelo Detectron2 para detección de tomates
 │
 ├── data/                           # Datos de entrada
 │   ├── images/                     # Imágenes de referencia
@@ -194,7 +196,7 @@ tomato_monitor/
 ├── outputs/                        # Resultados generados
 │   ├── experiments/                # Sesiones de experimentos
 │   │   └── <session_name>/
-│   │       ├── reports_*/          # CSVs de reportes
+│   │       ├── reports/            # CSVs de reportes
 │   │       ├── detection_snapshots/
 │   │       │   ├── raw_frames/
 │   │       │   ├── annotated_frames/
@@ -651,9 +653,7 @@ sequenceDiagram
 | **Templates** | Jinja2 | Renderizado de vistas HTML |
 | **Deep Learning** | PyTorch + TorchVision | Modelo ResNet-18 para clasificación de sanidad |
 | **Detección de Objetos** | Detectron2 | RetinaNet R-50-FPN para detección de tomates |
-| **Visión por Computador** | OpenCV | Procesamiento de video, Optical Flow, GrabCut, ORB, histogramas |
-| **Datos** | Pandas + NumPy | Manipulación de datos numéricos y reportes |
-| **Visualización** | Matplotlib | Gráficos y visualizaciones (scripts de análisis) |
+| **Visión por Computador** | OpenCV + NumPy | Procesamiento de video, Optical Flow, GrabCut, ORB, histogramas y operaciones numéricas |
 | **Persistencia** | CSV + Sistema de archivos | Almacenamiento de sesiones, reportes y artefactos |
 | **Lenguaje** | Python 3.10+ | Todo el proyecto |
 
@@ -704,6 +704,9 @@ models/modelo_d2/model.pth       # Modelo Detectron2 de detección (no incluido 
 ```
 data/videos/video_02.mp4         # Video(s) de cultivo de tomate cherry
 ```
+### Nota sobre dispositivo de ejecución
+
+En el estado actual del proyecto, la ejecución se recomienda en **CPU** para mantener estabilidad y coherencia con el entorno objetivo en **Raspberry Pi**. Aunque la infraestructura permite configuración de dispositivo, la validación principal del sistema se está realizando en CPU.
 
 ---
 
