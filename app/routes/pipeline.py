@@ -1,43 +1,17 @@
 from __future__ import annotations
 
-from pathlib import Path
+from datetime import datetime
 
 from fastapi import APIRouter, Form, Request
 from fastapi.templating import Jinja2Templates
 
-from config.settings import OUTPUTS_DIR
-from scripts.run_pipeline_video import run_video_pipeline
+from app.dependencies import get_pipeline_service, get_session_repository, get_session_service
+from src.application.dto.inspection_request import InspectionRequest
+from src.domain.entities.inspection_session import InspectionSession
 
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
-
-
-def _load_recent_sessions(limit: int = 10) -> list[str]:
-    experiments_dir = OUTPUTS_DIR / "experiments"
-
-    sessions = []
-    if experiments_dir.exists():
-        for path in sorted(experiments_dir.iterdir(), key=lambda p: p.name.lower(), reverse=True):
-            if path.is_dir():
-                sessions.append(path.name)
-
-    return sessions[:limit]
-
-
-def _build_session_name(
-    strategy_name: str,
-    min_frames_between_detections: int,
-    max_frames_without_detection: int,
-    use_scene_gate: bool,
-) -> str:
-    return (
-        f"{strategy_name}"
-        f"_min{min_frames_between_detections}"
-        f"_max{max_frames_without_detection}"
-        f"_gate{int(use_scene_gate)}"
-        f"_flow1"
-    )
 
 
 @router.post("/run")
@@ -53,6 +27,8 @@ def run_pipeline(
     save_detection_crops: bool = Form(False),
     save_annotated_video: bool = Form(False),
 ):
+    session_service = get_session_service()
+
     submitted = {
         "strategy_name": strategy_name,
         "video_index": video_index,
@@ -70,66 +46,61 @@ def run_pipeline(
         if str(max_frames_to_process).strip():
             parsed_max_frames = int(str(max_frames_to_process).strip())
 
-        session_name = _build_session_name(
+        inspection_request = InspectionRequest(
             strategy_name=strategy_name,
+            video_index=video_index,
             min_frames_between_detections=min_frames_between_detections,
             max_frames_without_detection=max_frames_without_detection,
             use_scene_gate=use_scene_gate,
-        )
-
-        summary = run_video_pipeline(
-            strategy_name=session_name,
-            enable_sparse_detection=True,
-            enable_flow_propagation=True,
-            use_scene_gate=use_scene_gate,
-            min_frames_between_detections=min_frames_between_detections,
-            max_frames_without_detection=max_frames_without_detection,
-            force_detect_on_first_frame=True,
+            max_frames_to_process=parsed_max_frames,
             save_detection_snapshots=save_detection_snapshots,
             save_detection_crops=save_detection_crops,
             save_annotated_video=save_annotated_video,
-            video_index=video_index,
-            max_frames_to_process=parsed_max_frames,
-            verbose=True,
         )
 
-        session_dir = OUTPUTS_DIR / "experiments" / session_name
-        reports_dir = session_dir / "reports"
-        annotated_dir = session_dir / "annotated_video"
+        pipeline_service = get_pipeline_service()
+        result = pipeline_service.run_video_inspection(inspection_request)
 
-        generated_paths = {
-            "session_dir": str(session_dir),
-            "reports_dir": str(reports_dir),
-            "summary_csv": str(reports_dir / "summary.csv"),
-            "per_frame_csv": str(reports_dir / "per_frame.csv"),
-            "per_detection_csv": str(reports_dir / "per_detection.csv"),
-            "annotated_dir": str(annotated_dir),
-        }
+        session_repo = get_session_repository()
+        session = InspectionSession(
+            session_id=result.session_name,
+            strategy_name=strategy_name,
+            source_video=f"video_index:{video_index}",
+            started_at=datetime.utcnow(),
+            status="completed",
+            completed_at=datetime.utcnow(),
+            parameters=inspection_request.__dict__,
+        )
+        session_repo.save(session)
 
-        message = "Pipeline ejecutado correctamente."
+        recent_sessions = session_service.list_recent_sessions(limit=10)
+        session_names = [s.session_id for s in recent_sessions]
 
         return templates.TemplateResponse(
             request,
             "index.html",
             {
                 "title": "Tomato Monitor",
-                "sessions": _load_recent_sessions(),
+                "sessions": session_names,
                 "default_form": submitted,
-                "message": message,
+                "message": "Pipeline ejecutado correctamente.",
                 "error_message": None,
-                "summary": summary,
-                "generated_paths": generated_paths,
-                "last_session_name": session_name,
+                "summary": result.summary.to_dict(),
+                "generated_paths": result.generated_paths,
+                "last_session_name": result.session_name,
             },
         )
 
     except Exception as exc:
+        recent_sessions = session_service.list_recent_sessions(limit=10)
+        session_names = [s.session_id for s in recent_sessions]
+
         return templates.TemplateResponse(
             request,
             "index.html",
             {
                 "title": "Tomato Monitor",
-                "sessions": _load_recent_sessions(),
+                "sessions": session_names,
                 "default_form": submitted,
                 "message": None,
                 "error_message": f"{type(exc).__name__}: {exc}",

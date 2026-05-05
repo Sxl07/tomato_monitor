@@ -3,23 +3,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.templating import Jinja2Templates
 
-from config.settings import OUTPUTS_DIR
+from app.dependencies import get_session_service
 
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
-
-
-def _load_recent_sessions(limit: int = 10) -> list[str]:
-    experiments_dir = OUTPUTS_DIR / "experiments"
-
-    sessions = []
-    if experiments_dir.exists():
-        for path in sorted(experiments_dir.iterdir(), key=lambda p: p.name.lower(), reverse=True):
-            if path.is_dir():
-                sessions.append(path.name)
-
-    return sessions[:limit]
 
 
 def _default_form() -> dict:
@@ -38,14 +26,16 @@ def _default_form() -> dict:
 
 @router.get("/")
 def home(request: Request):
-    sessions = _load_recent_sessions()
+    session_service = get_session_service()
+    recent_sessions = session_service.list_recent_sessions(limit=10)
+    session_names = [session.session_id for session in recent_sessions]
 
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "title": "Tomato Monitor",
-            "sessions": sessions,
+            "sessions": session_names,
             "default_form": _default_form(),
             "message": None,
             "error_message": None,
