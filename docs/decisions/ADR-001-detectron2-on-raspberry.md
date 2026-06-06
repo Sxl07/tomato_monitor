@@ -61,12 +61,41 @@ Esta forma de instalación compila Detectron2 directamente desde el código fuen
 
 ## Evidencia
 
+### Validaciones funcionales
+
 - Detectron2 instalado exitosamente con `--no-build-isolation` en Raspberry Pi OS 64-bit.
-- Pipeline completo ejecuta (detección, crops, sanidad, madurez, snapshots, video anotado).
-- RAM máxima observada durante pipeline completo: ~2.1 GB.
-- CPU con carga alta sostenida durante inferencia.
-- Temperatura con aumento significativo; refrigeración activa obligatoria para pruebas extendidas.
-- FPS reales del pipeline completo en RPi: **pendiente de medición formal** (ver `docs/benchmarks/raspberry-baseline.md`).
+- Pipeline completo ejecuta sin errores (detección, crops, sanidad, madurez, snapshots, video anotado).
+- No se registraron fallos de modelos ni interrupciones durante los experimentos.
+
+### Métricas cuantitativas (experimentos comparativos)
+
+Datos medidos en Raspberry Pi 5 (8 GB RAM, ARM64, CPU only) con refrigeración activa, procesando `data/videos/video_02.mp4` (163 frames). Fuente: `outputs/experiments/comparison_summary.csv`.
+
+| Métrica | Valor medido |
+|---|---|
+| Tiempo de inferencia del detector por frame | 5.32–6.42 s (según estrategia/run) |
+| FPS efectivo — `full_detection` (detector en cada frame) | 0.17 FPS (5.82 s promedio/frame) |
+| FPS efectivo — estrategias sparse con Scene Gate | 2.01–2.10 FPS (mejora 10–12×) |
+| Reducción de invocaciones del detector (Scene Gate) | ~92% (13 de 163 frames) |
+| Overhead de Optical Flow por frame propagado | ~0.026 s |
+| RAM pico durante pipeline completo | ~2.1 GB de 8 GB disponibles |
+| Tracks únicos — `full_detection` | 29 |
+| Tracks únicos — estrategias sparse | 16 (~45% de pérdida de cobertura) |
+
+### Observaciones complementarias
+
+- La RAM no constituye un factor limitante; el cuello de botella dominante es la latencia de inferencia del detector en CPU.
+- La refrigeración activa es obligatoria para ejecuciones sostenidas. Los valores de temperatura no fueron registrados formalmente en estos experimentos comparativos.
+- Existe variación en el tiempo de inferencia entre ejecuciones (~1.1 s), posiblemente atribuible a throttling térmico del SoC o a diferencias en la complejidad visual de los frames seleccionados por el Scene Gate.
+
+### Pendiente
+
+- Los benchmarks formales individuales (`bench_model_load.py`, `bench_single_inference.py`, `bench_full_video.py`) con métricas térmicas detalladas permanecen pendientes de ejecución.
+
+### Fuentes
+
+- `docs/benchmarks/raspberry-baseline.md` — Sección 9: Observaciones y conclusiones.
+- `outputs/experiments/comparison_summary.csv` — Datos crudos de los experimentos comparativos.
 
 ---
 

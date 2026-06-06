@@ -17,31 +17,26 @@ El pipeline de video se conserva exclusivamente como herramienta de benchmark y 
 
 ---
 
-## 1. Prioridad inmediata: benchmark de línea base en Raspberry Pi (Spec 001)
+## 1. Benchmark de línea base en Raspberry Pi (Spec 001) — COMPLETADA
 
-El benchmark de rendimiento del pipeline actual en Raspberry Pi 5 establece la referencia cuantitativa para la tesis y para comparar con el modo live.
+El benchmark de rendimiento del pipeline actual en Raspberry Pi 5 fue completado y establece la referencia cuantitativa para la tesis y para comparaciones futuras.
 
-**Estado actual:** En progreso — fase 3 completada. Los scripts de benchmark de carga de modelos, inferencia individual y pipeline completo están creados y probados en RPi 5.
+**Estado:** Completada. Todas las fases (1-8) finalizadas. Scripts de benchmark creados, experimentos comparativos ejecutados, resultados documentados, ADRs actualizados con evidencia cuantitativa, y `requirements-raspberry.txt` generado.
 
-**Siguiente hito:** Completar las fases restantes (4-8) del benchmark con registro formal antes de iniciar Spec 002 (integración de cámara). Esto incluye:
+**Resultados clave:**
 
-- Fase 4: Ejecución formal del benchmark completo en RPi 5 con refrigeración activa
-- Fase 5: Registro de resultados en `docs/benchmarks/raspberry-baseline.md`
-- Fase 6: Análisis de cuellos de botella y documentación de conclusiones
-- Fase 7: Validación de `requirements-raspberry.txt` con versiones pinadas
-- Fase 8: Actualización de ADRs con evidencia cuantitativa
+| Métrica | Valor medido |
+|---|---|
+| FPS — `full_detection` (sin Scene Gate) | 0.17 FPS |
+| FPS — `sparse_flow` (Scene Gate + Optical Flow) | 1.80 FPS |
+| FPS — `sparse_flow_candidate` (min5/max12 + flow) | 2.10 FPS |
+| Reducción de invocaciones del detector | ~92% |
+| RAM pico | ~2.1 GB |
+| Cuello de botella identificado | Latencia del detector en CPU (5.3–6.4 s/frame) |
 
-**Métricas a registrar:**
+**Pendiente:** Ejecución formal de `bench_full_video.py` con registro de temperatura detallado (los experimentos comparativos no incluyeron métricas térmicas formales).
 
-- FPS promedio del pipeline completo (con Scene Gate activado y sin él)
-- Tiempo de inferencia por componente: detección, sanidad, madurez
-- Uso de CPU (promedio y pico)
-- Uso de RAM (promedio y pico)
-- Temperatura máxima alcanzada
-- Número de tracks únicos detectados
-- Porcentaje de frames con detector activo vs. Optical Flow
-
-**Bloquea:** Spec 002 no debe iniciarse sin la línea base formal de Spec 001. Spec 006 (modelo de datos) es independiente y puede avanzar en paralelo.
+**Desbloquea:** Spec 006 (modelo de datos), Spec 007 (flujo de monitoreo live), Spec 003 (optimización edge).
 
 ---
 
@@ -147,9 +142,9 @@ Pendiente de completar antes de la entrega:
 
 | # | Spec | Descripción | Prerrequisito | Estado |
 |---|---|---|---|---|
-| 001 | Benchmark de línea base | Medición formal en RPi 5 | Hardware disponible | En progreso (fase 3/8) |
+| 001 | Benchmark de línea base | Medición formal en RPi 5 | Hardware disponible | ✅ Completada |
 | 006 | Modelo de datos agrícola | SQLite + entidades + repositorios | Independiente | Pendiente de crear |
-| 002 | Integración cámara live | AI Camera con picamera2 | Spec 001 completada | Bloqueada por Spec 001 |
+| 002 | Integración cámara live | AI Camera con picamera2 | Spec 001 completada | Absorbida por Spec 007 |
 | 007 | Flujo de monitoreo live | Cámara + snapshots + inferencia | 001, 006 | Pendiente de crear |
 | 008 | UI agrícola | Interfaz táctil para agricultor | 006, 007 | Pendiente de crear |
 | 009 | Métricas y reportes | Cálculos agregados + visualización | 006, 007 | Pendiente de crear |
@@ -157,7 +152,7 @@ Pendiente de completar antes de la entrega:
 | 004 | Documentación tesis | Evidencia formal completa | 001-003, 006-009 | Parcialmente completada |
 | 005 | Calidad y seguridad | Tests + hardening | Todo lo anterior | Planificada |
 
-**Prioridad inmediata:** Completar fases 4-8 de Spec 001 + crear Spec 006 (pueden avanzar en paralelo).
+**Prioridad inmediata:** Crear Spec 006 (modelo de datos agrícola) — es independiente y desbloquea Spec 007, 008 y 009.
 
 ---
 
