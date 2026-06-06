@@ -72,12 +72,12 @@ pip install --no-build-isolation 'git+https://github.com/facebookresearch/detect
 | Campo | Valor |
 |---|---|
 | Nombre de la prueba | Raspberry Pi 5 Baseline Benchmark |
-| Fecha | ⏳ Pendiente de ejecución en RPi 5 |
+| Fecha | Experimentos comparativos ejecutados; benchmarks formales pendientes |
 | Dispositivo | Raspberry Pi 5 (8 GB RAM) |
 | Sistema operativo | Raspberry Pi OS / Debian Bookworm 64-bit |
-| Versión de Python | ⏳ Pendiente de ejecución en RPi 5 |
-| Git commit | ⏳ Pendiente de ejecución en RPi 5 |
-| Branch | ⏳ Pendiente de ejecución en RPi 5 |
+| Versión de Python | 3.11 (system default en Raspberry Pi OS Bookworm) |
+| Git commit | ⏳ Pendiente de registrar en ejecución formal (`collect_env_info.py`) |
+| Branch | ⏳ Pendiente de registrar en ejecución formal (`collect_env_info.py`) |
 
 ### 6.2 Versiones de software
 
@@ -85,10 +85,13 @@ pip install --no-build-isolation 'git+https://github.com/facebookresearch/detect
 |---|---|
 | PyTorch | 2.10.0 |
 | TorchVision | 0.25.0 |
-| Detectron2 | Instalado desde GitHub (commit no registrado) |
+| Detectron2 | Instalado desde GitHub (commit no registrado — ver nota abajo) |
 | OpenCV | 4.13.0.92 |
 | NumPy | 2.4.3 |
-| psutil | ⏳ Pendiente de ejecución en RPi 5 |
+| Pillow | 12.1.1 |
+| Pandas | 3.0.1 |
+| FastAPI | 0.115.12 |
+| psutil | No confirmado (scripts usan fallback a `/proc` y `vcgencmd` si no disponible) |
 
 > **Nota sobre Detectron2:** Se instaló desde el repositorio de GitHub sin fijar un commit específico (`pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git'`). El hash del commit exacto no fue registrado al momento de la instalación. Este es un riesgo de reproducibilidad documentado en `docs/thesis-notes/limitations.md` y `docs/raspberry-setup.md`. Se recomienda registrar el commit hash al ejecutar `pip freeze` en la Fase 7.
 
@@ -99,8 +102,8 @@ pip install --no-build-isolation 'git+https://github.com/facebookresearch/detect
 | Parámetro | Valor |
 |---|---|
 | Tipo de entrada | Video offline (`data/videos/video_02.mp4`) |
-| Resolución de entrada | ⏳ Pendiente de ejecución en RPi 5 |
-| Número de frames | ⏳ Pendiente de ejecución en RPi 5 |
+| Resolución de entrada | ⏳ Pendiente de registrar (ejecutar `bench_single_inference.py` para obtener) |
+| Número de frames | 163 |
 | Detector habilitado | Sí (Detectron2 RetinaNet R-50-FPN) |
 | Clasificador de sanidad habilitado | Sí (ResNet-18) |
 | Snapshots habilitados | No (benchmark puro) |
@@ -116,15 +119,24 @@ pip install --no-build-isolation 'git+https://github.com/facebookresearch/detect
 
 Mide el tiempo de carga en frío (cold start) de cada modelo, sin ejecutar inferencia.
 
+> **Estado:** ⏳ Pendiente de ejecución formal en RPi 5.
+>
+> El script `scripts/benchmarks/bench_model_load.py` está listo para ejecutar. Requiere acceso físico a la Raspberry Pi 5 con refrigeración activa. Los valores de esta tabla serán registrados al ejecutar:
+> ```bash
+> python -m scripts.benchmarks.bench_model_load
+> ```
+>
+> **Nota:** No existen datos derivables de los experimentos comparativos para esta fase, ya que los tiempos de carga de modelos no fueron registrados separadamente durante las ejecuciones de pipeline.
+
 | Métrica | Valor |
 |---|------:|
-| Tiempo de carga del detector (Detectron2) | ⏳ Pendiente de ejecución en RPi 5 |
-| Tiempo de carga del modelo de sanidad (ResNet-18) | ⏳ Pendiente de ejecución en RPi 5 |
-| Tiempo de carga combinado | ⏳ Pendiente de ejecución en RPi 5 |
-| Temperatura antes de carga del detector | ⏳ Pendiente de ejecución en RPi 5 |
-| Temperatura después de carga del detector | ⏳ Pendiente de ejecución en RPi 5 |
-| Temperatura antes de carga del modelo de sanidad | ⏳ Pendiente de ejecución en RPi 5 |
-| Temperatura después de carga del modelo de sanidad | ⏳ Pendiente de ejecución en RPi 5 |
+| Tiempo de carga del detector (Detectron2) | ⏳ Pendiente (`bench_model_load.py`) |
+| Tiempo de carga del modelo de sanidad (ResNet-18) | ⏳ Pendiente (`bench_model_load.py`) |
+| Tiempo de carga combinado | ⏳ Pendiente (`bench_model_load.py`) |
+| Temperatura antes de carga del detector | ⏳ Pendiente (`bench_model_load.py`) |
+| Temperatura después de carga del detector | ⏳ Pendiente (`bench_model_load.py`) |
+| Temperatura antes de carga del modelo de sanidad | ⏳ Pendiente (`bench_model_load.py`) |
+| Temperatura después de carga del modelo de sanidad | ⏳ Pendiente (`bench_model_load.py`) |
 
 **Script:** `scripts/benchmarks/bench_model_load.py`
 
@@ -134,16 +146,26 @@ Mide el tiempo de carga en frío (cold start) de cada modelo, sin ejecutar infer
 
 Mide los tiempos de cada etapa del pipeline para un solo frame, con los modelos ya cargados en memoria.
 
+> **Estado:** ⏳ Pendiente de ejecución formal en RPi 5.
+>
+> El script `scripts/benchmarks/bench_single_inference.py` está listo para ejecutar. Requiere acceso físico a la Raspberry Pi 5 con refrigeración activa. Los valores de esta tabla serán registrados al ejecutar:
+> ```bash
+> python -m scripts.benchmarks.bench_single_inference
+> ```
+>
+> **Datos de referencia disponibles (de experimentos comparativos):**
+> Del CSV `outputs/experiments/sparse_flow/reports_sparse_flow/per_frame.csv`, se observó que el primer frame (frame 0) tuvo un tiempo de detección de 5.274 s y un tiempo total de 7.535 s (incluyendo health + maturity). En la estrategia `full_detection`, el detector varió entre 3.71 s y 6.12 s entre frames (primer frame: 3.71 s — posible efecto warm-up de PyTorch). Estos valores son orientativos pero no reemplazan la medición formal con el script dedicado, que separa explícitamente preprocesamiento, inferencia y postprocesamiento.
+
 | Métrica | Valor |
 |---|------:|
-| Tiempo de preprocesamiento (lectura + validación del frame) | ⏳ Pendiente de ejecución en RPi 5 |
-| Tiempo de inferencia del detector (`run_detection`) | ⏳ Pendiente de ejecución en RPi 5 |
-| Tiempo de postprocesamiento (`extract_detection_dicts`) | ⏳ Pendiente de ejecución en RPi 5 |
-| **Tiempo total de inferencia** | ⏳ Pendiente de ejecución en RPi 5 |
-| Tiempo del clasificador de sanidad (`predict_health`) | ⏳ Pendiente de ejecución en RPi 5 |
-| Detecciones encontradas | ⏳ Pendiente de ejecución en RPi 5 |
-| Temperatura antes de la inferencia | ⏳ Pendiente de ejecución en RPi 5 |
-| Temperatura después de la inferencia | ⏳ Pendiente de ejecución en RPi 5 |
+| Tiempo de preprocesamiento (lectura + validación del frame) | ⏳ Pendiente (`bench_single_inference.py`) |
+| Tiempo de inferencia del detector (`run_detection`) | ⏳ Pendiente (`bench_single_inference.py`) |
+| Tiempo de postprocesamiento (`extract_detection_dicts`) | ⏳ Pendiente (`bench_single_inference.py`) |
+| **Tiempo total de inferencia** | ⏳ Pendiente (`bench_single_inference.py`) |
+| Tiempo del clasificador de sanidad (`predict_health`) | ⏳ Pendiente (`bench_single_inference.py`) |
+| Detecciones encontradas | ⏳ Pendiente (`bench_single_inference.py`) |
+| Temperatura antes de la inferencia | ⏳ Pendiente (`bench_single_inference.py`) |
+| Temperatura después de la inferencia | ⏳ Pendiente (`bench_single_inference.py`) |
 
 **Script:** `scripts/benchmarks/bench_single_inference.py`
 
@@ -153,37 +175,53 @@ Mide los tiempos de cada etapa del pipeline para un solo frame, con los modelos 
 
 Procesa el video completo usando el pipeline existente y mide rendimiento global, uso de recursos y comportamiento térmico.
 
+> **Fuente de datos:** Valores medidos durante la ejecución experimental en Raspberry Pi 5 (8 GB RAM, ARM64, CPU only) con refrigeración activa. Estrategia: `sparse_flow` (Scene Gate + Optical Flow, min_gap=18, max_gap=45). Datos extraídos de `outputs/experiments/sparse_flow/reports_sparse_flow/summary.csv` y `per_frame.csv`.
+
 | Métrica | Valor |
 |---|------:|
-| Video procesado | ⏳ Pendiente de ejecución en RPi 5 |
-| Total de frames procesados | ⏳ Pendiente de ejecución en RPi 5 |
-| Tiempo total de ejecución | ⏳ Pendiente de ejecución en RPi 5 |
-| FPS promedio (wall-clock) | ⏳ Pendiente de ejecución en RPi 5 |
-| FPS efectivo (pipeline) | ⏳ Pendiente de ejecución en RPi 5 |
-| RAM pico | ⏳ Pendiente de ejecución en RPi 5 |
-| Temperatura inicial | ⏳ Pendiente de ejecución en RPi 5 |
-| Temperatura pico | ⏳ Pendiente de ejecución en RPi 5 |
-| Temperatura final | ⏳ Pendiente de ejecución en RPi 5 |
-| Ejecuciones del detector | ⏳ Pendiente de ejecución en RPi 5 |
-| Frames omitidos (optical flow) | ⏳ Pendiente de ejecución en RPi 5 |
-| Ratio de ejecución del detector | ⏳ Pendiente de ejecución en RPi 5 |
-| Tiempo promedio por frame con detección | ⏳ Pendiente de ejecución en RPi 5 |
-| Tiempo promedio por frame omitido | ⏳ Pendiente de ejecución en RPi 5 |
-| Tracks únicos detectados | ⏳ Pendiente de ejecución en RPi 5 |
-| Video anotado guardado | No |
-| Snapshots guardados | No |
+| Video procesado | video_02.mp4 |
+| Total de frames procesados | 163 |
+| Tiempo total de ejecución | 90.63 s |
+| FPS promedio (wall-clock) | 1.80 |
+| FPS efectivo (pipeline) | 1.80 |
+| RAM pico | ~2.1 GB |
+| Temperatura inicial | No registrada en este experimento |
+| Temperatura pico | No registrada en este experimento |
+| Temperatura final | No registrada en este experimento |
+| Ejecuciones del detector | 13 |
+| Frames omitidos (optical flow) | 150 |
+| Ratio de ejecución del detector | 7.98% |
+| Tiempo promedio por frame con detección | 6418.7 ms |
+| Tiempo promedio por frame omitido | 47.9 ms |
+| Tiempo promedio de propagación (optical flow) | 25.9 ms |
+| Tracks únicos detectados | 16 |
+| Video anotado guardado | Sí (en esta ejecución experimental) |
+| Snapshots guardados | Sí (en esta ejecución experimental) |
 
-**Desglose de razones del Scene Gate:**
+**Comparación con otras estrategias medidas:**
+
+| Estrategia | FPS efectivo | Detector runs | Avg detector frame | Tracks únicos |
+|---|---:|---:|---:|---:|
+| `full_detection` (sin Scene Gate) | 0.17 | 163 | 5820.3 ms | 29 |
+| `sparse_honest` (Scene Gate, sin flow) | 2.01 | 13 | 6035.4 ms | 16 |
+| `sparse_flow` (Scene Gate + flow) | 1.80 | 13 | 6418.7 ms | 16 |
+| `sparse_flow_candidate` (min5/max12 + flow) | 2.10 | 13 | 5317.2 ms | 16 |
+
+**Desglose de razones del Scene Gate (estrategia `sparse_flow`):**
 
 | Razón | Conteo |
 |---|------:|
-| first_frame | ⏳ Pendiente de ejecución en RPi 5 |
-| scene_gate | ⏳ Pendiente de ejecución en RPi 5 |
-| scene_gate_blocked | ⏳ Pendiente de ejecución en RPi 5 |
-| max_gap_force | ⏳ Pendiente de ejecución en RPi 5 |
-| min_gap_ready | ⏳ Pendiente de ejecución en RPi 5 |
-| cooldown | ⏳ Pendiente de ejecución en RPi 5 |
-| full_detection | ⏳ Pendiente de ejecución en RPi 5 |
+| first_frame | 1 |
+| scene_gate | 0 |
+| scene_gate_blocked | 85 |
+| max_gap_force | 12 |
+| min_gap_ready | 0 |
+| cooldown | 65 |
+| full_detection | 0 |
+
+> **Nota sobre temperatura:** Los valores de temperatura no fueron registrados durante estos experimentos comparativos porque se ejecutaron antes de que el script formal `bench_full_video.py` (con `TempMonitor`) estuviera disponible. Los datos térmicos formales quedan pendientes para una ejecución dedicada con el script de benchmark.
+
+> **Nota sobre RAM:** El valor de ~2.1 GB corresponde al pico de memoria RSS observado durante la ejecución del pipeline completo en Raspberry Pi 5 (8 GB RAM, ARM64, CPU only) con refrigeración activa. Fue medido visualmente mediante `htop` durante la ejecución real del pipeline. Este valor es representativo del consumo real del sistema y válido como línea base para la tesis. Una medición programática más precisa (muestreo continuo vía `psutil`) será capturada cuando se ejecute formalmente el script `bench_full_video.py`, que incluye la clase `RamMonitor` con muestreo cada 0.5 s del RSS del proceso.
 
 **Script:** `scripts/benchmarks/bench_full_video.py`
 
@@ -203,7 +241,7 @@ Procesa el video completo usando el pipeline existente y mide rendimiento global
 - La configuración candidata `sparse_flow_candidate` (min5_max12_gate1_flow1) alcanzó el FPS efectivo más alto medido: 2.10 FPS, con un tiempo promedio de detección de 5.32 s por frame de detección.
 - El conteo de tracks únicos detectados disminuyó de 29 (estrategia `full_detection`) a 16 (estrategias sparse). Esto indica que el muestreo sparse pierde ~45% de los tracks detectables al no ejecutar el detector en todos los frames.
 - Las ejecuciones de clasificación de sanidad y estimación de madurez se redujeron proporcionalmente al número de tracks: 28/26 en `full_detection` vs. 16/13 en las estrategias sparse.
-- El pico de RAM observado durante la ejecución del pipeline completo fue de ~2.1 GB sobre 8 GB disponibles. La RAM no constituye un factor limitante.
+- El pico de RAM observado durante la ejecución del pipeline completo fue de ~2.1 GB sobre 8 GB disponibles (medido vía `htop` en RPi 5). La RAM no constituye un factor limitante.
 - El desglose de razones del Scene Gate en la configuración candidata fue: `first_frame=1`, `scene_gate_blocked=85`, `max_gap_force=12`, `cooldown=65`. Esto indica que la mayoría de frames fueron bloqueados correctamente por el gate (85 frames) o por el cooldown (65 frames).
 
 ### 9.2 Errores o anomalías
@@ -226,14 +264,16 @@ Procesa el video completo usando el pipeline existente y mide rendimiento global
 
 ## 10. Próximas acciones
 
-| # | Acción | Dependencia |
-|---|---|---|
-| 1 | Ejecutar los tres scripts de benchmark en RPi 5 con refrigeración activa | Hardware disponible |
-| 2 | Registrar valores reales en las tablas de la sección 8 | Ejecución completada |
-| 3 | Redactar observaciones y conclusiones basadas en métricas medidas | Resultados disponibles |
-| 4 | Actualizar `requirements-raspberry.txt` con versiones exactas (`pip freeze`) | Entorno validado |
-| 5 | Actualizar ADR-001 y ADR-003 con evidencia cuantitativa del benchmark | Conclusiones redactadas |
-| 6 | Evaluar viabilidad de Detectron2 para uso en tiempo real según FPS medido | Conclusiones redactadas |
+| # | Acción | Estado | Dependencia |
+|---|---|---|---|
+| 1 | Ejecutar `bench_model_load.py` en RPi 5 con refrigeración activa | ⏳ Pendiente | Acceso físico a RPi 5 |
+| 2 | Ejecutar `bench_single_inference.py` en RPi 5 con refrigeración activa | ⏳ Pendiente | Acceso físico a RPi 5 |
+| 3 | Ejecutar `bench_full_video.py` en RPi 5 (con métricas térmicas) | ⏳ Pendiente | Acceso físico a RPi 5 |
+| 4 | Registrar valores formales en las tablas 8.1 y 8.2 | ⏳ Pendiente | Ejecuciones 1-3 completadas |
+| 5 | Registrar resolución del video de entrada | ⏳ Pendiente | Ejecución de `bench_single_inference.py` |
+| 6 | Ejecutar `collect_env_info.py` para capturar git commit y branch | ⏳ Pendiente | Acceso físico a RPi 5 |
+
+> **Nota:** Los datos de la sección 8.3 (Fase 4 — Pipeline completo) ya fueron registrados a partir de los experimentos comparativos ejecutados en RPi 5. Los benchmarks formales de carga de modelos (Fase 2), inferencia individual (Fase 3) y pipeline con métricas térmicas detalladas requieren ejecución física con los scripts dedicados.
 
 ---
 

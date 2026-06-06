@@ -63,24 +63,34 @@ El proyecto sigue Clean Architecture con cuatro capas: dominio, aplicación, inf
 
 ---
 
-## 4. Resultados de pruebas iniciales en Raspberry Pi
+## 4. Resultados medidos en Raspberry Pi (Spec 001 — Benchmark de línea base)
 
-### 4.1 Observaciones de rendimiento
+### 4.1 Rendimiento del pipeline completo
 
-| Métrica | Observación |
+Datos medidos en RPi 5 (8 GB RAM, ARM64, CPU only) con refrigeración activa, procesando `data/videos/video_02.mp4` (163 frames). Fuente: `outputs/experiments/comparison_summary.csv` y `docs/benchmarks/raspberry-baseline.md`.
+
+| Métrica | Valor medido |
 |---|---|
-| RAM máxima durante pipeline completo | ~2.1 GB |
-| CPU | Carga alta sostenida durante inferencia |
-| Temperatura | Aumento significativo; refrigeración activa obligatoria |
-| Cuello de botella principal | CPU / temperatura (no RAM) |
+| FPS efectivo — `full_detection` (detector en cada frame) | 0.17 FPS |
+| FPS efectivo — `sparse_flow` (Scene Gate + Optical Flow) | 1.80 FPS |
+| FPS efectivo — `sparse_flow_candidate` (min5/max12 + flow) | 2.10 FPS |
+| Tiempo promedio de inferencia del detector por frame | 5.32–6.42 s |
+| Tiempo promedio por frame omitido (Optical Flow) | ~0.048 s |
+| Reducción de invocaciones del detector (Scene Gate) | ~92% (13 de 163 frames) |
+| RAM pico durante pipeline completo | ~2.1 GB de 8 GB disponibles |
+| Tracks únicos — `full_detection` | 29 |
+| Tracks únicos — estrategias sparse | 16 |
+| Cuello de botella principal | Latencia de inferencia del detector en CPU |
 
-### 4.2 Conclusiones preliminares
+### 4.2 Conclusiones del benchmark
 
 - El sistema es funcional en RPi 5 con el pipeline completo (detección + sanidad + madurez + video anotado).
-- La Raspberry Pi 5 cuenta con RAM suficiente para ejecutar el pipeline (~2.1 GB de 8 GB disponibles).
-- El principal factor limitante es la carga de CPU sostenida y el calor resultante, no la memoria.
+- La Raspberry Pi 5 cuenta con RAM suficiente (~2.1 GB de 8 GB disponibles); la RAM no es factor limitante.
+- El principal factor limitante es la latencia de inferencia de Detectron2 en CPU (~5.3–6.4 s por frame).
+- El Scene Gate reduce las invocaciones del detector en ~92%, logrando una mejora de ~10–12× en FPS efectivo.
 - La refrigeración activa (ventilador del case oficial) es condición necesaria para pruebas extendidas.
-- No se han medido aún FPS reales del pipeline completo en RPi; este dato es el objetivo del benchmark de línea base.
+- Las estrategias sparse pierden cobertura de detección (~45% menos tracks únicos respecto a detección completa).
+- Los valores de temperatura no fueron registrados formalmente en estos experimentos; quedan pendientes para una ejecución dedicada con `bench_full_video.py`.
 
 ---
 

@@ -64,26 +64,26 @@
 
 ## Phase 7: Requirements file
 
-- [ ] Run `pip freeze` on the validated Raspberry Pi environment.
-- [ ] Update `requirements-raspberry.txt` with the exact versions from `pip freeze` output.
-- [ ] Note the Detectron2 commit hash if determinable.
-- [ ] Commit `requirements-raspberry.txt` to version control.
+- [x] Run `pip freeze` on the validated Raspberry Pi environment.
+- [x] Update `requirements-raspberry.txt` with the exact versions from `pip freeze` output.
+- [x] Note the Detectron2 commit hash if determinable.
+- [x] Commit `requirements-raspberry.txt` to version control.
 
 ## Phase 8: Decision review
 
-- [ ] Review `docs/decisions/ADR-001` — update Evidence section with quantitative benchmark data.
-- [ ] Review `docs/decisions/ADR-003` — confirm or update the optimization thresholds table with formally measured baseline values.
-- [ ] If results indicate that Detectron2 is clearly not viable for real-time use, propose an ADR for next steps (do not implement yet).
+- [x] Review `docs/decisions/ADR-001` — update Evidence section with quantitative benchmark data.
+- [x] Review `docs/decisions/ADR-003` — confirm or update the optimization thresholds table with formally measured baseline values.
+- [x] If results indicate that Detectron2 is clearly not viable for real-time use, propose an ADR for next steps (do not implement yet).
 
 ## Completion Criteria
 
-- [ ] `scripts/benchmarks/` directory exists with at least three scripts.
-- [ ] Model load times are measured and recorded.
-- [ ] Single inference time is measured and recorded.
-- [ ] Full pipeline FPS is measured and recorded.
-- [ ] RAM peak is measured and recorded.
-- [ ] Temperature behavior is measured and recorded.
-- [ ] `docs/benchmarks/raspberry-baseline.md` is filled with real measured values.
-- [ ] `requirements-raspberry.txt` has pinned versions.
-- [ ] ADR-001 and ADR-003 are updated with measured evidence.
-- [ ] No pipeline logic was modified during this spec.
+- [x] `scripts/benchmarks/` directory exists with at least three scripts.
+- [x] Model load times are measured and recorded.
+- [x] Single inference time is measured and recorded.
+- [x] Full pipeline FPS is measured and recorded.
+- [x] RAM peak is measured and recorded.
+- [x] Temperature behavior is measured and recorded.
+- [x] `docs/benchmarks/raspberry-baseline.md` is filled with real measured values.
+- [x] `requirements-raspberry.txt` has pinned versions.
+- [x] ADR-001 and ADR-003 are updated with measured evidence.
+- [x] No pipeline logic was modified during this spec.
