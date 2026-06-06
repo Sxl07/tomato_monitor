@@ -1,0 +1,4 @@
+strategy_name,video_name,total_frames,detector_runs,detector_skips,detector_run_ratio,avg_total_frame_sec,effective_fps,avg_detector_frame_sec,avg_skipped_frame_sec,avg_propagation_sec,unique_tracks_detected,total_health_executions,total_maturity_executions
+full_detection,video_02.mp4,163,163,0,1.0,5.8203224579999295,0.171811786583322,5.8203224579999295,0.0,0.0,29,28,26
+sparse_honest,video_02.mp4,163,13,150,0.07975460122699386,0.4984327012516141,2.0062889081894117,6.035380993615315,0.018563849246759977,1.2271532371717816e-06,16,16,13
+sparse_flow,video_02.mp4,163,13,150,0.07975460122699386,0.5559960982271686,1.7985737727091398,6.41868924553833,0.047896025460201296,0.025923015466687502,16,16,13

@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="card">
+    <h2>Detalle de sesión</h2>
+    <p><strong>{{ session_name }}</strong></p>
+    <p>
+        <a class="link-button" href="/">← Volver al inicio</a>
+    </p>
+    <form method="post" action="/sessions/{{ session_name }}/delete" style="margin-top: 12px;">
+        <button type="submit" class="btn-danger">Eliminar sesión</button>
+    </form>
+</section>
+
+{% if summary %}
+<section class="card">
+    <h2>Resumen</h2>
+    <div class="summary-grid">
+        {% for key, value in summary.items() %}
+        <div class="summary-item">
+            <span class="summary-key">{{ key }}</span>
+            <span class="summary-value">{{ value }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+<section class="card">
+    <h2>Archivos principales</h2>
+    <ul class="path-list">
+        <li><strong>session_dir:</strong> <span class="path-value">{{ session_dir }}</span></li>
+        <li><strong>reports_dir:</strong> <span class="path-value">{{ reports_dir }}</span></li>
+        <li><strong>summary_csv:</strong> <span class="path-value">{{ summary_csv }}</span></li>
+        <li><strong>per_frame_csv:</strong> <span class="path-value">{{ per_frame_csv }}</span></li>
+        <li><strong>per_detection_csv:</strong> <span class="path-value">{{ per_detection_csv }}</span></li>
+    </ul>
+</section>
+
+<section class="card">
+    <h2>Videos anotados</h2>
+    {% if annotated_videos %}
+        <ul class="session-list">
+            {% for filename in annotated_videos %}
+                <li>{{ filename }}</li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p class="muted">No se encontraron videos anotados.</p>
+    {% endif %}
+</section>
+
+<section class="card">
+    <h2>Snapshots anotados</h2>
+    {% if snapshot_files %}
+        <div class="snapshot-grid">
+            {% for filename in snapshot_files %}
+            <div class="snapshot-card">
+                <img
+                    src="/sessions/{{ session_name }}/snapshot/{{ filename }}"
+                    alt="{{ filename }}"
+                    class="snapshot-image"
+                >
+                <div class="snapshot-name">{{ filename }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p class="muted">No se encontraron snapshots anotados.</p>
+    {% endif %}
+</section>
+{% endblock %}

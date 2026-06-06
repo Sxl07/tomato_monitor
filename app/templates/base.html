@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title or "Tomato Monitor" }}</title>
+    <link rel="stylesheet" href="/static/styles.css?v=2">
+</head>
+<body>
+    <header class="topbar">
+        <div class="container">
+            <h1 class="app-title">Tomato Monitor</h1>
+            <p class="app-subtitle">Mini app de pruebas para detección, tracking, sanidad y madurez</p>
+        </div>
+    </header>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

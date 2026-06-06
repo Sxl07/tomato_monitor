@@ -1,0 +1,56 @@
+# requirements-raspberry.txt
+# ARM64 / aarch64 — Raspberry Pi 5 (Raspberry Pi OS / Debian Bookworm 64-bit)
+#
+# STATUS: Partially documented. Exact versions from the validated environment
+# have not been formally pinned yet. This file will be completed after the
+# baseline benchmark (Spec 001) when `pip freeze` is run on the validated RPi
+# environment.
+#
+# See: docs/raspberry-setup.md for installation instructions
+# See: docs/thesis-notes/limitations.md for known reproducibility risks
+# See: docs/benchmarks/raspberry-baseline.md for the target benchmark
+
+# --- Python version ---
+# Python 3.11 (system default on Raspberry Pi OS Bookworm)
+
+# --- Core framework ---
+fastapi==0.115.12
+uvicorn==0.34.3
+jinja2==3.1.6
+python-multipart==0.0.20
+
+# --- Deep learning (ARM64 note: verify wheel availability before pinning) ---
+# torch: version must be validated for ARM64. Install guide: https://pytorch.org/get-started/locally/
+# As of June 2026, torch 2.x wheels for ARM64 may require compilation or third-party sources.
+torch
+torchvision
+
+# --- Vision ---
+# opencv-python may need to be replaced with opencv-python-headless in headless mode
+opencv-python==4.13.0.92
+numpy==2.4.3
+pillow==12.1.1
+
+# --- Data ---
+pandas==3.0.1
+python-dateutil==2.9.0.post0
+six==1.17.0
+tzdata==2025.3
+
+# --- Detectron2 ---
+# No ARM64 wheel available. Must be installed from source:
+#   pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git'
+# Pin the commit hash once the environment is stable:
+#   pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git@{COMMIT}'
+# detectron2 — installed from GitHub, not listed here
+
+# --- Utilities ---
+packaging==26.0
+typing_extensions==4.15.0
+
+# --- TODO after baseline benchmark ---
+# 1. Run `pip freeze > requirements-raspberry.txt` on the validated RPi environment
+# 2. Remove this TODO section
+# 3. Pin torch and torchvision to exact validated versions
+# 4. Record the Detectron2 commit hash
+# 5. Verify opencv-python vs opencv-python-headless choice
