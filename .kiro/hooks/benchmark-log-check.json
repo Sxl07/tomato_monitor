@@ -1,0 +1,13 @@
+{
+  "name": "Benchmark Documentation Check",
+  "version": "1.0.0",
+  "description": "When benchmark scripts are modified, remind the agent to check documentation and results recording. Does not execute benchmarks automatically.",
+  "when": {
+    "type": "fileEdited",
+    "patterns": ["scripts/benchmarks/**/*.py"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A benchmark script was modified. Check the following before proceeding:\n1. Does `docs/benchmarks/benchmark-template.md` need updates to reflect new metrics or fields?\n2. If a benchmark was executed, should results be recorded in `docs/benchmarks/raspberry-baseline.md` or a related results file?\n3. Do not execute long-running benchmarks automatically.\n4. Remind the user to run benchmarks manually on Raspberry Pi 5 with active cooling."
+  }
+}

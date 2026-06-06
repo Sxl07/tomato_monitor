@@ -1,0 +1,13 @@
+{
+  "name": "Python Quality Check",
+  "version": "1.0.0",
+  "description": "When Python source files are modified, remind the agent to check code quality without running heavy inference or benchmarks.",
+  "when": {
+    "type": "fileEdited",
+    "patterns": ["src/**/*.py", "app/**/*.py", "scripts/**/*.py"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A Python file was modified. Before considering the change complete:\n1. Verify imports are correct and no unused imports were added.\n2. Check that no logic was added to `app/routes/` that belongs in `src/application/use_cases/`.\n3. Check that no hardcoded paths, secrets, or CUDA assumptions were introduced.\n4. If the file is in `src/infrastructure/vision/`, remind the user to validate the change manually on Raspberry Pi 5 before merging.\n5. If a new class or function was added, verify it has a single clear responsibility.\n6. Do not run inference or heavy benchmarks automatically."
+  }
+}

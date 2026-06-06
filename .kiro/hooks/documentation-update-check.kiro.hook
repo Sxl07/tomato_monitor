@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "Documentation Update Check",
+  "description": "When documentation files are modified, remind the agent to maintain consistency across related docs, ADRs, and steering files.",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "docs/**/*.md",
+      "README.md",
+      "AGENTS.md"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A documentation file was modified. Check the following for consistency:\\n1. If an ADR was updated, verify that related specs and steering files reference the correct ADR status.\\n2. If `docs/benchmarks/raspberry-baseline.md` was updated with new results, verify that `docs/thesis-notes/current-state.md` and `docs/thesis-notes/next-steps.md` are still accurate.\\n3. If `docs/architecture.md` was updated, verify that `README.md` architecture diagrams are still consistent.\\n4. If `docs/raspberry-setup.md` was updated, verify that `requirements-raspberry.txt` is also updated if dependency changes were documented.\\n5. Do not invent benchmark values or performance claims without measurement evidence.\\n6. Do not expose secrets, credentials, or private paths in documentation."
+  }
+}
