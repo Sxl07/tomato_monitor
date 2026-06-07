@@ -1,0 +1,49 @@
+{% extends "base_agricultural.html" %}
+
+{% block header_title %}{{ module.name }}{% endblock %}
+
+{% block header_actions %}
+<a href="/modulos/{{ module.id }}/editar" class="btn-icon" aria-label="Editar módulo">✎</a>
+<button type="button" class="btn-icon btn-icon-danger" aria-label="Eliminar módulo" onclick="showConfirmDialog('confirm-dialog')">🗑</button>
+{% endblock %}
+
+{% block content %}
+<div class="info-panel">
+    <div class="info-row">
+        <span class="info-label">Tipo de cultivo</span>
+        <span class="info-value">{{ module.crop_type }}</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">Dimensiones</span>
+        <span class="info-value">{{ dimensions_display }}</span>
+    </div>
+</div>
+
+<a href="/modulos/{{ module.id }}/monitoreo/nuevo" class="btn btn-primary btn-large btn-full-width">Iniciar Nuevo Monitoreo</a>
+
+<h2 class="section-header">Historial de Monitoreos</h2>
+
+{% if history %}
+<div class="card-list">
+    {% for item in history %}
+    <a href="/monitoreos/{{ item.id }}/reporte" class="card card-link">
+        <div class="card-body">
+            <h3 class="card-title">{{ item.date }} — {{ item.time }}</h3>
+            <p class="card-subtitle">{{ item.total_tomatoes }} tomates detectados — {{ item.pct_healthy | round(0) | int }}% sanos</p>
+            {% if item.status == "aborted" %}
+            <span class="badge badge-warning">Cancelado</span>
+            {% endif %}
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+{% set empty_message = "No hay monitoreos registrados. Inicia el primero." %}
+{% include "agricultural/partials/empty_state.html" %}
+{% endif %}
+
+{% set dialog_message = "¿Seguro que deseas eliminar este módulo? Se eliminarán todos sus monitoreos." %}
+{% set confirm_url = "/modulos/" ~ module.id ~ "/eliminar" %}
+{% set confirm_text = "Eliminar" %}
+{% include "agricultural/partials/confirm_dialog.html" %}
+{% endblock %}

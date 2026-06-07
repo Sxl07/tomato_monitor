@@ -184,7 +184,47 @@ htop
 
 ---
 
-## 9. Validated state
+## 9. picamera2 (Raspberry Pi AI Camera)
+
+`picamera2` es la librería oficial de Python para controlar cámaras en Raspberry Pi. Viene **pre-instalada** en Raspberry Pi OS — no requiere `pip install`.
+
+### Verificación
+
+```bash
+python -c "from picamera2 import Picamera2; print('OK')"
+```
+
+Si el import falla, instalar desde los paquetes del sistema:
+
+```bash
+sudo apt install -y python3-picamera2
+```
+
+### Verificación de hardware de cámara
+
+```bash
+rpicam-hello --timeout 2000
+```
+
+Resultado esperado: una ventana de preview de 2 segundos. Si no hay display conectado, usar:
+
+```bash
+rpicam-still -o /tmp/test_camera.jpg --timeout 2000
+```
+
+### Notas importantes
+
+- picamera2 **no** se agrega a `requirements.txt` porque solo está disponible en Raspberry Pi OS.
+- En entornos de desarrollo (PC, Mac, Linux genérico), los scripts de cámara detectan la ausencia de picamera2 y reportan un mensaje claro.
+- La AI Camera no acelera automáticamente la inferencia de Detectron2 (ver ADR-002).
+- Para validar la integración completa de la cámara con el sistema, ejecutar:
+  ```bash
+  python scripts/camera/validate_ai_camera.py
+  ```
+
+---
+
+## 10. Validated state
 
 The following components have been validated on Raspberry Pi 5 as of June 2026:
 
@@ -201,7 +241,7 @@ The following components have been validated on Raspberry Pi 5 as of June 2026:
 
 ---
 
-## 10. Known issues and limitations
+## 11. Known issues and limitations
 
 | Issue | Description | Status |
 |---|---|---|

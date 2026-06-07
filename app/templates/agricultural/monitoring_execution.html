@@ -1,0 +1,138 @@
+{% extends "base_agricultural.html" %}
+
+{% block header_title %}{{ title }}{% endblock %}
+
+{% block content %}
+{# Status-dependent UI blocks. JS toggles visibility via .hidden class. #}
+
+{# --- Initializing --- #}
+<div id="status-initializing" class="execution-status-block {% if monitoring.status != 'initializing' %}hidden{% endif %}">
+    <div class="execution-center">
+        <div class="spinner spinner--lg"></div>
+        <p class="execution-status-text">Iniciando...</p>
+    </div>
+</div>
+
+{# --- Running --- #}
+<div id="status-running" class="execution-status-block {% if monitoring.status != 'running' %}hidden{% endif %}">
+    <div class="status-indicator">
+        <div class="spinner"></div>
+        <span class="status-text">Monitoreando...</span>
+        <span id="elapsed-timer" class="elapsed-timer">00:00</span>
+    </div>
+
+    <div class="live-counters">
+        <div class="live-counter">
+            <span id="counter-snapshots" class="live-counter-value">{{ monitoring.total_snapshots }}</span>
+            <span class="live-counter-label">Snapshots capturados</span>
+        </div>
+        <div class="live-counter">
+            <span id="counter-tomatoes" class="live-counter-value">{{ monitoring.total_detections }}</span>
+            <span class="live-counter-label">Tomates detectados</span>
+        </div>
+    </div>
+
+    {# Last snapshot thumbnail #}
+    <div class="last-snapshot-container">
+        <h2 class="section-header mt-0">Última captura</h2>
+        <img id="last-snapshot-img" src="/static/images/placeholder-snapshot.svg" alt="Última captura del monitoreo">
+    </div>
+
+    <div class="execution-actions">
+        <button type="button" class="btn btn-danger btn-full" onclick="showConfirmDialog('abort-dialog')">
+            Detener Monitoreo
+        </button>
+    </div>
+</div>
+
+{# --- Paused --- #}
+<div id="status-paused" class="execution-status-block {% if monitoring.status != 'paused' %}hidden{% endif %}">
+    <div class="alert alert--warning">
+        <span class="alert-icon">⚠️</span>
+        <span id="pause-reason">Pausado</span>
+    </div>
+
+    <div class="execution-actions btn-group">
+        <button type="button" class="btn btn-primary" id="btn-resume" disabled>Reanudar</button>
+        <button type="button" class="btn btn-danger" onclick="showConfirmDialog('abort-dialog')">Cancelar</button>
+    </div>
+</div>
+
+{# --- Finishing --- #}
+<div id="status-finishing" class="execution-status-block {% if monitoring.status != 'finishing' %}hidden{% endif %}">
+    <div class="execution-center">
+        <div class="progress-bar">
+            <div class="progress-bar-fill"></div>
+        </div>
+        <p class="execution-status-text">Finalizando...</p>
+    </div>
+</div>
+
+{# --- Completed --- #}
+<div id="status-completed" class="execution-status-block {% if monitoring.status != 'completed' %}hidden{% endif %}">
+    <div class="execution-center">
+        <span class="execution-icon execution-icon--success">✓</span>
+        <p class="execution-status-text">Monitoreo completado</p>
+    </div>
+</div>
+
+{# --- Aborted --- #}
+<div id="status-aborted" class="execution-status-block {% if monitoring.status != 'aborted' %}hidden{% endif %}">
+    <div class="execution-center">
+        <span class="execution-icon execution-icon--warning">⊘</span>
+        <p class="execution-status-text">Monitoreo cancelado</p>
+    </div>
+</div>
+
+{# --- Error --- #}
+<div id="status-error" class="execution-status-block {% if monitoring.status != 'error' %}hidden{% endif %}">
+    <div class="execution-center">
+        <span class="execution-icon execution-icon--error">✕</span>
+        <p id="error-message" class="execution-status-text">Ocurrió un error durante el monitoreo.</p>
+    </div>
+</div>
+
+{# --- Temperature warning banner (hidden by default, shown by JS) --- #}
+<div id="temp-warning" class="alert alert--warning hidden">
+    <span class="alert-icon">🌡️</span>
+    <span id="temp-warning-text">Temperatura alta — El sistema puede pausarse</span>
+</div>
+
+{# --- Activity Log Panel --- #}
+<div id="activity-log-section">
+    <h2 class="section-header">Registro de Actividad</h2>
+    <div id="activity-log-panel" class="activity-log-panel" aria-live="polite" aria-label="Registro de actividad del monitoreo">
+        {# Log entries are appended here by JS #}
+    </div>
+</div>
+
+{# --- Abort confirmation dialog --- #}
+<div id="abort-dialog" class="dialog-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="abort-dialog-message">
+    <div class="dialog">
+        <p id="abort-dialog-message" class="dialog-message">¿Seguro que deseas detener el monitoreo? Se guardarán los resultados parciales.</p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" onclick="hideConfirmDialog('abort-dialog')">Cancelar</button>
+            <form method="post" action="/monitoreos/{{ monitoring.id }}/abortar" style="margin:0;">
+                <button type="submit" class="btn btn-danger">Detener</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showConfirmDialog(dialogId) {
+    document.getElementById(dialogId).classList.remove('hidden');
+}
+function hideConfirmDialog(dialogId) {
+    document.getElementById(dialogId).classList.add('hidden');
+}
+</script>
+<script src="/static/js/monitoring.js"></script>
+<script>
+    if (typeof startMonitoringPolling === 'function') {
+        startMonitoringPolling({{ monitoring.id }});
+    }
+</script>
+{% endblock %}

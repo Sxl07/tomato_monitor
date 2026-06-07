@@ -1,61 +1,41 @@
-# Tasks - Camera Live Integration
+# Implementation Plan: Camera Live Integration
 
-## Phase 1: Preparation
+## Overview
 
-- [ ] Review current video input flow in the pipeline.
-- [ ] Identify where frames are currently read from offline videos.
-- [ ] Document the current input assumptions of the pipeline.
-- [ ] Confirm Raspberry Pi AI Camera works through system-level commands.
-- [ ] Create `docs/camera-live-integration.md`.
+Integrate the Raspberry Pi AI Camera as a live image source. Create the camera adapter, frame source abstraction, validation script, error handling, and documentation. The actual hardware validation will be done manually on the Raspberry Pi.
 
-## Phase 2: Camera validation
+## Tasks
 
-- [ ] Create `scripts/camera/` directory if it does not exist.
-- [ ] Create `scripts/camera/validate_ai_camera.py`.
-- [ ] Implement a minimal camera availability check.
-- [ ] Capture a single frame.
-- [ ] Save a sample frame to a controlled output path.
-- [ ] Print frame dimensions and capture status.
-- [ ] Document validation steps in `docs/raspberry-setup.md`.
+- [x] 1. Create frame source abstraction
+  - [x] 1.1 Create FrameSource interface in domain layer
+  - [x] 1.2 Create VideoFileFrameSource implementation
+  - [x] 1.3 Create RaspberryCameraFrameSource implementation
+  - [x] 1.4 Create camera configuration in settings
 
-## Phase 3: Frame source design
+- [x] 2. Create camera validation scripts
+  - [x] 2.1 Create validation script (`scripts/camera/validate_ai_camera.py`)
+  - [x] 2.2 Create single-frame inference script (`scripts/camera/single_frame_inference.py`)
 
-- [ ] Review whether a frame source abstraction is needed.
-- [ ] If needed, design a minimal `FrameSource` interface.
-- [ ] Avoid large refactors during this spec.
-- [ ] Keep offline video input as the default path.
-- [ ] Document the proposed input source design.
+- [x] 3. Documentation
+  - [x] 3.1 Create/update camera integration documentation (`docs/camera-live-integration.md`)
+  - [x] 3.2 Update hardware and setup docs
 
-## Phase 4: Optional pipeline connection
+- [x] 4. Final verification
+  - All modules import cleanly (picamera2 absence handled gracefully)
+  - FastAPI app starts without errors
+  - Camera imports verified on WSL
 
-- [ ] Add a controlled way to pass one captured frame into the existing vision flow.
-- [ ] Validate single-frame inference from camera capture.
-- [ ] Do not enable continuous live inference by default.
-- [ ] Record CPU, RAM, and temperature observations.
-- [ ] Document results in `docs/benchmarks/`.
+## Pending hardware validation (manual on Raspberry Pi)
 
-## Phase 5: Error handling and safety
+- [ ] Run `scripts/camera/validate_ai_camera.py` on RPi with AI Camera connected
+- [ ] Confirm frame capture and JPEG save
+- [ ] Run `scripts/camera/single_frame_inference.py` on RPi with detector loaded
+- [ ] Record temperature observations
+- [ ] Document results in `docs/benchmarks/`
 
-- [ ] Add clear error handling for camera unavailable.
-- [ ] Add clear error handling for frame capture failure.
-- [ ] Ensure camera resources are released properly.
-- [ ] Avoid infinite loops without explicit stop condition.
-- [ ] Avoid long-running camera inference without thermal monitoring.
+## Notes
 
-## Phase 6: Documentation and review
-
-- [ ] Update `docs/hardware.md`.
-- [ ] Update `docs/raspberry-setup.md`.
-- [ ] Update `docs/camera-live-integration.md`.
-- [ ] Create an ADR if camera integration changes architecture.
-- [ ] Review that offline video processing still works.
-- [ ] Review compatibility with Raspberry Pi 5.
-
-## Completion Criteria
-
-- [ ] Raspberry Pi AI Camera can be validated through a project script.
-- [ ] At least one frame can be captured and saved.
-- [ ] Captured frame format is compatible with OpenCV.
-- [ ] Offline video mode remains functional.
-- [ ] Camera integration is documented.
-- [ ] No detector replacement was introduced.
+- picamera2 is NOT in requirements.txt (RPi-only, pre-installed on RPi OS)
+- The RaspberryCameraFrameSource handles missing picamera2 gracefully
+- Offline video pipeline remains fully functional and is the default mode
+- No detector replacement was introduced

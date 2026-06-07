@@ -1,0 +1,1118 @@
+/* ==========================================================================
+   Agricultural UI Stylesheet — Tomato Monitor
+   Optimized for Raspberry Pi DSI 7" touchscreen (800×480, landscape)
+   ========================================================================== */
+
+/* ==========================================================================
+   1. Design Tokens (CSS Custom Properties)
+   ========================================================================== */
+
+:root {
+    /* Colors */
+    --color-bg: #F5F5F5;
+    --color-surface: #FFFFFF;
+    --color-text: #212121;
+    --color-text-secondary: #616161;
+    --color-primary: #4CAF50;
+    --color-primary-dark: #388E3C;
+    --color-danger: #F44336;
+    --color-danger-dark: #D32F2F;
+    --color-warning: #FFC107;
+    --color-warning-dark: #FFA000;
+    --color-border: #E0E0E0;
+    --color-disabled: #9E9E9E;
+
+    /* Typography */
+    --font-family: system-ui, -apple-system, Roboto, sans-serif;
+    --font-size-body: 16px;
+    --font-size-h1: 24px;
+    --font-size-h2: 20px;
+    --font-size-small: 14px;
+    --line-height: 1.5;
+
+    /* Touch targets */
+    --touch-min: 44px;
+    --touch-primary: 60px;
+    --touch-list-item: 56px;
+    --touch-spacing: 8px;
+
+    /* Layout */
+    --safe-margin: 16px;
+    --content-max-width: 768px;
+    --border-radius: 8px;
+    --border-radius-lg: 12px;
+
+    /* Maturity colors (USDA 6-stage scale) */
+    --maturity-green: #4CAF50;
+    --maturity-breaker: #8BC34A;
+    --maturity-turning: #CDDC39;
+    --maturity-pink: #FF9800;
+    --maturity-light-red: #FF5722;
+    --maturity-red: #F44336;
+}
+
+/* ==========================================================================
+   2. Reset and Base Styles
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    font-size: var(--font-size-body);
+    line-height: var(--line-height);
+    -webkit-text-size-adjust: 100%;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-family);
+    font-size: var(--font-size-body);
+    line-height: var(--line-height);
+    color: var(--color-text);
+    background-color: var(--color-bg);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Prevent overscroll bounce on the touchscreen */
+    overscroll-behavior: none;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    margin-top: 0;
+    line-height: 1.2;
+}
+
+h1 {
+    font-size: var(--font-size-h1);
+    font-weight: 700;
+}
+
+h2 {
+    font-size: var(--font-size-h2);
+    font-weight: 600;
+}
+
+p {
+    margin-top: 0;
+    margin-bottom: 0.75em;
+}
+
+a {
+    color: var(--color-primary-dark);
+    text-decoration: none;
+}
+
+img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+}
+
+/* ==========================================================================
+   3. Layout — App Header
+   ========================================================================== */
+
+.app-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background-color: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+    padding: 0 var(--safe-margin);
+    min-height: var(--touch-list-item);
+    display: flex;
+    align-items: center;
+}
+
+.header-content {
+    width: 100%;
+    max-width: var(--content-max-width);
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--touch-spacing);
+    min-height: var(--touch-list-item);
+}
+
+.header-title {
+    margin: 0;
+    font-size: var(--font-size-h1);
+    font-weight: 700;
+    color: var(--color-text);
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--touch-spacing);
+}
+
+/* ==========================================================================
+   4. Layout — Main Content
+   ========================================================================== */
+
+.main-content {
+    padding: var(--safe-margin);
+    max-width: var(--content-max-width);
+    margin: 0 auto;
+    /* Ensure content area fills available viewport height minus header */
+    min-height: calc(480px - var(--touch-list-item) - 2 * var(--safe-margin));
+}
+
+/* ==========================================================================
+   5. Back Button
+   ========================================================================== */
+
+.back-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--touch-min);
+    min-height: var(--touch-min);
+    padding: 8px 12px;
+    font-size: var(--font-size-h2);
+    color: var(--color-text);
+    text-decoration: none;
+    border-radius: var(--border-radius);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.15s ease;
+}
+
+.back-button:active {
+    background-color: var(--color-border);
+}
+
+/* ==========================================================================
+   6. Cards
+   ========================================================================== */
+
+.card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-lg);
+    padding: var(--safe-margin);
+    margin-bottom: var(--touch-spacing);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.card-link {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    border-radius: var(--border-radius-lg);
+    -webkit-tap-highlight-color: transparent;
+    transition: box-shadow 0.15s ease;
+}
+
+.card-link:active .card {
+    box-shadow: 0 0 0 2px var(--color-primary);
+}
+
+/* List item cards — ensure touch target height */
+.card-list-item {
+    min-height: var(--touch-list-item);
+    padding: 12px var(--safe-margin);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+}
+
+.card-title {
+    font-size: var(--font-size-body);
+    font-weight: 600;
+    margin: 0;
+    color: var(--color-text);
+}
+
+.card-subtitle {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+    margin: 0;
+}
+
+.card-meta {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+    margin: 0;
+}
+
+/* ==========================================================================
+   7. Buttons
+   ========================================================================== */
+
+/* Base button styles */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--touch-min);
+    min-height: var(--touch-min);
+    padding: 12px 20px;
+    font-family: var(--font-family);
+    font-size: var(--font-size-body);
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    border: none;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.15s ease, opacity 0.15s ease;
+    gap: 8px;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Primary action button — larger touch target */
+.btn-primary {
+    min-width: var(--touch-primary);
+    min-height: 48px;
+    padding: 14px 24px;
+    background-color: var(--color-primary);
+    color: #FFFFFF;
+}
+
+.btn-primary:active:not(:disabled) {
+    background-color: var(--color-primary-dark);
+}
+
+/* Danger button */
+.btn-danger {
+    min-width: var(--touch-primary);
+    min-height: 48px;
+    padding: 14px 24px;
+    background-color: var(--color-danger);
+    color: #FFFFFF;
+}
+
+.btn-danger:active:not(:disabled) {
+    background-color: var(--color-danger-dark);
+}
+
+/* Secondary/neutral button */
+.btn-secondary {
+    min-width: var(--touch-min);
+    min-height: var(--touch-min);
+    padding: 12px 20px;
+    background-color: var(--color-surface);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+}
+
+.btn-secondary:active:not(:disabled) {
+    background-color: var(--color-bg);
+}
+
+/* Icon button (header actions like edit, delete, add) */
+.btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--touch-min);
+    min-height: var(--touch-min);
+    padding: 8px;
+    background: transparent;
+    border: none;
+    border-radius: var(--border-radius);
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-h2);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    text-decoration: none;
+}
+
+.btn-icon:active {
+    background-color: var(--color-border);
+}
+
+.btn-icon--danger {
+    color: var(--color-danger);
+}
+
+/* Full-width button variant */
+.btn-full {
+    width: 100%;
+}
+
+/* Button group with spacing */
+.btn-group {
+    display: flex;
+    gap: var(--touch-spacing);
+    flex-wrap: wrap;
+}
+
+/* ==========================================================================
+   8. Forms
+   ========================================================================== */
+
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--safe-margin);
+}
+
+.form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-label {
+    font-size: var(--font-size-body);
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+.form-input {
+    min-height: var(--touch-min);
+    padding: 10px 14px;
+    font-family: var(--font-family);
+    font-size: var(--font-size-body);
+    color: var(--color-text);
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    width: 100%;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.form-input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+}
+
+.form-input--error {
+    border-color: var(--color-danger);
+}
+
+.form-textarea {
+    min-height: 88px;
+    resize: vertical;
+}
+
+.form-hint {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+}
+
+.form-error {
+    font-size: var(--font-size-small);
+    color: var(--color-danger);
+}
+
+/* Form row for side-by-side inputs */
+.form-row {
+    display: flex;
+    gap: var(--safe-margin);
+}
+
+.form-row .form-field {
+    flex: 1;
+}
+
+/* Form actions (buttons at the bottom) */
+.form-actions {
+    display: flex;
+    gap: var(--touch-spacing);
+    padding-top: 8px;
+}
+
+/* ==========================================================================
+   9. Lists
+   ========================================================================== */
+
+.list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--touch-spacing);
+}
+
+.list-item {
+    min-height: var(--touch-list-item);
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.list-item-link {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: var(--touch-list-item);
+    padding: 12px var(--safe-margin);
+    text-decoration: none;
+    color: inherit;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    -webkit-tap-highlight-color: transparent;
+    transition: box-shadow 0.15s ease;
+    gap: 12px;
+}
+
+.list-item-link:active {
+    box-shadow: 0 0 0 2px var(--color-primary);
+}
+
+.list-item-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.list-item-title {
+    font-size: var(--font-size-body);
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 0;
+}
+
+.list-item-subtitle {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+    margin: 2px 0 0;
+}
+
+.list-item-chevron {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-h2);
+    flex-shrink: 0;
+}
+
+/* ==========================================================================
+   10. Scrollable Regions
+   ========================================================================== */
+
+.scrollable {
+    min-height: 200px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+}
+
+/* Scrollable with max height for constrained viewport */
+.scrollable--constrained {
+    max-height: calc(480px - var(--touch-list-item) - 3 * var(--safe-margin));
+}
+
+/* ==========================================================================
+   11. Empty State
+   ========================================================================== */
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 32px var(--safe-margin);
+    min-height: 200px;
+    gap: var(--safe-margin);
+}
+
+.empty-state-message {
+    font-size: var(--font-size-body);
+    color: var(--color-text-secondary);
+    margin: 0;
+}
+
+/* ==========================================================================
+   12. Metric Cards
+   ========================================================================== */
+
+.metric-card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-lg);
+    padding: var(--safe-margin);
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.metric-card-value {
+    font-size: var(--font-size-h1);
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.metric-card-label {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+}
+
+.metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--touch-spacing);
+}
+
+/* ==========================================================================
+   13. Maturity Bar
+   ========================================================================== */
+
+.maturity-bar {
+    display: flex;
+    width: 100%;
+    height: 32px;
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    background-color: var(--color-border);
+}
+
+.maturity-bar-segment {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: #FFFFFF;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: clip;
+    white-space: nowrap;
+}
+
+.maturity-bar-segment--green {
+    background-color: var(--maturity-green);
+}
+
+.maturity-bar-segment--breaker {
+    background-color: var(--maturity-breaker);
+}
+
+.maturity-bar-segment--turning {
+    background-color: var(--maturity-turning);
+    color: var(--color-text);
+}
+
+.maturity-bar-segment--pink {
+    background-color: var(--maturity-pink);
+}
+
+.maturity-bar-segment--light-red {
+    background-color: var(--maturity-light-red);
+}
+
+.maturity-bar-segment--red {
+    background-color: var(--maturity-red);
+}
+
+.maturity-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-top: 8px;
+}
+
+.maturity-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+}
+
+.maturity-legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+/* ==========================================================================
+   14. Snapshot Gallery
+   ========================================================================== */
+
+.snapshot-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: var(--touch-spacing);
+}
+
+.snapshot-thumbnail {
+    aspect-ratio: 4 / 3;
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    background-color: var(--color-border);
+    border: 1px solid var(--color-border);
+}
+
+.snapshot-thumbnail img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* ==========================================================================
+   15. Alerts and Banners
+   ========================================================================== */
+
+.alert {
+    padding: 12px var(--safe-margin);
+    border-radius: var(--border-radius);
+    font-size: var(--font-size-body);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: var(--touch-min);
+}
+
+.alert--error {
+    background-color: #FFEBEE;
+    border: 1px solid var(--color-danger);
+    color: var(--color-danger-dark);
+}
+
+.alert--warning {
+    background-color: #FFF8E1;
+    border: 1px solid var(--color-warning);
+    color: var(--color-warning-dark);
+}
+
+.alert--success {
+    background-color: #E8F5E9;
+    border: 1px solid var(--color-primary);
+    color: var(--color-primary-dark);
+}
+
+.alert--info {
+    background-color: #E3F2FD;
+    border: 1px solid #1976D2;
+    color: #0D47A1;
+}
+
+/* ==========================================================================
+   16. Confirmation Dialog
+   ========================================================================== */
+
+.dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: var(--safe-margin);
+}
+
+.dialog {
+    background-color: var(--color-surface);
+    border-radius: var(--border-radius-lg);
+    padding: 24px;
+    max-width: 400px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--safe-margin);
+}
+
+.dialog-message {
+    font-size: var(--font-size-body);
+    color: var(--color-text);
+    line-height: var(--line-height);
+    margin: 0;
+}
+
+.dialog-actions {
+    display: flex;
+    gap: var(--touch-spacing);
+    justify-content: flex-end;
+}
+
+/* ==========================================================================
+   17. Status Indicators
+   ========================================================================== */
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: var(--safe-margin);
+    border-radius: var(--border-radius);
+}
+
+.status-icon {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.status-text {
+    font-size: var(--font-size-body);
+    font-weight: 600;
+}
+
+/* Spinner animation for initializing/finishing states */
+.spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid var(--color-border);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Live counter display */
+.live-counters {
+    display: flex;
+    flex-direction: column;
+    gap: var(--touch-spacing);
+    padding: var(--safe-margin);
+}
+
+.live-counter {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.live-counter-value {
+    font-size: var(--font-size-h1);
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.live-counter-label {
+    font-size: var(--font-size-body);
+    color: var(--color-text-secondary);
+}
+
+/* ==========================================================================
+   18. Info Panel
+   ========================================================================== */
+
+.info-panel {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    padding: var(--safe-margin);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.info-row {
+    display: flex;
+    gap: 8px;
+}
+
+.info-label {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+    min-width: 100px;
+}
+
+.info-value {
+    font-size: var(--font-size-body);
+    color: var(--color-text);
+    font-weight: 500;
+}
+
+/* ==========================================================================
+   19. Section Headers
+   ========================================================================== */
+
+.section-header {
+    font-size: var(--font-size-h2);
+    font-weight: 600;
+    color: var(--color-text);
+    margin: var(--safe-margin) 0 var(--touch-spacing);
+    padding: 0;
+}
+
+/* ==========================================================================
+   20. Utility Classes
+   ========================================================================== */
+
+.text-secondary {
+    color: var(--color-text-secondary);
+}
+
+.text-small {
+    font-size: var(--font-size-small);
+}
+
+.text-center {
+    text-align: center;
+}
+
+.mt-0 {
+    margin-top: 0;
+}
+
+.mb-0 {
+    margin-bottom: 0;
+}
+
+.mb-sm {
+    margin-bottom: var(--touch-spacing);
+}
+
+.mb-md {
+    margin-bottom: var(--safe-margin);
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* ==========================================================================
+   21. Touch Target Enforcement
+   Ensures all interactive elements meet minimum sizing requirements.
+   ========================================================================== */
+
+/* All clickable elements get minimum 44×44 touch target */
+button,
+[role="button"],
+a[href],
+input[type="submit"],
+input[type="button"],
+select {
+    min-height: var(--touch-min);
+    min-width: var(--touch-min);
+}
+
+/* Ensure spacing between adjacent interactive elements */
+button + button,
+a + a,
+.btn + .btn {
+    margin-left: var(--touch-spacing);
+}
+
+/* ==========================================================================
+   22. Monitoring Execution Screen
+   ========================================================================== */
+
+.execution-status-block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--safe-margin);
+    padding: var(--safe-margin) 0;
+}
+
+.execution-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 32px var(--safe-margin);
+    min-height: 200px;
+    gap: var(--safe-margin);
+}
+
+.execution-status-text {
+    font-size: var(--font-size-h2);
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 0;
+}
+
+.execution-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    font-weight: 700;
+}
+
+.execution-icon--success {
+    background-color: #E8F5E9;
+    color: var(--color-primary-dark);
+}
+
+.execution-icon--warning {
+    background-color: #FFF8E1;
+    color: var(--color-warning-dark);
+}
+
+.execution-icon--error {
+    background-color: #FFEBEE;
+    color: var(--color-danger-dark);
+}
+
+.execution-actions {
+    padding: var(--safe-margin) 0;
+}
+
+/* Larger spinner variant for execution screen */
+.spinner--lg {
+    width: 48px;
+    height: 48px;
+    border-width: 4px;
+}
+
+/* Progress bar for finishing state */
+.progress-bar {
+    width: 100%;
+    max-width: 300px;
+    height: 8px;
+    background-color: var(--color-border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    width: 60%;
+    background-color: var(--color-primary);
+    border-radius: 4px;
+    animation: progress-indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+    0% {
+        transform: translateX(-100%);
+        width: 60%;
+    }
+    50% {
+        transform: translateX(40%);
+        width: 60%;
+    }
+    100% {
+        transform: translateX(200%);
+        width: 60%;
+    }
+}
+
+.alert-icon {
+    flex-shrink: 0;
+    font-size: var(--font-size-h2);
+}
+
+/* ==========================================================================
+   23. Elapsed Timer
+   ========================================================================== */
+
+.elapsed-timer {
+    font-size: 32px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text);
+    text-align: center;
+    padding: 8px 0;
+}
+
+/* ==========================================================================
+   24. Last Snapshot Container
+   ========================================================================== */
+
+.last-snapshot-container {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-lg);
+    padding: var(--safe-margin);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.last-snapshot-container img {
+    width: 100%;
+    max-width: 320px;
+    height: auto;
+    border-radius: var(--border-radius);
+    object-fit: contain;
+}
+
+/* ==========================================================================
+   25. Activity Log Panel
+   ========================================================================== */
+
+.activity-log-panel {
+    max-height: 200px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.log-entry {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: var(--font-size-small);
+    line-height: 1.4;
+}
+
+.log-entry-time {
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.log-entry-level {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    align-self: center;
+}
+
+.log-entry-message {
+    color: var(--color-text);
+    word-break: break-word;
+    flex: 1;
+}
+
+/* Log level color variants */
+.log-entry--info .log-entry-level {
+    background-color: #1976D2;
+}
+
+.log-entry--success .log-entry-level {
+    background-color: #4CAF50;
+}
+
+.log-entry--warning .log-entry-level {
+    background-color: #FFC107;
+}
+
+.log-entry--error .log-entry-level {
+    background-color: #F44336;
+}

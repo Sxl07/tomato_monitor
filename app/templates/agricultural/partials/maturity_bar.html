@@ -1,0 +1,33 @@
+{# Reusable USDA maturity distribution bar partial.
+   Variables:
+     - maturity_stages: dict with keys (green, breaker, turning, pink, light_red, red) → percentage values (0-100)
+#}
+{% set stages = [
+    ("green", "Verde", maturity_stages.green | default(0)),
+    ("breaker", "Breaker", maturity_stages.breaker | default(0)),
+    ("turning", "Turning", maturity_stages.turning | default(0)),
+    ("pink", "Pink", maturity_stages.pink | default(0)),
+    ("light-red", "Light Red", maturity_stages.light_red | default(0)),
+    ("red", "Rojo", maturity_stages.red | default(0)),
+] %}
+
+<div class="maturity-bar" role="img" aria-label="Distribución de madurez USDA">
+    {% for stage_key, stage_label, stage_pct in stages %}
+    {% if stage_pct > 0 %}
+    <div class="maturity-bar-segment maturity-bar-segment--{{ stage_key }}"
+         style="width: {{ stage_pct }}%;"
+         title="{{ stage_label }}: {{ stage_pct | round(1) }}%">
+        {% if stage_pct >= 8 %}{{ stage_pct | round(0) | int }}%{% endif %}
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+
+<div class="maturity-legend">
+    {% for stage_key, stage_label, stage_pct in stages %}
+    <div class="maturity-legend-item">
+        <span class="maturity-legend-dot" style="background-color: var(--maturity-{{ stage_key }});"></span>
+        <span>{{ stage_label }} ({{ stage_pct | round(1) }}%)</span>
+    </div>
+    {% endfor %}
+</div>

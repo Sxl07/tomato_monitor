@@ -87,15 +87,20 @@ def should_capture_new_image(
     reference_bgr,
     current_bgr,
     frames_since_last_capture: int,
+    *,
+    cooldown_frames: int = MIN_FRAMES_BETWEEN_CAPTURES,
+    timeout_frames: int = MAX_FRAMES_WITHOUT_CAPTURE,
+    orb_threshold: int = ORB_MIN_MATCH_COUNT,
+    hsv_threshold: float = HSV_HIST_DIFF_THRESHOLD,
 ) -> Tuple[bool, Dict[str, float]]:
     orb_matches = compute_orb_match_count(reference_bgr, current_bgr)
     hist_diff = compute_histogram_difference(reference_bgr, current_bgr)
 
-    cooldown_ok = frames_since_last_capture >= MIN_FRAMES_BETWEEN_CAPTURES
-    timeout_force = frames_since_last_capture >= MAX_FRAMES_WITHOUT_CAPTURE
+    cooldown_ok = frames_since_last_capture >= cooldown_frames
+    timeout_force = frames_since_last_capture >= timeout_frames
 
-    orb_changed = orb_matches < ORB_MIN_MATCH_COUNT
-    hist_changed = hist_diff > HSV_HIST_DIFF_THRESHOLD
+    orb_changed = orb_matches < orb_threshold
+    hist_changed = hist_diff > hsv_threshold
 
     if USE_HISTOGRAM_VALIDATION:
         trigger = cooldown_ok and orb_changed and hist_changed
@@ -105,7 +110,7 @@ def should_capture_new_image(
     if timeout_force:
         trigger = True
 
-    orb_change_amount = max(0.0, float(ORB_MIN_MATCH_COUNT - orb_matches))
+    orb_change_amount = max(0.0, float(orb_threshold - orb_matches))
 
     metrics = {
         "orb_matches": float(orb_matches),

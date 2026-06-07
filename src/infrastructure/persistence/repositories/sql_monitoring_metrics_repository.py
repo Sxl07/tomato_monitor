@@ -1,0 +1,102 @@
+"""Concrete SQLAlchemy implementation of MonitoringMetricsRepository.
+
+Persists MonitoringMetrics entities to the SQLite database, converting between
+domain dataclasses and ORM models internally.
+"""
+
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from src.domain.entities.monitoring_metrics import MonitoringMetrics
+from src.domain.exceptions import MetricsNotAllowedError, ParentNotFoundError
+from src.domain.repositories.monitoring_metrics_repository import (
+    MonitoringMetricsRepository,
+)
+from src.infrastructure.persistence.models.monitoring_metrics_model import (
+    MonitoringMetricsModel,
+)
+from src.infrastructure.persistence.models.monitoring_model import MonitoringModel
+
+# Terminal statuses that allow metrics creation
+_ALLOWED_STATUSES = {"completed", "aborted"}
+
+
+class SqlMonitoringMetricsRepository(MonitoringMetricsRepository):
+    """SQLAlchemy-backed repository for MonitoringMetrics entities.
+
+    All operations use the injected Session instance. The UNIQUE constraint
+    on monitoring_id ensures at most one metrics record per monitoring.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def create(
+        self, monitoring_id: int, metrics: MonitoringMetrics
+    ) -> MonitoringMetrics:
+        """Persist monitoring metrics for the given monitoring.
+
+        Guards:
+            - Raises ParentNotFoundError if monitoring_id does not exist.
+            - Raises MetricsNotAllowedError if monitoring status is not in
+              {completed, aborted}.
+            - The UNIQUE constraint on monitoring_id will raise IntegrityError
+              if metrics already exist for the monitoring.
+        """
+        monitoring = self._session.get(MonitoringModel, monitoring_id)
+        if monitoring is None:
+            raise ParentNotFoundError("Monitoring", monitoring_id)
+
+        if monitoring.status not in _ALLOWED_STATUSES:
+            raise MetricsNotAllowedError(monitoring_id, monitoring.status)
+
+        model = MonitoringMetricsModel(
+            monitoring_id=monitoring_id,
+            total_tomatoes=metrics.total_tomatoes,
+            healthy_count=metrics.healthy_count,
+            unhealthy_count=metrics.unhealthy_count,
+            pct_healthy=metrics.pct_healthy,
+            pct_unhealthy=metrics.pct_unhealthy,
+            pct_green=metrics.pct_green,
+            pct_breaker=metrics.pct_breaker,
+            pct_turning=metrics.pct_turning,
+            pct_pink=metrics.pct_pink,
+            pct_light_red=metrics.pct_light_red,
+            pct_red=metrics.pct_red,
+            snapshots_with_detections=metrics.snapshots_with_detections,
+        )
+        self._session.add(model)
+        self._session.flush()
+        return self._to_entity(model)
+
+    def get_by_monitoring(self, monitoring_id: int) -> Optional[MonitoringMetrics]:
+        """Return the metrics for the given monitoring, or None if not found."""
+        model = (
+            self._session.query(MonitoringMetricsModel)
+            .filter(MonitoringMetricsModel.monitoring_id == monitoring_id)
+            .first()
+        )
+        if model is None:
+            return None
+        return self._to_entity(model)
+
+    def _to_entity(self, model: MonitoringMetricsModel) -> MonitoringMetrics:
+        """Convert an ORM model instance to a domain entity."""
+        return MonitoringMetrics(
+            id=model.id,
+            monitoring_id=model.monitoring_id,
+            total_tomatoes=model.total_tomatoes,
+            healthy_count=model.healthy_count,
+            unhealthy_count=model.unhealthy_count,
+            pct_healthy=model.pct_healthy,
+            pct_unhealthy=model.pct_unhealthy,
+            pct_green=model.pct_green,
+            pct_breaker=model.pct_breaker,
+            pct_turning=model.pct_turning,
+            pct_pink=model.pct_pink,
+            pct_light_red=model.pct_light_red,
+            pct_red=model.pct_red,
+            snapshots_with_detections=model.snapshots_with_detections,
+            computed_at=model.computed_at,
+        )

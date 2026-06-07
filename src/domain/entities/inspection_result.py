@@ -1,11 +1,35 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional
 
 from src.domain.entities.fruit_detection import FruitDetection
 from src.domain.entities.health_assessment import HealthAssessment
 from src.domain.entities.maturity_assessment import MaturityAssessment
+
+
+@dataclass
+class DetectionInspectionResult:
+    """A single detected tomato within a snapshot (data-model entity).
+
+    Contains bounding box coordinates, detection confidence, health label,
+    and optional maturity assessment.
+    """
+
+    snapshot_id: int
+    detection_index: int
+    bbox_x1: int
+    bbox_y1: int
+    bbox_x2: int
+    bbox_y2: int
+    detection_score: float
+    health_label: str
+    health_confidence: float
+    id: Optional[int] = None
+    maturity_stage: Optional[str] = None
+    maturity_percent: Optional[float] = None
+    created_at: Optional[datetime] = None
 
 
 @dataclass
