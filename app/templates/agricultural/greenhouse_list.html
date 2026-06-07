@@ -1,0 +1,38 @@
+{% extends "base_agricultural.html" %}
+
+{% block header_title %}Mis Invernaderos{% endblock %}
+
+{% block header_actions %}
+<a href="/invernaderos/crear" class="btn-icon" aria-label="Crear invernadero">+</a>
+{% endblock %}
+
+{% block content %}
+{% if error %}
+<div class="alert alert-error" role="alert">{{ error }}</div>
+{% endif %}
+
+{% if greenhouses %}
+<div class="card-list">
+    {% for gh in greenhouses %}
+    <a href="/invernaderos/{{ gh.id }}" class="card card-link">
+        <div class="card-body">
+            <h2 class="card-title">{{ gh.name }}</h2>
+            <p class="card-subtitle">{{ gh.module_count }} módulos</p>
+            <p class="card-meta">
+                {% if gh.last_monitoring_date %}
+                Último monitoreo: {{ gh.last_monitoring_date }}
+                {% else %}
+                Sin monitoreos
+                {% endif %}
+            </p>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+{% set empty_message = "No hay invernaderos registrados. Crea el primero." %}
+{% set empty_action_text = "Crear Invernadero" %}
+{% set empty_action_url = "/invernaderos/crear" %}
+{% include "agricultural/partials/empty_state.html" %}
+{% endif %}
+{% endblock %}

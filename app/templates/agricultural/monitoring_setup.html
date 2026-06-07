@@ -1,0 +1,246 @@
+{% extends "base_agricultural.html" %}
+
+{% block header_title %}{{ title }}{% endblock %}
+
+{% block content %}
+{% if errors %}
+<div class="alert alert--error" role="alert">
+    {% for error in errors %}
+    <p>{{ error }}</p>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Module Info Panel -->
+<div class="info-panel mb-md">
+    <div class="info-row">
+        <span class="info-label">Módulo</span>
+        <span class="info-value">{{ module.name }}</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">Cultivo</span>
+        <span class="info-value">{{ module.crop_type }}</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">Dimensiones</span>
+        <span class="info-value">
+            {% if module.width_m and module.length_m %}
+                {{ module.width_m }} × {{ module.length_m }} m
+            {% else %}
+                No configuradas
+            {% endif %}
+        </span>
+    </div>
+</div>
+
+<!-- Camera Preview Section -->
+<div class="card mb-md">
+    <h2 class="section-header mt-0">Vista previa de cámara</h2>
+
+    <div id="camera-preview-container" style="background-color: var(--color-bg); border-radius: var(--border-radius); overflow: hidden; min-height: 180px; display: flex; align-items: center; justify-content: center;">
+        <img
+            id="camera-preview-img"
+            src="/api/camera/preview"
+            alt="Vista previa de la cámara"
+            style="width: 100%; max-height: 240px; object-fit: contain; display: none;"
+        >
+        <p id="camera-preview-placeholder" class="text-secondary text-center" style="padding: 16px;">
+            Cargando vista previa...
+        </p>
+    </div>
+
+    <!-- Status Badges -->
+    <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;">
+        <span id="camera-badge" class="alert" style="padding: 8px 12px; font-size: var(--font-size-small); min-height: auto; border-radius: 20px;">
+            Verificando cámara...
+        </span>
+        <span id="model-badge" class="alert" style="padding: 8px 12px; font-size: var(--font-size-small); min-height: auto; border-radius: 20px;">
+            {% if model_status == "available" %}
+                Modelo disponible
+            {% else %}
+                Modelo no encontrado
+            {% endif %}
+        </span>
+    </div>
+
+    <!-- Refresh Camera Button -->
+    <div style="margin-top: 12px;">
+        <button
+            type="button"
+            id="btn-refresh-camera"
+            class="btn btn-secondary"
+            onclick="refreshCamera()"
+            style="min-height: var(--touch-min); min-width: var(--touch-min);"
+        >
+            Actualizar cámara
+        </button>
+    </div>
+</div>
+
+<!-- Monitoring Form -->
+<form method="post" action="/modulos/{{ module.id }}/monitoreo/iniciar" class="form" novalidate>
+    <div class="form-row">
+        <div class="form-field">
+            <label for="width_m" class="form-label">Ancho (metros)</label>
+            <input
+                type="number"
+                id="width_m"
+                name="width_m"
+                class="form-input"
+                value="{{ width_m }}"
+                placeholder="Ej: 2.0"
+                step="0.1"
+                min="0.1"
+                required
+                autocomplete="off"
+            >
+        </div>
+
+        <div class="form-field">
+            <label for="length_m" class="form-label">Largo (metros)</label>
+            <input
+                type="number"
+                id="length_m"
+                name="length_m"
+                class="form-input"
+                value="{{ length_m }}"
+                placeholder="Ej: 5.0"
+                step="0.1"
+                min="0.1"
+                required
+                autocomplete="off"
+            >
+        </div>
+    </div>
+
+    <div class="form-field">
+        <label for="notes" class="form-label">Notas (opcional)</label>
+        <textarea
+            id="notes"
+            name="notes"
+            class="form-input form-textarea"
+            placeholder="Ej: Revisión después de riego"
+            rows="3"
+            autocomplete="off"
+        >{{ notes }}</textarea>
+    </div>
+
+    <div class="form-actions">
+        <button
+            type="submit"
+            id="btn-start-monitoring"
+            class="btn btn-primary"
+            disabled
+        >
+            Iniciar Monitoreo
+        </button>
+        <a href="/modulos/{{ module.id }}" class="btn btn-secondary">Cancelar</a>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    "use strict";
+
+    var cameraStatus = "unknown";
+    var modelStatus = "{{ model_status }}";
+
+    var previewImg = document.getElementById("camera-preview-img");
+    var previewPlaceholder = document.getElementById("camera-preview-placeholder");
+    var cameraBadge = document.getElementById("camera-badge");
+    var modelBadge = document.getElementById("model-badge");
+    var btnStart = document.getElementById("btn-start-monitoring");
+
+    // Apply model badge styling on load
+    updateModelBadge();
+
+    // Fetch camera status on page load
+    refreshCamera();
+
+    function refreshCamera() {
+        fetchCameraStatus();
+        fetchCameraPreview();
+    }
+
+    function fetchCameraStatus() {
+        fetch("/api/camera/status")
+            .then(function(response) {
+                return response.json();
+            })
+            .then(function(data) {
+                cameraStatus = data.status;
+                updateCameraBadge();
+                updateStartButton();
+            })
+            .catch(function() {
+                cameraStatus = "error";
+                updateCameraBadge();
+                updateStartButton();
+            });
+    }
+
+    function fetchCameraPreview() {
+        // Use a timestamped URL to avoid browser cache
+        var url = "/api/camera/preview?t=" + Date.now();
+        var img = new Image();
+        img.onload = function() {
+            previewImg.src = url;
+            previewImg.style.display = "block";
+            previewPlaceholder.style.display = "none";
+        };
+        img.onerror = function() {
+            previewImg.style.display = "none";
+            previewPlaceholder.style.display = "block";
+            previewPlaceholder.textContent = "Imagen no disponible";
+        };
+        img.src = url;
+    }
+
+    function updateCameraBadge() {
+        if (cameraStatus === "available") {
+            cameraBadge.textContent = "Cámara activa";
+            cameraBadge.style.backgroundColor = "#E8F5E9";
+            cameraBadge.style.border = "1px solid #4CAF50";
+            cameraBadge.style.color = "#388E3C";
+        } else if (cameraStatus === "not_detected") {
+            cameraBadge.textContent = "Cámara no detectada";
+            cameraBadge.style.backgroundColor = "#FFEBEE";
+            cameraBadge.style.border = "1px solid #F44336";
+            cameraBadge.style.color = "#D32F2F";
+        } else {
+            cameraBadge.textContent = "Imagen no disponible";
+            cameraBadge.style.backgroundColor = "#F5F5F5";
+            cameraBadge.style.border = "1px solid #9E9E9E";
+            cameraBadge.style.color = "#616161";
+        }
+    }
+
+    function updateModelBadge() {
+        if (modelStatus === "available") {
+            modelBadge.textContent = "Modelo disponible";
+            modelBadge.style.backgroundColor = "#E8F5E9";
+            modelBadge.style.border = "1px solid #4CAF50";
+            modelBadge.style.color = "#388E3C";
+        } else {
+            modelBadge.textContent = "Modelo no encontrado";
+            modelBadge.style.backgroundColor = "#FFEBEE";
+            modelBadge.style.border = "1px solid #F44336";
+            modelBadge.style.color = "#D32F2F";
+        }
+    }
+
+    function updateStartButton() {
+        if (cameraStatus === "available") {
+            btnStart.disabled = false;
+        } else {
+            btnStart.disabled = true;
+        }
+    }
+
+    // Expose refreshCamera globally for the button onclick
+    window.refreshCamera = refreshCamera;
+})();
+</script>
+{% endblock %}

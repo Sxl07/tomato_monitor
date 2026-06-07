@@ -1,0 +1,61 @@
+{% extends "base_agricultural.html" %}
+
+{% block header_title %}{{ module.name }} — {{ date_str }} {{ time_str }}{% endblock %}
+
+{% block content %}
+<section class="report-screen">
+
+    {% if metrics and metrics.total_tomatoes > 0 %}
+    {# --- Metric cards --- #}
+    <div class="metric-cards-grid">
+        {% set metric_value = metrics.total_tomatoes %}
+        {% set metric_label = "Total de tomates" %}
+        {% include "agricultural/partials/metric_card.html" %}
+
+        {% set metric_value = metrics.healthy_count ~ " (" ~ (metrics.pct_healthy | round(1)) ~ "%)" %}
+        {% set metric_label = "Tomates sanos" %}
+        {% include "agricultural/partials/metric_card.html" %}
+
+        {% set metric_value = metrics.unhealthy_count ~ " (" ~ (metrics.pct_unhealthy | round(1)) ~ "%)" %}
+        {% set metric_label = "Tomates enfermos" %}
+        {% include "agricultural/partials/metric_card.html" %}
+    </div>
+
+    {# --- Maturity bar --- #}
+    <div class="report-section">
+        <h2 class="section-heading">Distribución de madurez</h2>
+        {% set maturity_stages = metrics.maturity_stages %}
+        {% include "agricultural/partials/maturity_bar.html" %}
+    </div>
+
+    {% else %}
+    {# --- No tomatoes detected --- #}
+    <div class="empty-state">
+        <p class="empty-state-message">No se detectaron tomates en este monitoreo.</p>
+    </div>
+    {% endif %}
+
+    {# --- Snapshot gallery --- #}
+    {% if gallery %}
+    <div class="report-section">
+        <h2 class="section-heading">Snapshots con detecciones</h2>
+        <div class="snapshot-gallery">
+            {% for thumbnail in gallery %}
+            <div class="snapshot-thumbnail">
+                <img src="{{ thumbnail.image_url }}"
+                     alt="Snapshot {{ thumbnail.frame_index }}"
+                     onerror="this.onerror=null; this.src='/static/images/placeholder-snapshot.svg';"
+                     loading="lazy">
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# --- Back navigation --- #}
+    <div class="report-actions">
+        <a href="/modulos/{{ module.id }}" class="btn btn-primary">Volver al Módulo</a>
+    </div>
+
+</section>
+{% endblock %}

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 90" width="120" height="90">
+  <!-- Background -->
+  <rect width="120" height="90" rx="4" fill="#F5F5F5" stroke="#E0E0E0" stroke-width="1"/>
+  
+  <!-- Image icon (simplified camera/photo frame) -->
+  <rect x="30" y="20" width="60" height="45" rx="3" fill="none" stroke="#BDBDBD" stroke-width="2"/>
+  
+  <!-- Mountain/landscape inside the frame -->
+  <polyline points="30,58 48,40 60,50 72,36 90,58" fill="none" stroke="#BDBDBD" stroke-width="1.5" stroke-linejoin="round"/>
+  
+  <!-- Small leaf/plant accent -->
+  <path d="M58,68 C58,62 62,58 68,58 C62,58 58,54 58,48 C58,54 54,58 48,58 C54,58 58,62 58,68Z" fill="#A5D6A7" stroke="none" opacity="0.8"/>
+  
+  <!-- Diagonal line indicating missing -->
+  <line x1="35" y1="60" x2="85" y2="25" stroke="#E0E0E0" stroke-width="1.5" stroke-linecap="round"/>
+  
+  <!-- "No image" text -->
+  <text x="60" y="82" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8" fill="#9E9E9E">Sin imagen</text>
+</svg>

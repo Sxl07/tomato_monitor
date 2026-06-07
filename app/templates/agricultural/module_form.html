@@ -1,0 +1,85 @@
+{% extends "base_agricultural.html" %}
+
+{% block header_title %}
+{% if mode == "edit" %}Editar Módulo{% else %}Crear Módulo{% endif %}
+{% endblock %}
+
+{% block content %}
+{% if errors %}
+<div class="alert alert-error" role="alert">
+    {% for error in errors %}
+    <p>{{ error }}</p>
+    {% endfor %}
+</div>
+{% endif %}
+
+<form method="post" class="form" novalidate>
+    <div class="form-field">
+        <label for="name" class="form-label">Nombre del módulo</label>
+        <input
+            type="text"
+            id="name"
+            name="name"
+            class="form-input"
+            value="{{ name or '' }}"
+            required
+            placeholder="Ej: Módulo 1"
+            autocomplete="off"
+        >
+    </div>
+
+    <div class="form-field">
+        <label for="crop_type" class="form-label">Tipo de cultivo</label>
+        <input
+            type="text"
+            id="crop_type"
+            name="crop_type"
+            class="form-input"
+            value="{{ crop_type or 'Tomate Cherry' }}"
+            placeholder="Ej: Tomate Cherry"
+            autocomplete="off"
+        >
+    </div>
+
+    <div class="form-row">
+        <div class="form-field">
+            <label for="width_m" class="form-label">Ancho (metros)</label>
+            <input
+                type="number"
+                id="width_m"
+                name="width_m"
+                class="form-input"
+                value="{{ width_m or '' }}"
+                placeholder="Ej: 2.0"
+                step="0.1"
+                min="0"
+                autocomplete="off"
+            >
+        </div>
+
+        <div class="form-field">
+            <label for="length_m" class="form-label">Largo (metros)</label>
+            <input
+                type="number"
+                id="length_m"
+                name="length_m"
+                class="form-input"
+                value="{{ length_m or '' }}"
+                placeholder="Ej: 5.0"
+                step="0.1"
+                min="0"
+                autocomplete="off"
+            >
+        </div>
+    </div>
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">
+            {% if mode == "edit" %}Guardar Cambios{% else %}Crear Módulo{% endif %}
+        </button>
+        <a href="{% if mode == 'edit' %}/modulos/{{ module_id }}{% else %}/invernaderos/{{ greenhouse_id }}{% endif %}" class="btn btn-secondary">
+            Cancelar
+        </a>
+    </div>
+</form>
+{% endblock %}

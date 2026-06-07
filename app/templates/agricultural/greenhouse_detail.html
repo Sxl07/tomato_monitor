@@ -1,0 +1,44 @@
+{% extends "base_agricultural.html" %}
+
+{% block header_title %}{{ greenhouse.name }}{% endblock %}
+
+{% block header_actions %}
+<a href="/invernaderos/{{ greenhouse.id }}/modulos/crear" class="btn-icon" aria-label="Agregar módulo">+</a>
+<a href="/invernaderos/{{ greenhouse.id }}/editar" class="btn-icon" aria-label="Editar invernadero">✎</a>
+<button type="button" class="btn-icon btn-icon-danger" aria-label="Eliminar invernadero" onclick="showConfirmDialog('confirm-dialog')">🗑</button>
+{% endblock %}
+
+{% block content %}
+{% if modules %}
+<div class="card-list">
+    {% for module in modules %}
+    <a href="/modulos/{{ module.id }}" class="card card-link">
+        <div class="card-body">
+            <h2 class="card-title">{{ module.name }}</h2>
+            <p class="card-subtitle">
+                {{ module.crop_type }}
+                {% if module.dimensions %} — {{ module.dimensions }}{% endif %}
+            </p>
+            <p class="card-meta">
+                {% if module.last_monitoring_date %}
+                Último monitoreo: {{ module.last_monitoring_date }}
+                {% else %}
+                Sin monitoreos
+                {% endif %}
+            </p>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+{% set empty_message = "Este invernadero no tiene módulos. Agrega el primero." %}
+{% set empty_action_text = "Agregar Módulo" %}
+{% set empty_action_url = "/invernaderos/" ~ greenhouse.id ~ "/modulos/crear" %}
+{% include "agricultural/partials/empty_state.html" %}
+{% endif %}
+
+{% set dialog_message = "¿Seguro que deseas eliminar este invernadero? Se eliminarán todos sus módulos y monitoreos." %}
+{% set confirm_url = "/invernaderos/" ~ greenhouse.id ~ "/eliminar" %}
+{% set confirm_text = "Eliminar" %}
+{% include "agricultural/partials/confirm_dialog.html" %}
+{% endblock %}

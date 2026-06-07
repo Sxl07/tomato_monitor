@@ -1,0 +1,12 @@
+{# Reusable empty state partial.
+   Variables:
+     - empty_message: text to display as the empty state message
+     - empty_action_text: (optional) text for the action button
+     - empty_action_url: (optional) URL for the action button
+#}
+<div class="empty-state">
+    <p class="empty-state-message">{{ empty_message }}</p>
+    {% if empty_action_text and empty_action_url %}
+    <a href="{{ empty_action_url }}" class="btn btn-primary">{{ empty_action_text }}</a>
+    {% endif %}
+</div>
