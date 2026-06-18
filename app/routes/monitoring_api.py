@@ -15,9 +15,9 @@ router = APIRouter(prefix="/api", tags=["monitoring-api"])
 
 
 @router.get("/camera/preview")
-async def camera_preview():
+async def camera_preview(request: Request):
     """Return a single JPEG frame from the camera."""
-    camera_service = CameraService()
+    camera_service = request.app.state.camera_service
     result = camera_service.check_availability()
     if result.status != CameraStatus.AVAILABLE:
         return JSONResponse(
@@ -34,9 +34,9 @@ async def camera_preview():
 
 
 @router.get("/camera/status")
-async def camera_status():
+async def camera_status(request: Request):
     """Return camera availability status as JSON."""
-    camera_service = CameraService()
+    camera_service = request.app.state.camera_service
     result = camera_service.check_availability()
     return {"status": result.status.value, "reason": result.reason}
 
