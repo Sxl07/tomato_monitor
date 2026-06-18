@@ -468,18 +468,52 @@ class MonitoringService:
     def _run_worker(self, monitoring_id: int, worker: MonitoringWorker) -> None:
         """Wrapper that runs the worker and handles post-run transitions.
 
-        Transitions to 'running' before the loop starts, and handles
-        error state if the worker exits with an error reason.
+        IMPORTANT: Creates a FRESH database session for this background thread.
+        The request-scoped session from the HTTP handler is NOT valid here
+        (it gets closed after the response is sent, causing
+        "identity map is no longer valid" errors).
         """
+        from src.infrastructure.persistence.database import DatabaseManager
+        from src.infrastructure.persistence.repositories import (
+            SqlMonitoringRepository,
+            SqlSnapshotRepository,
+            SqlInspectionResultRepository,
+        )
+
+        # Create a fresh DB session for this background thread.
+        try:
+            db_manager = DatabaseManager()
+            thread_session = db_manager.get_session()
+        except Exception as e:
+            logger.error(
+                f"Failed to create thread-local DB session for monitoring {monitoring_id}: {e}"
+            )
+            self._active_workers.pop(monitoring_id, None)
+            self._worker_threads.pop(monitoring_id, None)
+            return
+
+        # Rebuild repositories with the thread-local session.
+        thread_monitoring_repo = SqlMonitoringRepository(session=thread_session)
+        thread_snapshot_repo = SqlSnapshotRepository(session=thread_session)
+        thread_inspection_repo = SqlInspectionResultRepository(session=thread_session)
+
+        # Patch the worker to use thread-local repositories and session.
+        worker._monitoring_repo = thread_monitoring_repo
+        worker._snapshot_repo = thread_snapshot_repo
+        worker._inspection_result_repo = thread_inspection_repo
+        worker._session = thread_session
+
         # Transition from initializing → running before the loop begins.
         try:
-            self._monitoring_repo.update_status(
+            thread_monitoring_repo.update_status(
                 monitoring_id, MonitoringState.RUNNING.value
             )
+            thread_session.commit()
         except Exception as e:
             logger.error(
                 f"Failed to transition monitoring {monitoring_id} to running: {e}"
             )
+            thread_session.close()
             self._active_workers.pop(monitoring_id, None)
             self._worker_threads.pop(monitoring_id, None)
             return
@@ -490,9 +524,10 @@ class MonitoringService:
         # After worker exits, check if it stopped due to an error.
         if worker.error_reason:
             try:
-                self._monitoring_repo.update_status(
+                thread_monitoring_repo.update_status(
                     monitoring_id, MonitoringState.ERROR.value
                 )
+                thread_session.commit()
             except Exception as e:
                 logger.error(
                     f"Failed to transition monitoring {monitoring_id} to error: {e}"
@@ -500,6 +535,12 @@ class MonitoringService:
             logger.error(
                 f"Monitoring {monitoring_id} ended with error: {worker.error_reason}"
             )
+
+        # Close the thread-local session.
+        try:
+            thread_session.close()
+        except Exception:
+            pass
 
         # Clean up worker and thread references.
         self._active_workers.pop(monitoring_id, None)

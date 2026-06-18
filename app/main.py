@@ -32,9 +32,7 @@ async def lifespan(app: FastAPI):
     app.state.camera_service = CameraService()
 
     yield
-    # Release camera on shutdown
-    if hasattr(app.state, "camera_service") and app.state.camera_service._frame_source:
-        app.state.camera_service._frame_source.release()
+    # No persistent camera to release — preview uses single-frame capture
 
 
 class DBSessionMiddleware(BaseHTTPMiddleware):
