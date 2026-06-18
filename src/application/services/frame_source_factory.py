@@ -18,39 +18,53 @@ def create_frame_source() -> Optional[FrameSource]:
 
     Resolution order:
         1. RaspberryCameraFrameSource (picamera2) — preferred on RPi with AI Camera
-        2. OpenCvFrameSource (cv2.VideoCapture) — fallback for USB webcams on dev PCs
+        2. OpenCvFrameSource (cv2.VideoCapture) — fallback ONLY if picamera2 is
+           NOT importable (i.e., not on Raspberry Pi). If picamera2 IS available
+           but the camera fails at runtime, we do NOT silently fall back to OpenCV.
         3. None — no camera backend is available
 
     Returns:
         A ready-to-use FrameSource instance, or None if no camera is accessible.
     """
+    picamera2_importable = False
+
     # Try picamera2 backend first
     try:
         from src.infrastructure.camera.raspberry_camera_frame_source import (
             RaspberryCameraFrameSource,
+            PICAMERA2_AVAILABLE,
         )
 
-        source = RaspberryCameraFrameSource()
-        if source.is_available():
-            logger.info("Camera backend selected: RaspberryCameraFrameSource (picamera2)")
-            return source
-        logger.debug("picamera2 imported but camera not detected; trying OpenCV fallback.")
+        if PICAMERA2_AVAILABLE:
+            picamera2_importable = True
+            source = RaspberryCameraFrameSource()
+            if source.is_available():
+                logger.info("Camera backend selected: RaspberryCameraFrameSource (picamera2)")
+                return source
+            # picamera2 is installed but camera not detected — do NOT fall back
+            # to OpenCV on Raspberry Pi. This is a real camera problem.
+            logger.error(
+                "picamera2 is installed but camera not detected. "
+                "Check cable/firmware. NOT falling back to OpenCV."
+            )
+            return None
     except Exception as e:
         logger.debug(f"picamera2 backend not available: {e}")
 
-    # Try OpenCV fallback
-    try:
-        from src.infrastructure.camera.opencv_frame_source import OpenCvFrameSource
+    # Only try OpenCV fallback if picamera2 is NOT importable (dev PC scenario)
+    if not picamera2_importable:
+        try:
+            from src.infrastructure.camera.opencv_frame_source import OpenCvFrameSource
 
-        source = OpenCvFrameSource()
-        if source.is_available():
-            logger.info("Camera backend selected: OpenCvFrameSource (cv2.VideoCapture)")
-            return source
-        logger.debug("OpenCV VideoCapture could not open any device.")
-    except Exception as e:
-        logger.debug(f"OpenCV backend not available: {e}")
+            source = OpenCvFrameSource()
+            if source.is_available():
+                logger.info("Camera backend selected: OpenCvFrameSource (cv2.VideoCapture)")
+                return source
+            logger.debug("OpenCV VideoCapture could not open any device.")
+        except Exception as e:
+            logger.debug(f"OpenCV backend not available: {e}")
 
-    logger.warning("No camera backend available. Neither picamera2 nor OpenCV could access a device.")
+    logger.warning("No camera backend available.")
     return None
 
 

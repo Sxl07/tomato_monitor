@@ -71,7 +71,10 @@ class CameraService:
             return CameraCheckResult(CameraStatus.ERROR, str(e))
 
     def capture_preview_frame(self) -> Optional[bytes]:
-        """Capture a single JPEG frame via the FrameSource.
+        """Capture a single JPEG frame for preview purposes.
+
+        Uses capture_single_frame() if available (RPi) to avoid leaving
+        camera resources retained. Falls back to read() for OpenCV sources.
 
         Returns JPEG bytes on success, None on failure.
         """
@@ -81,7 +84,11 @@ class CameraService:
             logger.warning("cv2 not available for JPEG encoding")
             return None
         try:
-            ret, frame = self._frame_source.read()
+            # Use single-frame capture if available (avoids resource retention)
+            if hasattr(self._frame_source, 'capture_single_frame'):
+                ret, frame = self._frame_source.capture_single_frame()
+            else:
+                ret, frame = self._frame_source.read()
             if not ret or frame is None:
                 return None
             _, jpeg_bytes = cv2.imencode(".jpg", frame)
