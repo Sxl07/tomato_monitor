@@ -27,8 +27,14 @@ async def lifespan(app: FastAPI):
     db_manager.init_db()
     app.state.db_manager = db_manager
     app.state.log_service = LogService()
+
+    from src.application.services.camera_service import CameraService
+    app.state.camera_service = CameraService()
+
     yield
-    # No cleanup needed for SQLite
+    # Release camera on shutdown
+    if hasattr(app.state, "camera_service") and app.state.camera_service._frame_source:
+        app.state.camera_service._frame_source.release()
 
 
 class DBSessionMiddleware(BaseHTTPMiddleware):
