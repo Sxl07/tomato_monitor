@@ -298,8 +298,13 @@
             lastSnapshotBlobUrl = URL.createObjectURL(blob);
 
             var imgEl = document.getElementById("last-snapshot-img");
+            var placeholderEl = document.getElementById("last-snapshot-placeholder");
             if (imgEl) {
                 imgEl.src = lastSnapshotBlobUrl;
+                imgEl.style.display = "block";
+            }
+            if (placeholderEl) {
+                placeholderEl.style.display = "none";
             }
         } catch (error) {
             // Silently ignore — non-critical, placeholder remains
