@@ -38,11 +38,50 @@ from src.application.services.model_service import ModelService
 from src.infrastructure.config.settings import DETECTION_MODEL_PATH
 from src.domain.entities.greenhouse import Greenhouse
 from src.domain.entities.module import Module
-from src.domain.entities.monitoring import Monitoring
 from src.domain.exceptions import DuplicateModuleError
 
 router = APIRouter(tags=["agricultural-ui"])
 templates = Jinja2Templates(directory="app/templates")
+
+import logging as _logging
+
+_logger = _logging.getLogger(__name__)
+
+
+def _build_inference_runner():
+    """Construct SnapshotInferenceRunner with loaded models.
+
+    Returns None if models cannot be loaded (files missing, import errors, etc.).
+    Logs the cost of on-demand loading for visibility.
+    """
+    try:
+        from src.infrastructure.vision.detectron_detector import build_tomato_detector
+        from src.infrastructure.vision.resnet_health_classifier import build_health_model_resnet
+        from src.infrastructure.vision.snapshot_inference_runner import SnapshotInferenceRunner
+        from src.infrastructure.config.settings import DETECTION_MODEL_PATH as det_path
+        from src.infrastructure.config.settings import HEALTH_MODEL_B_PATH
+
+        # Verify model files exist before attempting to load
+        if not det_path.exists():
+            _logger.warning(f"Detection model not found at {det_path}")
+            return None
+        if not HEALTH_MODEL_B_PATH.exists():
+            _logger.warning(f"Health model not found at {HEALTH_MODEL_B_PATH}")
+            return None
+
+        _logger.info("Cargando modelos de inferencia (esto puede tomar unos segundos)...")
+        detector = build_tomato_detector(det_path)
+        health_model, health_transform = build_health_model_resnet(HEALTH_MODEL_B_PATH)
+        _logger.info("Modelos de inferencia cargados correctamente.")
+
+        return SnapshotInferenceRunner(
+            detector=detector,
+            health_model=health_model,
+            health_transform=health_transform,
+        )
+    except Exception as e:
+        _logger.error(f"Error loading inference models: {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -535,7 +574,18 @@ def monitoring_start(
     length_m: str = Form(...),
     notes: str = Form(""),
 ):
-    """Start a monitoring session for the given module."""
+    """Start a monitoring session for the given module.
+
+    Delegates to MonitoringService.start_session() which:
+    - Validates module exists
+    - Enforces one-active-session-per-module invariant
+    - Creates the Monitoring entity
+    - Spawns the background capture worker
+    """
+    from src.application.services.monitoring_service import ActiveSessionError
+    from src.application.services.frame_source_factory import create_frame_source
+    from app.dependencies import get_log_service
+
     repo = get_module_repository(request)
     module = repo.get_by_id(id)
     if module is None:
@@ -572,36 +622,68 @@ def monitoring_start(
     # Auto-save dimensions to module record (R4.7)
     repo.update(id, {"width_m": width, "length_m": length})
 
-    # Start monitoring — check for active sessions first, then create
-    monitoring_repo = get_monitoring_repository(request)
-    try:
-        # Enforce one active session per module
-        existing = monitoring_repo.get_by_module(id)
-        active_statuses = {"initializing", "running", "paused", "finishing"}
-        for m in existing:
-            if m.status in active_statuses:
-                errors = ["Este módulo ya tiene un monitoreo activo."]
-                return templates.TemplateResponse(request, "agricultural/monitoring_setup.html", {
-                    "title": f"Nuevo Monitoreo — {module.name}",
-                    "module": module,
-                    "width_m": width_m,
-                    "length_m": length_m,
-                    "notes": notes,
-                    "errors": errors,
-                    "model_status": model_status,
-                    "show_back": True,
-                    "back_url": f"/modulos/{id}",
-                })
+    # Construct dependencies for MonitoringService.start_session()
+    # 1. Frame source (camera backend — picamera2 on RPi, OpenCV on PC)
+    frame_source = create_frame_source()
+    if frame_source is None:
+        errors = ["La cámara no está disponible. Verifica la conexión y vuelve a intentar."]
+        return templates.TemplateResponse(request, "agricultural/monitoring_setup.html", {
+            "title": f"Nuevo Monitoreo — {module.name}",
+            "module": module,
+            "width_m": width_m,
+            "length_m": length_m,
+            "notes": notes,
+            "errors": errors,
+            "model_status": model_status,
+            "show_back": True,
+            "back_url": f"/modulos/{id}",
+        })
 
-        monitoring = Monitoring(
+    # 2. Inference runner (detector + health + maturity models)
+    inference_runner = _build_inference_runner()
+    if inference_runner is None:
+        errors = ["No se pudieron cargar los modelos de inferencia. Verifica que los archivos estén en su lugar."]
+        frame_source.release()
+        return templates.TemplateResponse(request, "agricultural/monitoring_setup.html", {
+            "title": f"Nuevo Monitoreo — {module.name}",
+            "module": module,
+            "width_m": width_m,
+            "length_m": length_m,
+            "notes": notes,
+            "errors": errors,
+            "model_status": model_status,
+            "show_back": True,
+            "back_url": f"/modulos/{id}",
+        })
+
+    # 3. DB session and log service
+    from app.dependencies import _get_request_session
+    db_session = _get_request_session(request)
+    log_service = get_log_service(request)
+
+    # Delegate to MonitoringService
+    monitoring_service = get_monitoring_service(request)
+    try:
+        monitoring = monitoring_service.start_session(
             module_id=id,
             width_m=width,
             length_m=length,
             notes=validated_notes,
+            frame_source=frame_source,
+            inference_runner=inference_runner,
+            db_session=db_session,
+            log_service=log_service,
         )
-        monitoring = monitoring_repo.create(id, monitoring)
+    except ActiveSessionError as e:
+        # Redirect to the existing active monitoring's execution screen
+        frame_source.release()
+        return RedirectResponse(
+            url=f"/monitoreos/{e.existing_monitoring_id}/ejecucion",
+            status_code=303,
+        )
     except Exception as e:
-        # Handle various hardware/system errors (R16.1, R16.3, R16.4)
+        frame_source.release()
+        # Handle various hardware/system errors
         error_str = str(e)
         if "cámara" in error_str.lower() or "camera" in error_str.lower():
             friendly_msg = "La cámara no está disponible. Verifica la conexión y vuelve a intentar."
@@ -688,13 +770,28 @@ def monitoring_report(request: Request, id: int):
 
 @router.post("/monitoreos/{id}/abortar")
 def monitoring_abort(request: Request, id: int):
-    """Abort an active monitoring session (redirects to module detail)."""
-    monitoring_repo = get_monitoring_repository(request)
-    monitoring = monitoring_repo.get_by_id(id)
-    if monitoring is None:
+    """Abort an active monitoring session (redirects to module detail).
+
+    Delegates to MonitoringService.abort_session() which:
+    - Signals the background worker to stop
+    - Computes partial metrics
+    - Transitions status to 'aborted'
+    """
+    from src.application.services.monitoring_service import (
+        MonitoringNotFoundError,
+    )
+    from src.domain.exceptions import InvalidTransitionError
+
+    monitoring_service = get_monitoring_service(request)
+    try:
+        monitoring = monitoring_service.abort_session(id)
+        return RedirectResponse(url=f"/modulos/{monitoring.module_id}", status_code=303)
+    except MonitoringNotFoundError:
         return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
-
-    # Transition status to "aborted"
-    monitoring_repo.update_status(id, "aborted")
-
-    return RedirectResponse(url=f"/modulos/{monitoring.module_id}", status_code=303)
+    except InvalidTransitionError:
+        # Session is already in a terminal state — redirect gracefully
+        monitoring_repo = get_monitoring_repository(request)
+        monitoring = monitoring_repo.get_by_id(id)
+        if monitoring is None:
+            return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
+        return RedirectResponse(url=f"/modulos/{monitoring.module_id}", status_code=303)
