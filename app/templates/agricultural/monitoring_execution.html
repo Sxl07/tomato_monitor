@@ -35,7 +35,12 @@
     {# Last snapshot thumbnail #}
     <div class="last-snapshot-container">
         <h2 class="section-header mt-0">Última captura</h2>
-        <img id="last-snapshot-img" src="/static/images/placeholder-snapshot.svg" alt="Última captura del monitoreo">
+        <div id="last-snapshot-wrapper">
+            <img id="last-snapshot-img" src="/static/images/placeholder-snapshot.svg" alt="Última captura del monitoreo" style="{% if monitoring.total_snapshots == 0 %}display:none;{% endif %}">
+            <p id="last-snapshot-placeholder" class="text-secondary text-center" style="padding: 16px; {% if monitoring.total_snapshots > 0 %}display:none;{% endif %}">
+                Monitoreo activo, esperando primera captura...
+            </p>
+        </div>
     </div>
 
     <div class="execution-actions">

@@ -98,6 +98,8 @@ class MonitoringService:
 
         # Track active workers keyed by monitoring_id.
         self._active_workers: dict[int, MonitoringWorker] = {}
+        # Track worker threads keyed by monitoring_id.
+        self._worker_threads: dict[int, threading.Thread] = {}
 
     def start_session(
         self,
@@ -134,6 +136,9 @@ class MonitoringService:
         if module is None:
             raise ParentNotFoundError("Module", module_id)
 
+        # Reconcile orphaned sessions before enforcing the one-active rule.
+        self._reconcile_orphaned_sessions(module_id)
+
         # Enforce one active session per module.
         existing = self._monitoring_repo.get_by_module(module_id)
         for m in existing:
@@ -168,6 +173,7 @@ class MonitoringService:
             daemon=True,
             name=f"monitoring-worker-{monitoring.id}",
         )
+        self._worker_threads[monitoring.id] = thread
         thread.start()
 
         return monitoring
@@ -264,8 +270,9 @@ class MonitoringService:
         # Compute partial metrics.
         self._compute_metrics(monitoring_id)
 
-        # Clean up worker reference.
+        # Clean up worker and thread references.
         self._active_workers.pop(monitoring_id, None)
+        self._worker_threads.pop(monitoring_id, None)
 
         return monitoring
 
@@ -308,8 +315,9 @@ class MonitoringService:
             monitoring_id, MonitoringState.COMPLETED.value
         )
 
-        # Clean up worker reference.
+        # Clean up worker and thread references.
         self._active_workers.pop(monitoring_id, None)
+        self._worker_threads.pop(monitoring_id, None)
 
         return monitoring
 
@@ -405,6 +413,51 @@ class MonitoringService:
 
         return self._metrics_repo.create(monitoring_id, metrics)
 
+    def _reconcile_orphaned_sessions(self, module_id: int) -> None:
+        """Detect and mark orphaned sessions for a module.
+
+        A session is "orphaned" if it has an active status in the database
+        but no corresponding live worker thread in memory. This can happen
+        when the server restarts, the worker crashes silently, or the daemon
+        thread dies without updating the DB.
+
+        Orphaned sessions are transitioned to 'error' status so they no
+        longer block new monitorings for the module.
+        """
+        existing = self._monitoring_repo.get_by_module(module_id)
+        for m in existing:
+            if m.status not in _ACTIVE_STATUSES:
+                continue
+
+            # Check if we have a live worker for this session.
+            worker = self._active_workers.get(m.id)
+            thread = self._worker_threads.get(m.id)
+
+            worker_alive = (
+                worker is not None
+                and thread is not None
+                and thread.is_alive()
+            )
+
+            if not worker_alive:
+                # This session is orphaned — no live worker backing it.
+                logger.warning(
+                    f"Orphaned session detected: monitoring_id={m.id}, "
+                    f"status={m.status}, module_id={module_id}. "
+                    f"Transitioning to 'error'."
+                )
+                try:
+                    self._monitoring_repo.update_status(
+                        m.id, MonitoringState.ERROR.value
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to mark orphaned session {m.id} as error: {e}"
+                    )
+                # Clean up stale references.
+                self._active_workers.pop(m.id, None)
+                self._worker_threads.pop(m.id, None)
+
     def _get_monitoring_or_raise(self, monitoring_id: int) -> Monitoring:
         """Fetch monitoring by id or raise MonitoringNotFoundError."""
         monitoring = self._monitoring_repo.get_by_id(monitoring_id)
@@ -427,6 +480,8 @@ class MonitoringService:
             logger.error(
                 f"Failed to transition monitoring {monitoring_id} to running: {e}"
             )
+            self._active_workers.pop(monitoring_id, None)
+            self._worker_threads.pop(monitoring_id, None)
             return
 
         # Run the capture loop (blocking in this thread).
@@ -446,5 +501,6 @@ class MonitoringService:
                 f"Monitoring {monitoring_id} ended with error: {worker.error_reason}"
             )
 
-        # Clean up worker reference.
+        # Clean up worker and thread references.
         self._active_workers.pop(monitoring_id, None)
+        self._worker_threads.pop(monitoring_id, None)
