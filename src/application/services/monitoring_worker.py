@@ -169,6 +169,16 @@ class MonitoringWorker:
             self._error_reason = f"Unexpected error in capture loop: {e}"
             logger.error(f"MonitoringWorker crash: {e}", exc_info=True)
         finally:
+            # Log why the loop exited
+            if self.abort_event.is_set():
+                self._emit_log(LogLevel.INFO, "Monitoreo detenido por el usuario.")
+                logger.info(f"Worker {self._monitoring_id}: abort signal received, exiting loop.")
+            elif self.complete_event.is_set():
+                self._emit_log(LogLevel.INFO, "Recorrido completado.")
+                logger.info(f"Worker {self._monitoring_id}: complete signal received.")
+            elif self._error_reason:
+                logger.info(f"Worker {self._monitoring_id}: exiting due to error.")
+
             self._release_resources()
 
     def _should_capture(self, frame: np.ndarray) -> bool:
@@ -193,7 +203,15 @@ class MonitoringWorker:
         return trigger
 
     def _process_snapshot(self, frame: np.ndarray) -> None:
-        """Save snapshot image, run inference, persist results."""
+        """Save snapshot image, run inference, persist results.
+
+        Checks abort_event cooperatively before expensive operations
+        to ensure fast response to abort signals.
+        """
+        # Cooperative abort check — don't start new work if abort requested
+        if self.abort_event.is_set():
+            return
+
         self._emit_log(
             LogLevel.INFO,
             f"Capturando imagen... (snapshot {self._snapshot_count + 1})",
@@ -213,6 +231,10 @@ class MonitoringWorker:
             self.abort_event.set()
             return
 
+        # Cooperative abort check before inference (most expensive operation)
+        if self.abort_event.is_set():
+            return
+
         # Run inference
         detection_results: list[dict] = []
         try:
@@ -222,6 +244,10 @@ class MonitoringWorker:
                 f"Inference failed for snapshot {self._snapshot_count}: {e}"
             )
             # Skip inference results but still persist the snapshot (Req 3.6)
+
+        # Cooperative abort check before persistence
+        if self.abort_event.is_set():
+            return
 
         self._emit_log(
             LogLevel.SUCCESS, f"Tomates detectados: {len(detection_results)}"
