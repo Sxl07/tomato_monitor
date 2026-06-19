@@ -16,27 +16,29 @@ router = APIRouter(prefix="/api", tags=["monitoring-api"])
 
 @router.get("/camera/preview")
 async def camera_preview(request: Request):
-    """Return a single JPEG frame from the camera."""
-    camera_service = request.app.state.camera_service
-    result = camera_service.check_availability()
-    if result.status != CameraStatus.AVAILABLE:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Cámara no disponible", "reason": result.reason},
-        )
+    """Return a single JPEG frame from the camera.
+
+    Uses capture_preview_frame() which does a single open-capture-close cycle.
+    Does NOT call check_availability() separately to avoid double camera access.
+    """
+    camera_service: CameraService = request.app.state.camera_service
     frame_bytes = camera_service.capture_preview_frame()
     if frame_bytes is None:
         return JSONResponse(
             status_code=503,
-            content={"error": "No se pudo capturar la imagen"},
+            content={"error": "Cámara no disponible", "reason": "No se pudo capturar la imagen."},
         )
     return Response(content=frame_bytes, media_type="image/jpeg")
 
 
 @router.get("/camera/status")
 async def camera_status(request: Request):
-    """Return camera availability status as JSON."""
-    camera_service = request.app.state.camera_service
+    """Return camera availability status as JSON.
+
+    Lightweight check — uses is_available() which only instantiates
+    Picamera2 briefly to detect hardware, not a full open+capture cycle.
+    """
+    camera_service: CameraService = request.app.state.camera_service
     result = camera_service.check_availability()
     return {"status": result.status.value, "reason": result.reason}
 
