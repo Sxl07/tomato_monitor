@@ -237,7 +237,11 @@ class MonitoringService:
         )
 
     def abort_session(self, monitoring_id: int) -> Monitoring:
-        """Abort the session, compute partial metrics, and signal the worker to stop.
+        """Abort the session, wait for the worker to stop, then compute metrics.
+
+        IMPORTANT: This method waits for the background thread to finish
+        (with a timeout) before returning, ensuring the camera and all
+        resources are fully released before the caller proceeds.
 
         Args:
             monitoring_id: The monitoring session to abort.
@@ -257,10 +261,24 @@ class MonitoringService:
 
         # Signal the worker to stop.
         worker = self._active_workers.get(monitoring_id)
+        thread = self._worker_threads.get(monitoring_id)
         if worker is not None:
             worker.abort_event.set()
             # Also clear pause in case it was paused.
             worker.pause_event.clear()
+
+        # Wait for the worker thread to finish (camera release happens in finally).
+        # Use a timeout to avoid blocking indefinitely if something goes wrong.
+        if thread is not None and thread.is_alive():
+            logger.info(
+                f"Waiting for monitoring worker thread {monitoring_id} to finish..."
+            )
+            thread.join(timeout=10.0)
+            if thread.is_alive():
+                logger.warning(
+                    f"Worker thread for monitoring {monitoring_id} did not stop "
+                    f"within 10s timeout. Proceeding with abort anyway."
+                )
 
         # Persist the status change.
         monitoring = self._monitoring_repo.update_status(
