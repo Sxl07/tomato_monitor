@@ -290,6 +290,8 @@ class MonitoringWorker:
 
     def _release_resources(self) -> None:
         """Release frame source and stop thermal monitor when done."""
+        self._emit_log(LogLevel.INFO, "Liberando recursos de cámara...")
+
         try:
             if self._thermal_monitor is not None:
                 self._thermal_monitor.stop()
@@ -298,5 +300,8 @@ class MonitoringWorker:
 
         try:
             self._frame_source.release()
+            self._emit_log(LogLevel.SUCCESS, "Cámara liberada correctamente.")
+            logger.info(f"Camera released for monitoring {self._monitoring_id}")
         except Exception as e:
+            self._emit_log(LogLevel.WARNING, f"Error al liberar cámara: {e}")
             logger.warning(f"Error releasing frame source: {e}")

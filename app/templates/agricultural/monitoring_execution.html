@@ -117,10 +117,19 @@
         <p id="abort-dialog-message" class="dialog-message">¿Seguro que deseas detener el monitoreo? Se guardarán los resultados parciales.</p>
         <div class="dialog-actions">
             <button type="button" class="btn btn-secondary" onclick="hideConfirmDialog('abort-dialog')">Cancelar</button>
-            <form method="post" action="/monitoreos/{{ monitoring.id }}/abortar" style="margin:0;">
-                <button type="submit" class="btn btn-danger">Detener</button>
+            <form id="abort-form" method="post" action="/monitoreos/{{ monitoring.id }}/abortar" style="margin:0;">
+                <button type="submit" id="btn-confirm-abort" class="btn btn-danger" onclick="handleAbortSubmit()">Detener</button>
             </form>
         </div>
+    </div>
+</div>
+
+{# --- Stopping overlay (shown after abort is submitted) --- #}
+<div id="stopping-overlay" class="execution-status-block hidden">
+    <div class="execution-center">
+        <div class="spinner spinner--lg"></div>
+        <p class="execution-status-text">Deteniendo monitoreo...</p>
+        <p class="text-secondary" style="font-size: var(--font-size-small);">Liberando cámara y guardando resultados parciales.</p>
     </div>
 </div>
 {% endblock %}
@@ -132,6 +141,30 @@ function showConfirmDialog(dialogId) {
 }
 function hideConfirmDialog(dialogId) {
     document.getElementById(dialogId).classList.add('hidden');
+}
+function handleAbortSubmit() {
+    // Stop polling immediately to avoid unnecessary requests
+    if (typeof stopMonitoringPolling === 'function') {
+        stopMonitoringPolling();
+    }
+    // Disable the abort button to prevent double-clicks
+    var btn = document.getElementById('btn-confirm-abort');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Deteniendo...';
+    }
+    // Hide the dialog and show the stopping overlay
+    hideConfirmDialog('abort-dialog');
+    // Hide all status blocks
+    var blocks = document.querySelectorAll('.execution-status-block');
+    for (var i = 0; i < blocks.length; i++) {
+        blocks[i].classList.add('hidden');
+    }
+    // Show stopping overlay
+    var overlay = document.getElementById('stopping-overlay');
+    if (overlay) {
+        overlay.classList.remove('hidden');
+    }
 }
 </script>
 <script src="/static/js/monitoring.js"></script>
