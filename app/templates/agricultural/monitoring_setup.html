@@ -160,7 +160,9 @@
     refreshCamera();
 
     function refreshCamera() {
-        fetchCameraStatus();
+        // Sequential flow: try preview first.
+        // If preview succeeds → camera is available (no need for separate status call).
+        // If preview fails → query /api/camera/status to distinguish busy vs not_detected.
         fetchCameraPreview();
     }
 
@@ -189,11 +191,17 @@
             previewImg.src = url;
             previewImg.style.display = "block";
             previewPlaceholder.style.display = "none";
+            // Preview succeeded → camera is available
+            cameraStatus = "available";
+            updateCameraBadge();
+            updateStartButton();
         };
         img.onerror = function() {
             previewImg.style.display = "none";
             previewPlaceholder.style.display = "block";
             previewPlaceholder.textContent = "Imagen no disponible";
+            // Preview failed → ask status endpoint to find out why
+            fetchCameraStatus();
         };
         img.src = url;
     }
@@ -204,6 +212,11 @@
             cameraBadge.style.backgroundColor = "#E8F5E9";
             cameraBadge.style.border = "1px solid #4CAF50";
             cameraBadge.style.color = "#388E3C";
+        } else if (cameraStatus === "busy") {
+            cameraBadge.textContent = "Cámara ocupada por monitoreo";
+            cameraBadge.style.backgroundColor = "#FFF3E0";
+            cameraBadge.style.border = "1px solid #FF9800";
+            cameraBadge.style.color = "#E65100";
         } else if (cameraStatus === "not_detected") {
             cameraBadge.textContent = "Cámara no detectada";
             cameraBadge.style.backgroundColor = "#FFEBEE";

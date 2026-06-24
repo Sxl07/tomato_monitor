@@ -582,7 +582,10 @@ def monitoring_start(
     - Creates the Monitoring entity
     - Spawns the background capture worker
     """
-    from src.application.services.monitoring_service import ActiveSessionError
+    from src.application.services.monitoring_service import (
+        ActiveSessionError,
+        CameraStillBusyError,
+    )
     from src.application.services.frame_source_factory import create_frame_source
     from app.dependencies import get_log_service
 
@@ -681,6 +684,21 @@ def monitoring_start(
             url=f"/monitoreos/{e.existing_monitoring_id}/ejecucion",
             status_code=303,
         )
+    except CameraStillBusyError:
+        # Previous worker still releasing camera — tell farmer to wait
+        frame_source.release()
+        errors = ["El monitoreo anterior todavía está liberando la cámara. Espera unos segundos e intenta de nuevo."]
+        return templates.TemplateResponse(request, "agricultural/monitoring_setup.html", {
+            "title": f"Nuevo Monitoreo — {module.name}",
+            "module": module,
+            "width_m": width_m,
+            "length_m": length_m,
+            "notes": notes,
+            "errors": errors,
+            "model_status": model_status,
+            "show_back": True,
+            "back_url": f"/modulos/{id}",
+        })
     except Exception as e:
         frame_source.release()
         # Handle various hardware/system errors
