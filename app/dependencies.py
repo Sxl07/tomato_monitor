@@ -125,12 +125,14 @@ def get_monitoring_service(request: Request) -> "MonitoringService":
 
     db_manager: DatabaseManager = request.app.state.db_manager
     session = db_manager.get_session()
+    registry = request.app.state.monitoring_runtime_registry
     return MonitoringService(
         monitoring_repo=SqlMonitoringRepository(session),
         snapshot_repo=SqlSnapshotRepository(session),
         inspection_result_repo=SqlInspectionResultRepository(session),
         metrics_repo=SqlMonitoringMetricsRepository(session),
         module_repo=SqlModuleRepository(session),
+        runtime_registry=registry,
     )
 
 
@@ -210,16 +212,22 @@ def get_monitoring_metrics_repository(request: Request) -> SqlMonitoringMetricsR
 
 
 def get_monitoring_service(request: Request) -> "MonitoringService":
-    """Provide MonitoringService with all repositories sharing one session."""
+    """Provide MonitoringService with all repositories sharing one session.
+
+    IMPORTANT: Injects the shared runtime_registry from app.state so that
+    worker/thread state persists across requests.
+    """
     from src.application.services.monitoring_service import MonitoringService
 
     session = _get_request_session(request)
+    registry = request.app.state.monitoring_runtime_registry
     return MonitoringService(
         monitoring_repo=SqlMonitoringRepository(session),
         snapshot_repo=SqlSnapshotRepository(session),
         inspection_result_repo=SqlInspectionResultRepository(session),
         metrics_repo=SqlMonitoringMetricsRepository(session),
         module_repo=SqlModuleRepository(session),
+        runtime_registry=registry,
     )
 
 

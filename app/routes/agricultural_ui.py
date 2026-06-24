@@ -800,14 +800,22 @@ def monitoring_abort(request: Request, id: int):
     )
     from src.domain.exceptions import InvalidTransitionError
 
+    _logger.info(f"UI abort request received for monitoring {id}")
+
     monitoring_service = get_monitoring_service(request)
     try:
         monitoring = monitoring_service.abort_session(id)
+        _logger.info(
+            f"UI abort completed for monitoring {id}, "
+            f"redirecting to module {monitoring.module_id}"
+        )
         return RedirectResponse(url=f"/modulos/{monitoring.module_id}", status_code=303)
     except MonitoringNotFoundError:
+        _logger.warning(f"UI abort: monitoring {id} not found")
         return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
     except InvalidTransitionError:
         # Session is already in a terminal state — redirect gracefully
+        _logger.info(f"UI abort: monitoring {id} already in terminal state")
         monitoring_repo = get_monitoring_repository(request)
         monitoring = monitoring_repo.get_by_id(id)
         if monitoring is None:
