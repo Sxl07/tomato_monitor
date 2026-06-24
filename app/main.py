@@ -31,9 +31,6 @@ async def lifespan(app: FastAPI):
     from src.application.services.camera_service import CameraService
     app.state.camera_service = CameraService()
 
-    from src.application.services.monitoring_runtime_registry import MonitoringRuntimeRegistry
-    app.state.monitoring_runtime_registry = MonitoringRuntimeRegistry()
-
     yield
     # No persistent camera to release — preview uses single-frame capture
 
