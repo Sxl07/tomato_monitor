@@ -104,6 +104,7 @@ class MonitoringService:
         inspection_result_repo: InspectionResultRepository,
         metrics_repo: MonitoringMetricsRepository,
         module_repo: ModuleRepository,
+        runtime_registry=None,
     ) -> None:
         self._monitoring_repo = monitoring_repo
         self._snapshot_repo = snapshot_repo
@@ -111,10 +112,15 @@ class MonitoringService:
         self._metrics_repo = metrics_repo
         self._module_repo = module_repo
 
-        # Track active workers keyed by monitoring_id.
-        self._active_workers: dict[int, MonitoringWorker] = {}
-        # Track worker threads keyed by monitoring_id.
-        self._worker_threads: dict[int, threading.Thread] = {}
+        # Shared runtime registry — persists across requests.
+        # If not provided, fall back to a local instance (for tests/backwards compat).
+        if runtime_registry is not None:
+            self._registry = runtime_registry
+        else:
+            from src.application.services.monitoring_runtime_registry import (
+                MonitoringRuntimeRegistry,
+            )
+            self._registry = MonitoringRuntimeRegistry()
 
     def start_session(
         self,
@@ -162,10 +168,9 @@ class MonitoringService:
 
         # Check if a previous worker thread is still alive (e.g., abort timed out
         # and session was marked ERROR but thread hasn't died yet).
-        for mid, thread in list(self._worker_threads.items()):
-            if thread.is_alive():
-                # A worker is still alive — camera may still be locked.
-                raise CameraStillBusyError(mid)
+        self._registry.cleanup_dead()
+        if self._registry.has_live_worker_for_module(module_id, self._monitoring_repo):
+            raise CameraStillBusyError(None)
 
         # Also check the global camera lock directly as a safety net.
         try:
@@ -186,6 +191,13 @@ class MonitoringService:
         )
         monitoring = self._monitoring_repo.create(module_id, monitoring)
 
+        # Commit the monitoring record so the background thread (which creates
+        # its own DB session) can see it when it tries to update status.
+        try:
+            db_session.commit()
+        except Exception:
+            pass  # If session auto-commits or is already flushed, this is fine
+
         # Spawn the background worker in a daemon thread.
         worker = MonitoringWorker(
             monitoring_id=monitoring.id,
@@ -197,15 +209,13 @@ class MonitoringService:
             db_session=db_session,
             log_service=log_service,
         )
-        self._active_workers[monitoring.id] = worker
-
         thread = threading.Thread(
             target=self._run_worker,
             args=(monitoring.id, worker),
             daemon=True,
             name=f"monitoring-worker-{monitoring.id}",
         )
-        self._worker_threads[monitoring.id] = thread
+        self._registry.register(monitoring.id, worker, thread)
         thread.start()
 
         return monitoring
@@ -230,7 +240,7 @@ class MonitoringService:
         status.transition_to(MonitoringState.PAUSED)
 
         # Signal the worker to pause.
-        worker = self._active_workers.get(monitoring_id)
+        worker = self._registry.get_worker(monitoring_id)
         if worker is not None:
             worker.pause_event.set()
 
@@ -259,7 +269,7 @@ class MonitoringService:
         status.transition_to(MonitoringState.RUNNING)
 
         # Clear the pause signal so the worker resumes.
-        worker = self._active_workers.get(monitoring_id)
+        worker = self._registry.get_worker(monitoring_id)
         if worker is not None:
             worker.pause_event.clear()
 
@@ -294,8 +304,8 @@ class MonitoringService:
         status.transition_to(MonitoringState.ABORTED)
 
         # Signal the worker to stop.
-        worker = self._active_workers.get(monitoring_id)
-        thread = self._worker_threads.get(monitoring_id)
+        worker = self._registry.get_worker(monitoring_id)
+        thread = self._registry.get_thread(monitoring_id)
         if worker is not None:
             logger.info(f"Signaling abort for monitoring {monitoring_id}...")
             worker.abort_event.set()
@@ -317,14 +327,32 @@ class MonitoringService:
                 )
 
         if thread_terminated:
-            # Worker terminated — camera is free. Mark as aborted normally.
+            # Worker terminated (or was never registered) — check camera lock.
+            if worker is None and thread is None:
+                # No worker in registry — check if camera is still locked
+                # (could be held by an orphaned thread we don't know about).
+                try:
+                    from src.infrastructure.camera.raspberry_camera_frame_source import (
+                        is_camera_locked,
+                    )
+                    if is_camera_locked():
+                        logger.warning(
+                            f"Abort for monitoring {monitoring_id}: no worker in registry "
+                            f"but camera lock is held. Marking as error."
+                        )
+                        monitoring = self._monitoring_repo.update_status(
+                            monitoring_id, MonitoringState.ERROR.value
+                        )
+                        return monitoring
+                except ImportError:
+                    pass
+
             logger.info(f"Worker thread {monitoring_id} terminated. Camera released.")
             monitoring = self._monitoring_repo.update_status(
                 monitoring_id, MonitoringState.ABORTED.value
             )
             self._compute_metrics(monitoring_id)
-            self._active_workers.pop(monitoring_id, None)
-            self._worker_threads.pop(monitoring_id, None)
+            self._registry.remove(monitoring_id)
         else:
             # Worker did NOT terminate — DO NOT clean references.
             # Mark session as error to prevent new monitorings from starting
@@ -332,7 +360,7 @@ class MonitoringService:
             monitoring = self._monitoring_repo.update_status(
                 monitoring_id, MonitoringState.ERROR.value
             )
-            # Don't pop from _active_workers — the thread is still alive
+            # Don't remove from registry — the thread is still alive
             # and may still be holding the camera lock.
 
         return monitoring
@@ -357,7 +385,7 @@ class MonitoringService:
         status.transition_to(MonitoringState.FINISHING)
 
         # Signal the worker to finish.
-        worker = self._active_workers.get(monitoring_id)
+        worker = self._registry.get_worker(monitoring_id)
         if worker is not None:
             worker.complete_event.set()
             # Also clear pause in case it was paused.
@@ -377,8 +405,7 @@ class MonitoringService:
         )
 
         # Clean up worker and thread references.
-        self._active_workers.pop(monitoring_id, None)
-        self._worker_threads.pop(monitoring_id, None)
+        self._registry.remove(monitoring_id)
 
         return monitoring
 
@@ -490,15 +517,10 @@ class MonitoringService:
             if m.status not in _ACTIVE_STATUSES:
                 continue
 
-            # Check if we have a live worker for this session.
-            worker = self._active_workers.get(m.id)
-            thread = self._worker_threads.get(m.id)
+            # Check if we have a live worker for this session in the shared registry.
+            thread = self._registry.get_thread(m.id)
 
-            worker_alive = (
-                worker is not None
-                and thread is not None
-                and thread.is_alive()
-            )
+            worker_alive = thread is not None and thread.is_alive()
 
             if not worker_alive:
                 # This session is orphaned — no live worker backing it.
@@ -515,9 +537,8 @@ class MonitoringService:
                     logger.error(
                         f"Failed to mark orphaned session {m.id} as error: {e}"
                     )
-                # Clean up stale references.
-                self._active_workers.pop(m.id, None)
-                self._worker_threads.pop(m.id, None)
+                # Clean up stale references from registry.
+                self._registry.remove(m.id)
 
     def _get_monitoring_or_raise(self, monitoring_id: int) -> Monitoring:
         """Fetch monitoring by id or raise MonitoringNotFoundError."""
@@ -549,8 +570,7 @@ class MonitoringService:
             logger.error(
                 f"Failed to create thread-local DB session for monitoring {monitoring_id}: {e}"
             )
-            self._active_workers.pop(monitoring_id, None)
-            self._worker_threads.pop(monitoring_id, None)
+            self._registry.remove(monitoring_id)
             return
 
         # Rebuild repositories with the thread-local session.
@@ -575,8 +595,7 @@ class MonitoringService:
                 f"Failed to transition monitoring {monitoring_id} to running: {e}"
             )
             thread_session.close()
-            self._active_workers.pop(monitoring_id, None)
-            self._worker_threads.pop(monitoring_id, None)
+            self._registry.remove(monitoring_id)
             return
 
         # Run the capture loop (blocking in this thread).
@@ -603,6 +622,5 @@ class MonitoringService:
         except Exception:
             pass
 
-        # Clean up worker and thread references.
-        self._active_workers.pop(monitoring_id, None)
-        self._worker_threads.pop(monitoring_id, None)
+        # Clean up from the shared registry.
+        self._registry.remove(monitoring_id)

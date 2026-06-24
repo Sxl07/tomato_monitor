@@ -118,7 +118,7 @@
         <div class="dialog-actions">
             <button type="button" class="btn btn-secondary" onclick="hideConfirmDialog('abort-dialog')">Cancelar</button>
             <form id="abort-form" method="post" action="/monitoreos/{{ monitoring.id }}/abortar" style="margin:0;">
-                <button type="submit" id="btn-confirm-abort" class="btn btn-danger" onclick="handleAbortSubmit()">Detener</button>
+                <button type="submit" id="btn-confirm-abort" class="btn btn-danger">Detener</button>
             </form>
         </div>
     </div>
@@ -142,30 +142,51 @@ function showConfirmDialog(dialogId) {
 function hideConfirmDialog(dialogId) {
     document.getElementById(dialogId).classList.add('hidden');
 }
-function handleAbortSubmit() {
-    // Stop polling immediately to avoid unnecessary requests
-    if (typeof stopMonitoringPolling === 'function') {
-        stopMonitoringPolling();
-    }
-    // Disable the abort button to prevent double-clicks
-    var btn = document.getElementById('btn-confirm-abort');
-    if (btn) {
-        btn.disabled = true;
-        btn.textContent = 'Deteniendo...';
-    }
-    // Hide the dialog and show the stopping overlay
-    hideConfirmDialog('abort-dialog');
-    // Hide all status blocks
-    var blocks = document.querySelectorAll('.execution-status-block');
-    for (var i = 0; i < blocks.length; i++) {
-        blocks[i].classList.add('hidden');
-    }
-    // Show stopping overlay
-    var overlay = document.getElementById('stopping-overlay');
-    if (overlay) {
-        overlay.classList.remove('hidden');
-    }
-}
+
+document.addEventListener("DOMContentLoaded", function () {
+    var form = document.getElementById("abort-form");
+    if (!form) return;
+
+    form.addEventListener("submit", function (event) {
+        event.preventDefault();
+
+        // Guard against double submit
+        if (form.dataset.submitting === "true") {
+            return;
+        }
+        form.dataset.submitting = "true";
+
+        // Stop polling immediately
+        if (typeof stopMonitoringPolling === "function") {
+            stopMonitoringPolling();
+        }
+
+        // Disable button
+        var btn = document.getElementById("btn-confirm-abort");
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = "Deteniendo...";
+        }
+
+        // Hide dialog
+        hideConfirmDialog("abort-dialog");
+
+        // Hide all status blocks
+        var blocks = document.querySelectorAll(".execution-status-block");
+        for (var i = 0; i < blocks.length; i++) {
+            blocks[i].classList.add("hidden");
+        }
+
+        // Show stopping overlay
+        var overlay = document.getElementById("stopping-overlay");
+        if (overlay) {
+            overlay.classList.remove("hidden");
+        }
+
+        // Submit the form — browser will follow the 303 redirect
+        form.submit();
+    });
+});
 </script>
 <script src="/static/js/monitoring.js"></script>
 <script>
