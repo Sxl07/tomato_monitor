@@ -1,8 +1,13 @@
-"""Factory function for auto-detecting the correct FrameSource backend.
+"""Factory function for selecting the correct FrameSource backend.
 
-Tries picamera2-based capture first (for Raspberry Pi with AI Camera),
-falls back to OpenCV VideoCapture (for development PCs with USB webcam),
-and returns None if no camera backend is available.
+On Raspberry Pi (picamera2 importable): returns RaspberryCameraFrameSource.
+On dev PC (no picamera2): returns OpenCvFrameSource if a device is accessible.
+Otherwise: returns None.
+
+IMPORTANT: This factory does NOT open or probe the camera hardware.
+It only checks which libraries are importable and returns the appropriate
+implementation. The actual hardware access happens later when read() or
+capture_single_frame() is called.
 """
 
 import logging
@@ -14,21 +19,19 @@ logger = logging.getLogger(__name__)
 
 
 def create_frame_source() -> Optional[FrameSource]:
-    """Auto-detect and return the best available FrameSource backend.
+    """Select the best available FrameSource backend.
 
     Resolution order:
-        1. RaspberryCameraFrameSource (picamera2) — preferred on RPi with AI Camera
-        2. OpenCvFrameSource (cv2.VideoCapture) — fallback ONLY if picamera2 is
-           NOT importable (i.e., not on Raspberry Pi). If picamera2 IS available
-           but the camera fails at runtime, we do NOT silently fall back to OpenCV.
-        3. None — no camera backend is available
+        1. RaspberryCameraFrameSource — if picamera2 is importable (RPi).
+           Does NOT open the camera or check hardware state.
+        2. OpenCvFrameSource — if picamera2 is NOT importable (dev PC) and
+           OpenCV can access a video device.
+        3. None — no camera backend available.
 
     Returns:
-        A ready-to-use FrameSource instance, or None if no camera is accessible.
+        A FrameSource instance (not yet connected to hardware), or None.
     """
-    picamera2_importable = False
-
-    # Try picamera2 backend first
+    # Check if picamera2 is available (RPi scenario)
     try:
         from src.infrastructure.camera.raspberry_camera_frame_source import (
             RaspberryCameraFrameSource,
@@ -36,42 +39,46 @@ def create_frame_source() -> Optional[FrameSource]:
         )
 
         if PICAMERA2_AVAILABLE:
-            picamera2_importable = True
-            source = RaspberryCameraFrameSource()
-            if source.is_available():
-                logger.info("Camera backend selected: RaspberryCameraFrameSource (picamera2)")
-                return source
-            # picamera2 is installed but camera not detected — do NOT fall back
-            # to OpenCV on Raspberry Pi. This is a real camera problem.
-            logger.error(
-                "picamera2 is installed but camera not detected. "
-                "Check cable/firmware. NOT falling back to OpenCV."
+            # On RPi with picamera2 — use it. Do NOT probe hardware here.
+            logger.info(
+                "Camera backend selected: RaspberryCameraFrameSource (picamera2)"
             )
-            return None
+            return RaspberryCameraFrameSource()
     except Exception as e:
         logger.debug(f"picamera2 backend not available: {e}")
 
-    # Only try OpenCV fallback if picamera2 is NOT importable (dev PC scenario)
-    if not picamera2_importable:
-        try:
-            from src.infrastructure.camera.opencv_frame_source import OpenCvFrameSource
+    # Fallback: OpenCV for dev PCs (only if picamera2 is NOT importable)
+    try:
+        from src.infrastructure.camera.raspberry_camera_frame_source import (
+            PICAMERA2_AVAILABLE,
+        )
+        if PICAMERA2_AVAILABLE:
+            # picamera2 IS available but we got here somehow — don't fall back
+            logger.error(
+                "picamera2 is installed but camera initialization failed. "
+                "NOT falling back to OpenCV. Check cable/firmware."
+            )
+            return None
+    except Exception:
+        pass
 
-            source = OpenCvFrameSource()
-            if source.is_available():
-                logger.info("Camera backend selected: OpenCvFrameSource (cv2.VideoCapture)")
-                return source
-            logger.debug("OpenCV VideoCapture could not open any device.")
-        except Exception as e:
-            logger.debug(f"OpenCV backend not available: {e}")
+    try:
+        from src.infrastructure.camera.opencv_frame_source import OpenCvFrameSource
+
+        source = OpenCvFrameSource()
+        if source.is_available():
+            logger.info(
+                "Camera backend selected: OpenCvFrameSource (cv2.VideoCapture)"
+            )
+            return source
+        logger.debug("OpenCV VideoCapture could not open any device.")
+    except Exception as e:
+        logger.debug(f"OpenCV backend not available: {e}")
 
     logger.warning("No camera backend available.")
     return None
 
 
 def get_unavailability_reason() -> str:
-    """Return a user-facing reason (in Spanish) when no camera is available.
-
-    Returns:
-        A descriptive message suitable for display to the farmer.
-    """
+    """Return a user-facing reason (in Spanish) when no camera is available."""
     return "No se encontró cámara compatible. Verifica la conexión."

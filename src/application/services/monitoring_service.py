@@ -72,6 +72,21 @@ class MonitoringNotFoundError(DomainError):
         super().__init__(f"Monitoring session with id {monitoring_id} not found.")
 
 
+class CameraStillBusyError(DomainError):
+    """Camera is still held by a previous monitoring worker.
+
+    Raised when attempting to start a new session while a previous
+    worker thread is still alive or the global camera lock is held.
+    """
+
+    def __init__(self, previous_monitoring_id: Optional[int]) -> None:
+        self.previous_monitoring_id = previous_monitoring_id
+        super().__init__(
+            "El monitoreo anterior todavía está liberando la cámara. "
+            "Espera unos segundos e intenta de nuevo."
+        )
+
+
 class MonitoringService:
     """Orchestrates monitoring session lifecycle.
 
@@ -144,6 +159,23 @@ class MonitoringService:
         for m in existing:
             if m.status in _ACTIVE_STATUSES:
                 raise ActiveSessionError(module_id, m.id)
+
+        # Check if a previous worker thread is still alive (e.g., abort timed out
+        # and session was marked ERROR but thread hasn't died yet).
+        for mid, thread in list(self._worker_threads.items()):
+            if thread.is_alive():
+                # A worker is still alive — camera may still be locked.
+                raise CameraStillBusyError(mid)
+
+        # Also check the global camera lock directly as a safety net.
+        try:
+            from src.infrastructure.camera.raspberry_camera_frame_source import (
+                is_camera_locked,
+            )
+            if is_camera_locked():
+                raise CameraStillBusyError(None)
+        except ImportError:
+            pass  # Non-RPi environment, no lock to check
 
         # Create monitoring entity with initializing status.
         monitoring = Monitoring(
@@ -237,17 +269,19 @@ class MonitoringService:
         )
 
     def abort_session(self, monitoring_id: int) -> Monitoring:
-        """Abort the session, wait for the worker to stop, then compute metrics.
+        """Abort the session, wait for the worker to stop and release camera.
 
-        IMPORTANT: This method waits for the background thread to finish
-        (with a timeout) before returning, ensuring the camera and all
-        resources are fully released before the caller proceeds.
+        IMPORTANT: This method waits for the background thread to fully
+        terminate (camera released) before returning. If the thread does NOT
+        terminate within the timeout, the session is marked as 'error' instead
+        of 'aborted', and references are NOT cleaned — preventing a new
+        monitoring from starting while the camera may still be held.
 
         Args:
             monitoring_id: The monitoring session to abort.
 
         Returns:
-            Updated Monitoring entity with status 'aborted'.
+            Updated Monitoring entity with status 'aborted' or 'error'.
 
         Raises:
             MonitoringNotFoundError: If monitoring_id does not exist.
@@ -263,34 +297,43 @@ class MonitoringService:
         worker = self._active_workers.get(monitoring_id)
         thread = self._worker_threads.get(monitoring_id)
         if worker is not None:
+            logger.info(f"Signaling abort for monitoring {monitoring_id}...")
             worker.abort_event.set()
-            # Also clear pause in case it was paused.
             worker.pause_event.clear()
 
         # Wait for the worker thread to finish (camera release happens in finally).
-        # Use a timeout to avoid blocking indefinitely if something goes wrong.
+        thread_terminated = True
         if thread is not None and thread.is_alive():
             logger.info(
-                f"Waiting for monitoring worker thread {monitoring_id} to finish..."
+                f"Waiting for worker thread {monitoring_id} to terminate "
+                f"(camera release)..."
             )
-            thread.join(timeout=10.0)
+            thread.join(timeout=15.0)
             if thread.is_alive():
-                logger.warning(
+                thread_terminated = False
+                logger.error(
                     f"Worker thread for monitoring {monitoring_id} did not stop "
-                    f"within 10s timeout. Proceeding with abort anyway."
+                    f"within 15s. Camera may still be held. Marking as ERROR."
                 )
 
-        # Persist the status change.
-        monitoring = self._monitoring_repo.update_status(
-            monitoring_id, MonitoringState.ABORTED.value
-        )
-
-        # Compute partial metrics.
-        self._compute_metrics(monitoring_id)
-
-        # Clean up worker and thread references.
-        self._active_workers.pop(monitoring_id, None)
-        self._worker_threads.pop(monitoring_id, None)
+        if thread_terminated:
+            # Worker terminated — camera is free. Mark as aborted normally.
+            logger.info(f"Worker thread {monitoring_id} terminated. Camera released.")
+            monitoring = self._monitoring_repo.update_status(
+                monitoring_id, MonitoringState.ABORTED.value
+            )
+            self._compute_metrics(monitoring_id)
+            self._active_workers.pop(monitoring_id, None)
+            self._worker_threads.pop(monitoring_id, None)
+        else:
+            # Worker did NOT terminate — DO NOT clean references.
+            # Mark session as error to prevent new monitorings from starting
+            # (orphan reconciliation will eventually clean this up).
+            monitoring = self._monitoring_repo.update_status(
+                monitoring_id, MonitoringState.ERROR.value
+            )
+            # Don't pop from _active_workers — the thread is still alive
+            # and may still be holding the camera lock.
 
         return monitoring
 

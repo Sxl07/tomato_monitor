@@ -1,7 +1,7 @@
 """Camera availability and preview service.
 
-Delegates camera operations to the FrameSource interface. A factory function
-auto-detects the correct backend (picamera2 on RPi, OpenCV on dev PCs).
+Delegates camera operations to the FrameSource interface. Uses the global
+camera lock to determine availability without invasively opening the hardware.
 """
 import logging
 from dataclasses import dataclass
@@ -22,6 +22,7 @@ except ImportError:
 class CameraStatus(str, Enum):
     AVAILABLE = "available"
     NOT_DETECTED = "not_detected"
+    BUSY = "busy"
     ERROR = "error"
 
 
@@ -34,9 +35,8 @@ class CameraCheckResult:
 class CameraService:
     """Camera availability check and single-frame JPEG capture.
 
-    Delegates all camera access to a FrameSource implementation.
-    If no FrameSource is provided, the factory auto-detects the best
-    available backend (picamera2 → OpenCV → None).
+    Uses capture_single_frame() for preview — a self-contained operation
+    that acquires the global camera lock, captures one frame, and releases.
     """
 
     def __init__(self, frame_source: Optional[FrameSource] = None):
@@ -49,7 +49,14 @@ class CameraService:
             self._frame_source = create_frame_source()
 
     def check_availability(self) -> CameraCheckResult:
-        """Check if camera is physically connected and accessible."""
+        """Check if camera is available WITHOUT opening hardware.
+
+        Uses is_available() which checks:
+        - picamera2 importable (on RPi)
+        - global camera lock not held (camera not busy with monitoring)
+
+        This does NOT instantiate Picamera2 or touch libcamera.
+        """
         if self._frame_source is None:
             from src.application.services.frame_source_factory import (
                 get_unavailability_reason,
@@ -60,6 +67,18 @@ class CameraService:
         try:
             if self._frame_source.is_available():
                 return CameraCheckResult(CameraStatus.AVAILABLE)
+
+            # Check if it's busy vs truly unavailable
+            from src.infrastructure.camera.raspberry_camera_frame_source import (
+                is_camera_locked,
+                PICAMERA2_AVAILABLE,
+            )
+            if PICAMERA2_AVAILABLE and is_camera_locked():
+                return CameraCheckResult(
+                    CameraStatus.BUSY,
+                    "Cámara ocupada por monitoreo activo.",
+                )
+
             from src.application.services.frame_source_factory import (
                 get_unavailability_reason,
             )
@@ -71,12 +90,10 @@ class CameraService:
             return CameraCheckResult(CameraStatus.ERROR, str(e))
 
     def capture_preview_frame(self) -> Optional[bytes]:
-        """Capture a single JPEG frame for preview purposes.
+        """Capture a single JPEG frame for preview.
 
-        Uses capture_single_frame() if available (RPi) to avoid leaving
-        camera resources retained. Falls back to read() for OpenCV sources.
-
-        Returns JPEG bytes on success, None on failure.
+        Uses capture_single_frame() which acquires the global lock internally.
+        If the camera is busy (lock held by monitoring), returns None immediately.
         """
         if self._frame_source is None:
             return None
@@ -84,7 +101,6 @@ class CameraService:
             logger.warning("cv2 not available for JPEG encoding")
             return None
         try:
-            # Use single-frame capture if available (avoids resource retention)
             if hasattr(self._frame_source, 'capture_single_frame'):
                 ret, frame = self._frame_source.capture_single_frame()
             else:
