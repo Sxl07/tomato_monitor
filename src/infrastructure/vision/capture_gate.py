@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -29,9 +29,10 @@ def crop_center_region(image_bgr, crop_ratio: float = CENTER_CROP_RATIO):
     return image_bgr[y1:y2, x1:x2]
 
 
-def preprocess_for_scene_compare(image_bgr):
+def preprocess_for_scene_compare(image_bgr, gate_resolution: Optional[tuple[int, int]] = (320, 320)):
     cropped = crop_center_region(image_bgr, CENTER_CROP_RATIO)
-    resized = cv2.resize(cropped, (320, 320))
+    effective_resolution = gate_resolution if gate_resolution is not None else (320, 320)
+    resized = cv2.resize(cropped, effective_resolution)
     blurred = cv2.GaussianBlur(resized, (5, 5), 0)
     return blurred
 
@@ -43,9 +44,9 @@ def compute_orb_features(image_bgr):
     return keypoints, descriptors
 
 
-def compute_orb_match_count(reference_bgr, current_bgr) -> int:
-    reference_proc = preprocess_for_scene_compare(reference_bgr)
-    current_proc = preprocess_for_scene_compare(current_bgr)
+def compute_orb_match_count(reference_bgr, current_bgr, gate_resolution: Optional[tuple[int, int]] = (320, 320)) -> int:
+    reference_proc = preprocess_for_scene_compare(reference_bgr, gate_resolution)
+    current_proc = preprocess_for_scene_compare(current_bgr, gate_resolution)
 
     _, des1 = compute_orb_features(reference_proc)
     _, des2 = compute_orb_features(current_proc)
@@ -71,9 +72,9 @@ def compute_hsv_histogram(image_bgr):
     return hist
 
 
-def compute_histogram_difference(reference_bgr, current_bgr) -> float:
-    reference_proc = preprocess_for_scene_compare(reference_bgr)
-    current_proc = preprocess_for_scene_compare(current_bgr)
+def compute_histogram_difference(reference_bgr, current_bgr, gate_resolution: Optional[tuple[int, int]] = (320, 320)) -> float:
+    reference_proc = preprocess_for_scene_compare(reference_bgr, gate_resolution)
+    current_proc = preprocess_for_scene_compare(current_bgr, gate_resolution)
 
     hist1 = compute_hsv_histogram(reference_proc)
     hist2 = compute_hsv_histogram(current_proc)
@@ -92,9 +93,10 @@ def should_capture_new_image(
     timeout_frames: int = MAX_FRAMES_WITHOUT_CAPTURE,
     orb_threshold: int = ORB_MIN_MATCH_COUNT,
     hsv_threshold: float = HSV_HIST_DIFF_THRESHOLD,
+    gate_resolution: Optional[tuple[int, int]] = (320, 320),
 ) -> Tuple[bool, Dict[str, float]]:
-    orb_matches = compute_orb_match_count(reference_bgr, current_bgr)
-    hist_diff = compute_histogram_difference(reference_bgr, current_bgr)
+    orb_matches = compute_orb_match_count(reference_bgr, current_bgr, gate_resolution)
+    hist_diff = compute_histogram_difference(reference_bgr, current_bgr, gate_resolution)
 
     cooldown_ok = frames_since_last_capture >= cooldown_frames
     timeout_force = frames_since_last_capture >= timeout_frames

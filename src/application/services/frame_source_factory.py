@@ -18,7 +18,12 @@ from src.domain.interfaces.frame_source import FrameSource
 logger = logging.getLogger(__name__)
 
 
-def create_frame_source() -> Optional[FrameSource]:
+def create_frame_source(
+    *,
+    width: int | None = None,
+    height: int | None = None,
+    fps: int | None = None,
+) -> Optional[FrameSource]:
     """Select the best available FrameSource backend.
 
     Resolution order:
@@ -27,6 +32,14 @@ def create_frame_source() -> Optional[FrameSource]:
         2. OpenCvFrameSource — if picamera2 is NOT importable (dev PC) and
            OpenCV can access a video device.
         3. None — no camera backend available.
+
+    Args:
+        width: Camera capture width (passed to RaspberryCameraFrameSource).
+            If None, uses the frame source default.
+        height: Camera capture height (passed to RaspberryCameraFrameSource).
+            If None, uses the frame source default.
+        fps: Camera hardware FPS (passed to RaspberryCameraFrameSource).
+            If None, uses the frame source default.
 
     Returns:
         A FrameSource instance (not yet connected to hardware), or None.
@@ -43,7 +56,15 @@ def create_frame_source() -> Optional[FrameSource]:
             logger.info(
                 "Camera backend selected: RaspberryCameraFrameSource (picamera2)"
             )
-            return RaspberryCameraFrameSource()
+            # Build kwargs only for explicitly provided parameters
+            kwargs: dict = {}
+            if width is not None:
+                kwargs["width"] = width
+            if height is not None:
+                kwargs["height"] = height
+            if fps is not None:
+                kwargs["fps"] = fps
+            return RaspberryCameraFrameSource(**kwargs)
     except Exception as e:
         logger.debug(f"picamera2 backend not available: {e}")
 

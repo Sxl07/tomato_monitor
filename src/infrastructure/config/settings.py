@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import torch
 
 
 BASE_DIR = Path(__file__).resolve().parents[3]
@@ -39,6 +38,7 @@ class ExecutionProfile:
     """Configuration profile for monitoring execution.
 
     Defines all tunable parameters for edge vs full mode operation.
+    Selected at startup via TOMATO_MONITOR_PROFILE environment variable.
     """
 
     name: str
@@ -48,6 +48,18 @@ class ExecutionProfile:
     camera_height: int
     camera_fps: int
 
+    # Loop frequency control (time-based)
+    capture_loop_fps: float
+    min_seconds_between_snapshots: float
+    max_seconds_without_snapshot: float
+
+    # Scene Gate parameters
+    gate_resolution: tuple[int, int]
+    scene_gate_cooldown_frames: int
+    scene_gate_timeout_frames: int
+    scene_gate_orb_threshold: int
+    scene_gate_hsv_threshold: float
+
     # Inference input size (independent of capture resolution)
     inference_input_width: int
     inference_input_height: int
@@ -56,12 +68,6 @@ class ExecutionProfile:
     skip_maturity: bool
     detection_score_threshold: float
     run_maturity_only_for_healthy: bool
-
-    # Scene Gate parameters
-    scene_gate_cooldown_frames: int
-    scene_gate_timeout_frames: int
-    scene_gate_orb_threshold: int
-    scene_gate_hsv_threshold: float
 
     # Thermal management
     thermal_poll_interval_seconds: float
@@ -78,15 +84,19 @@ EDGE_PROFILE = ExecutionProfile(
     camera_width=480,
     camera_height=360,
     camera_fps=5,
+    capture_loop_fps=2.0,
+    min_seconds_between_snapshots=8.0,
+    max_seconds_without_snapshot=30.0,
+    gate_resolution=(160, 160),
+    scene_gate_cooldown_frames=30,
+    scene_gate_timeout_frames=75,
+    scene_gate_orb_threshold=35,
+    scene_gate_hsv_threshold=0.38,
     inference_input_width=416,
     inference_input_height=312,
     skip_maturity=True,
     detection_score_threshold=0.85,
     run_maturity_only_for_healthy=True,
-    scene_gate_cooldown_frames=30,
-    scene_gate_timeout_frames=75,
-    scene_gate_orb_threshold=35,
-    scene_gate_hsv_threshold=0.38,
     thermal_poll_interval_seconds=5.0,
     thermal_warning_temp=72.0,
     thermal_critical_temp=78.0,
@@ -98,16 +108,20 @@ FULL_PROFILE = ExecutionProfile(
     name="full",
     camera_width=640,
     camera_height=480,
-    camera_fps=5,
+    camera_fps=10,
+    capture_loop_fps=5.0,
+    min_seconds_between_snapshots=4.0,
+    max_seconds_without_snapshot=15.0,
+    gate_resolution=(320, 320),
+    scene_gate_cooldown_frames=18,
+    scene_gate_timeout_frames=45,
+    scene_gate_orb_threshold=35,
+    scene_gate_hsv_threshold=0.38,
     inference_input_width=640,
     inference_input_height=480,
     skip_maturity=False,
     detection_score_threshold=0.80,
     run_maturity_only_for_healthy=True,
-    scene_gate_cooldown_frames=18,
-    scene_gate_timeout_frames=45,
-    scene_gate_orb_threshold=35,
-    scene_gate_hsv_threshold=0.38,
     thermal_poll_interval_seconds=10.0,
     thermal_warning_temp=78.0,
     thermal_critical_temp=85.0,
@@ -115,8 +129,25 @@ FULL_PROFILE = ExecutionProfile(
     memory_warning_rss_mb=4000,
 )
 
-# Default profile for the current environment
-ACTIVE_PROFILE = EDGE_PROFILE
+# --- Profile Selection via Environment Variable ---
+import os
+import logging as _logging
+
+_profile_logger = _logging.getLogger(__name__)
+_PROFILE_ENV_VAR = "TOMATO_MONITOR_PROFILE"
+_profile_value = os.environ.get(_PROFILE_ENV_VAR, "").lower().strip()
+
+if _profile_value == "full":
+    ACTIVE_PROFILE = FULL_PROFILE
+elif _profile_value == "edge" or _profile_value == "":
+    # Empty or "edge" → use edge without warning
+    ACTIVE_PROFILE = EDGE_PROFILE
+else:
+    _profile_logger.warning(
+        f"Invalid {_PROFILE_ENV_VAR}='{_profile_value}'. "
+        f"Valid values: 'edge', 'full'. Using 'edge' as default."
+    )
+    ACTIVE_PROFILE = EDGE_PROFILE
 
 # --- Validation Limits ---
 MAX_GREENHOUSE_NAME_LENGTH = 100
