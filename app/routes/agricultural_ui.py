@@ -654,24 +654,7 @@ def monitoring_start(
             "back_url": f"/modulos/{id}",
         })
 
-    # 2. Inference runner (detector + health + maturity models)
-    inference_runner = _build_inference_runner()
-    if inference_runner is None:
-        errors = ["No se pudieron cargar los modelos de inferencia. Verifica que los archivos estén en su lugar."]
-        frame_source.release()
-        return templates.TemplateResponse(request, "agricultural/monitoring_setup.html", {
-            "title": f"Nuevo Monitoreo — {module.name}",
-            "module": module,
-            "width_m": width_m,
-            "length_m": length_m,
-            "notes": notes,
-            "errors": errors,
-            "model_status": model_status,
-            "show_back": True,
-            "back_url": f"/modulos/{id}",
-        })
-
-    # 3. DB session and log service
+    # 2. DB session and log service (no inference models loaded at start)
     from app.dependencies import _get_request_session
     db_session = _get_request_session(request)
     log_service = get_log_service(request)
@@ -685,7 +668,6 @@ def monitoring_start(
             length_m=length,
             notes=validated_notes,
             frame_source=frame_source,
-            inference_runner=inference_runner,
             db_session=db_session,
             log_service=log_service,
         )

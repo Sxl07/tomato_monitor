@@ -27,6 +27,7 @@ NON_TERMINAL_STATES = [
     MonitoringState.RUNNING,
     MonitoringState.PAUSED,
     MonitoringState.FINISHING,
+    MonitoringState.ANALYZING,
 ]
 
 # Expected valid transitions per state (source of truth from design).
@@ -35,6 +36,8 @@ EXPECTED_TRANSITIONS: dict[MonitoringState, set[MonitoringState]] = {
     MonitoringState.RUNNING: {
         MonitoringState.PAUSED,
         MonitoringState.FINISHING,
+        MonitoringState.ANALYZING,
+        MonitoringState.COMPLETED,
         MonitoringState.ABORTED,
         MonitoringState.ERROR,
     },
@@ -44,6 +47,7 @@ EXPECTED_TRANSITIONS: dict[MonitoringState, set[MonitoringState]] = {
         MonitoringState.ERROR,
     },
     MonitoringState.FINISHING: {MonitoringState.COMPLETED, MonitoringState.ERROR},
+    MonitoringState.ANALYZING: {MonitoringState.COMPLETED, MonitoringState.ERROR},
     MonitoringState.COMPLETED: set(),
     MonitoringState.ABORTED: set(),
     MonitoringState.ERROR: set(),
@@ -221,3 +225,99 @@ class TestAllowedTransitions:
     def test_terminal_has_empty_allowed(self, state: MonitoringState):
         status = MonitoringStatus(state)
         assert status.allowed_transitions() == set()
+
+
+# ---------------------------------------------------------------------------
+# Test: ANALYZING state — Spec 009 additive changes
+# ---------------------------------------------------------------------------
+
+
+class TestAnalyzingState:
+    """Tests specific to the new ANALYZING state (Spec 009).
+
+    Verifies that ANALYZING was added additively without breaking
+    existing PAUSED and FINISHING transitions.
+    """
+
+    def test_running_to_analyzing_succeeds(self):
+        """running → analyzing is a valid transition (finalize capture)."""
+        status = MonitoringStatus(MonitoringState.RUNNING)
+        result = status.transition_to(MonitoringState.ANALYZING)
+        assert result.state == MonitoringState.ANALYZING
+
+    def test_running_to_completed_succeeds(self):
+        """running → completed is valid (0 snapshots case)."""
+        status = MonitoringStatus(MonitoringState.RUNNING)
+        result = status.transition_to(MonitoringState.COMPLETED)
+        assert result.state == MonitoringState.COMPLETED
+
+    def test_analyzing_to_completed_succeeds(self):
+        """analyzing → completed is valid (analysis finished)."""
+        status = MonitoringStatus(MonitoringState.ANALYZING)
+        result = status.transition_to(MonitoringState.COMPLETED)
+        assert result.state == MonitoringState.COMPLETED
+
+    def test_analyzing_to_error_succeeds(self):
+        """analyzing → error is valid (irrecoverable analysis failure)."""
+        status = MonitoringStatus(MonitoringState.ANALYZING)
+        result = status.transition_to(MonitoringState.ERROR)
+        assert result.state == MonitoringState.ERROR
+
+    def test_analyzing_to_aborted_raises(self):
+        """analyzing → aborted is NOT valid (can't cancel during analysis)."""
+        status = MonitoringStatus(MonitoringState.ANALYZING)
+        with pytest.raises(InvalidTransitionError) as exc_info:
+            status.transition_to(MonitoringState.ABORTED)
+        assert exc_info.value.current_state == "analyzing"
+        assert exc_info.value.target_state == "aborted"
+
+    def test_analyzing_to_running_raises(self):
+        """analyzing → running is NOT valid (no going back)."""
+        status = MonitoringStatus(MonitoringState.ANALYZING)
+        with pytest.raises(InvalidTransitionError):
+            status.transition_to(MonitoringState.RUNNING)
+
+    def test_analyzing_is_not_terminal(self):
+        """ANALYZING is an active state, not terminal."""
+        status = MonitoringStatus(MonitoringState.ANALYZING)
+        assert status.is_terminal() is False
+
+    def test_analyzing_allowed_transitions(self):
+        """ANALYZING allows only completed and error."""
+        status = MonitoringStatus(MonitoringState.ANALYZING)
+        assert status.allowed_transitions() == {
+            MonitoringState.COMPLETED,
+            MonitoringState.ERROR,
+        }
+
+    # --- Backward compatibility: PAUSED and FINISHING still work ---
+
+    def test_running_to_paused_still_works(self):
+        """running → paused remains valid (backward compatibility)."""
+        status = MonitoringStatus(MonitoringState.RUNNING)
+        result = status.transition_to(MonitoringState.PAUSED)
+        assert result.state == MonitoringState.PAUSED
+
+    def test_running_to_finishing_still_works(self):
+        """running → finishing remains valid (backward compatibility)."""
+        status = MonitoringStatus(MonitoringState.RUNNING)
+        result = status.transition_to(MonitoringState.FINISHING)
+        assert result.state == MonitoringState.FINISHING
+
+    def test_paused_to_running_still_works(self):
+        """paused → running remains valid (backward compatibility)."""
+        status = MonitoringStatus(MonitoringState.PAUSED)
+        result = status.transition_to(MonitoringState.RUNNING)
+        assert result.state == MonitoringState.RUNNING
+
+    def test_finishing_to_completed_still_works(self):
+        """finishing → completed remains valid (backward compatibility)."""
+        status = MonitoringStatus(MonitoringState.FINISHING)
+        result = status.transition_to(MonitoringState.COMPLETED)
+        assert result.state == MonitoringState.COMPLETED
+
+    def test_completed_to_analyzing_raises(self):
+        """Terminal state completed cannot transition to analyzing."""
+        status = MonitoringStatus(MonitoringState.COMPLETED)
+        with pytest.raises(InvalidTransitionError):
+            status.transition_to(MonitoringState.ANALYZING)

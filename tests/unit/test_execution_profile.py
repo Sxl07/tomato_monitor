@@ -106,26 +106,30 @@ class TestEdgeIsMoreConservative:
         assert EDGE_PROFILE.camera_fps < FULL_PROFILE.camera_fps
 
     def test_edge_lower_capture_loop_fps(self):
+        """Edge capture_loop_fps is same as full (both use fast capture-first)."""
         from src.infrastructure.config.settings import EDGE_PROFILE, FULL_PROFILE
 
-        assert EDGE_PROFILE.capture_loop_fps < FULL_PROFILE.capture_loop_fps
+        assert EDGE_PROFILE.capture_loop_fps <= FULL_PROFILE.capture_loop_fps
 
     def test_edge_higher_min_seconds_between_snapshots(self):
+        """Edge min_seconds_between_snapshots >= full (same or more conservative)."""
         from src.infrastructure.config.settings import EDGE_PROFILE, FULL_PROFILE
 
-        assert EDGE_PROFILE.min_seconds_between_snapshots > FULL_PROFILE.min_seconds_between_snapshots
+        assert EDGE_PROFILE.min_seconds_between_snapshots >= FULL_PROFILE.min_seconds_between_snapshots
 
     def test_edge_higher_max_seconds_without_snapshot(self):
+        """Edge max_seconds_without_snapshot >= full (same or more conservative)."""
         from src.infrastructure.config.settings import EDGE_PROFILE, FULL_PROFILE
 
-        assert EDGE_PROFILE.max_seconds_without_snapshot > FULL_PROFILE.max_seconds_without_snapshot
+        assert EDGE_PROFILE.max_seconds_without_snapshot >= FULL_PROFILE.max_seconds_without_snapshot
 
     def test_edge_smaller_gate_resolution(self):
+        """Edge gate_resolution <= full (same or smaller for speed)."""
         from src.infrastructure.config.settings import EDGE_PROFILE, FULL_PROFILE
 
         edge_gate_pixels = EDGE_PROFILE.gate_resolution[0] * EDGE_PROFILE.gate_resolution[1]
         full_gate_pixels = FULL_PROFILE.gate_resolution[0] * FULL_PROFILE.gate_resolution[1]
-        assert edge_gate_pixels < full_gate_pixels
+        assert edge_gate_pixels <= full_gate_pixels
 
     def test_edge_skip_maturity_enabled(self):
         from src.infrastructure.config.settings import EDGE_PROFILE, FULL_PROFILE

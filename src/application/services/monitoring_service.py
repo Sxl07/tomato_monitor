@@ -19,7 +19,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from src.application.services.log_service import LogService
-from src.application.services.monitoring_worker import MonitoringWorker
+from src.application.services.capture_worker import CaptureWorker
 from src.domain.entities.monitoring import Monitoring
 from src.domain.entities.monitoring_metrics import MonitoringMetrics
 from src.domain.exceptions import (
@@ -38,7 +38,6 @@ from src.domain.repositories.monitoring_metrics_repository import (
 from src.domain.repositories.monitoring_repository import MonitoringRepository
 from src.domain.repositories.snapshot_repository import SnapshotRepository
 from src.domain.value_objects.monitoring_status import MonitoringState, MonitoringStatus
-from src.infrastructure.vision.snapshot_inference_runner import SnapshotInferenceRunner
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +47,7 @@ _ACTIVE_STATUSES = {
     MonitoringState.RUNNING.value,
     MonitoringState.PAUSED.value,
     MonitoringState.FINISHING.value,
+    MonitoringState.ANALYZING.value,
 }
 
 
@@ -129,11 +129,10 @@ class MonitoringService:
         length_m: float,
         notes: Optional[str],
         frame_source: FrameSource,
-        inference_runner: SnapshotInferenceRunner,
         db_session: Session,
         log_service: Optional[LogService] = None,
     ) -> Monitoring:
-        """Create a monitoring session and spawn the background worker.
+        """Create a monitoring session and spawn the background capture worker.
 
         Args:
             module_id: The module to monitor (must exist).
@@ -141,7 +140,6 @@ class MonitoringService:
             length_m: Module length in meters (confirmed by farmer).
             notes: Optional farmer notes for this session.
             frame_source: Camera or video frame source.
-            inference_runner: Pre-loaded inference pipeline.
             db_session: SQLAlchemy session for the worker to commit results.
             log_service: Optional LogService for emitting activity log entries.
 
@@ -202,42 +200,39 @@ class MonitoringService:
         from src.infrastructure.config.settings import ACTIVE_PROFILE
         from src.infrastructure.monitoring.thermal_monitor import ThermalMonitor
 
-        worker = MonitoringWorker(
+        worker = CaptureWorker(
             monitoring_id=monitoring.id,
             frame_source=frame_source,
-            inference_runner=inference_runner,
             snapshot_repo=self._snapshot_repo,
-            inspection_result_repo=self._inspection_result_repo,
             monitoring_repo=self._monitoring_repo,
             db_session=db_session,
             log_service=log_service,
-            scene_gate_cooldown_frames=ACTIVE_PROFILE.scene_gate_cooldown_frames,
-            scene_gate_timeout_frames=ACTIVE_PROFILE.scene_gate_timeout_frames,
-            scene_gate_orb_threshold=ACTIVE_PROFILE.scene_gate_orb_threshold,
-            scene_gate_hsv_threshold=ACTIVE_PROFILE.scene_gate_hsv_threshold,
+            capture_loop_fps=ACTIVE_PROFILE.capture_loop_fps,
             min_seconds_between_snapshots=ACTIVE_PROFILE.min_seconds_between_snapshots,
             max_seconds_without_snapshot=ACTIVE_PROFILE.max_seconds_without_snapshot,
-            capture_loop_fps=ACTIVE_PROFILE.capture_loop_fps,
             gate_resolution=ACTIVE_PROFILE.gate_resolution,
-            memory_warning_rss_mb=ACTIVE_PROFILE.memory_warning_rss_mb,
+            scene_gate_orb_threshold=ACTIVE_PROFILE.scene_gate_orb_threshold,
+            scene_gate_hsv_threshold=ACTIVE_PROFILE.scene_gate_hsv_threshold,
         )
 
-        # Create ThermalMonitor with profile params and worker's pause_event.
-        # Order: worker created first → thermal_monitor uses worker.pause_event
-        # → thermal_monitor set on worker before starting.
+        # Create ThermalMonitor — CaptureWorker accepts it as optional kwarg.
+        # Use a dedicated pause_event for thermal pauses (capture loop is fast
+        # so thermal pauses are less critical, but we still monitor temperature).
+        thermal_pause_event = threading.Event()
         thermal_monitor = ThermalMonitor(
-            pause_event=worker.pause_event,
+            pause_event=thermal_pause_event,
             poll_interval_seconds=ACTIVE_PROFILE.thermal_poll_interval_seconds,
             warning_temp=ACTIVE_PROFILE.thermal_warning_temp,
             critical_temp=ACTIVE_PROFILE.thermal_critical_temp,
             resume_temp=ACTIVE_PROFILE.thermal_resume_temp,
         )
         worker._thermal_monitor = thermal_monitor
+
         thread = threading.Thread(
             target=self._run_worker,
             args=(monitoring.id, worker),
             daemon=True,
-            name=f"monitoring-worker-{monitoring.id}",
+            name=f"capture-worker-{monitoring.id}",
         )
         self._registry.register(monitoring.id, worker, thread)
         thread.start()
@@ -571,8 +566,8 @@ class MonitoringService:
             raise MonitoringNotFoundError(monitoring_id)
         return monitoring
 
-    def _run_worker(self, monitoring_id: int, worker: MonitoringWorker) -> None:
-        """Wrapper that runs the worker and handles post-run transitions.
+    def _run_worker(self, monitoring_id: int, worker: CaptureWorker) -> None:
+        """Wrapper that runs the capture worker and handles post-run transitions.
 
         IMPORTANT: Creates a FRESH database session for this background thread.
         The request-scoped session from the HTTP handler is NOT valid here
@@ -583,7 +578,6 @@ class MonitoringService:
         from src.infrastructure.persistence.repositories import (
             SqlMonitoringRepository,
             SqlSnapshotRepository,
-            SqlInspectionResultRepository,
         )
 
         # Create a fresh DB session for this background thread.
@@ -600,13 +594,11 @@ class MonitoringService:
         # Rebuild repositories with the thread-local session.
         thread_monitoring_repo = SqlMonitoringRepository(session=thread_session)
         thread_snapshot_repo = SqlSnapshotRepository(session=thread_session)
-        thread_inspection_repo = SqlInspectionResultRepository(session=thread_session)
 
         # Patch the worker to use thread-local repositories and session.
         worker._monitoring_repo = thread_monitoring_repo
         worker._snapshot_repo = thread_snapshot_repo
-        worker._inspection_result_repo = thread_inspection_repo
-        worker._session = thread_session
+        worker._db_session = thread_session
 
         # Transition from initializing → running before the loop begins.
         try:
