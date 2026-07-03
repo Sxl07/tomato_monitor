@@ -74,10 +74,16 @@ def _build_inference_runner():
         health_model, health_transform = build_health_model_resnet(HEALTH_MODEL_B_PATH)
         _logger.info("Modelos de inferencia cargados correctamente.")
 
+        from src.infrastructure.config.settings import ACTIVE_PROFILE
+
         return SnapshotInferenceRunner(
             detector=detector,
             health_model=health_model,
             health_transform=health_transform,
+            skip_maturity=ACTIVE_PROFILE.skip_maturity,
+            detection_score_threshold=ACTIVE_PROFILE.detection_score_threshold,
+            inference_input_size=(ACTIVE_PROFILE.inference_input_width, ACTIVE_PROFILE.inference_input_height),
+            run_maturity_only_for_healthy=ACTIVE_PROFILE.run_maturity_only_for_healthy,
         )
     except Exception as e:
         _logger.error(f"Error loading inference models: {e}")
@@ -627,7 +633,13 @@ def monitoring_start(
 
     # Construct dependencies for MonitoringService.start_session()
     # 1. Frame source (camera backend — picamera2 on RPi, OpenCV on PC)
-    frame_source = create_frame_source()
+    #    Pass camera resolution from ACTIVE_PROFILE for monitoring capture.
+    from src.infrastructure.config.settings import ACTIVE_PROFILE
+    frame_source = create_frame_source(
+        width=ACTIVE_PROFILE.camera_width,
+        height=ACTIVE_PROFILE.camera_height,
+        fps=ACTIVE_PROFILE.camera_fps,
+    )
     if frame_source is None:
         errors = ["La cámara no está disponible. Verifica la conexión y vuelve a intentar."]
         return templates.TemplateResponse(request, "agricultural/monitoring_setup.html", {

@@ -199,6 +199,9 @@ class MonitoringService:
             pass  # If session auto-commits or is already flushed, this is fine
 
         # Spawn the background worker in a daemon thread.
+        from src.infrastructure.config.settings import ACTIVE_PROFILE
+        from src.infrastructure.monitoring.thermal_monitor import ThermalMonitor
+
         worker = MonitoringWorker(
             monitoring_id=monitoring.id,
             frame_source=frame_source,
@@ -208,7 +211,28 @@ class MonitoringService:
             monitoring_repo=self._monitoring_repo,
             db_session=db_session,
             log_service=log_service,
+            scene_gate_cooldown_frames=ACTIVE_PROFILE.scene_gate_cooldown_frames,
+            scene_gate_timeout_frames=ACTIVE_PROFILE.scene_gate_timeout_frames,
+            scene_gate_orb_threshold=ACTIVE_PROFILE.scene_gate_orb_threshold,
+            scene_gate_hsv_threshold=ACTIVE_PROFILE.scene_gate_hsv_threshold,
+            min_seconds_between_snapshots=ACTIVE_PROFILE.min_seconds_between_snapshots,
+            max_seconds_without_snapshot=ACTIVE_PROFILE.max_seconds_without_snapshot,
+            capture_loop_fps=ACTIVE_PROFILE.capture_loop_fps,
+            gate_resolution=ACTIVE_PROFILE.gate_resolution,
+            memory_warning_rss_mb=ACTIVE_PROFILE.memory_warning_rss_mb,
         )
+
+        # Create ThermalMonitor with profile params and worker's pause_event.
+        # Order: worker created first → thermal_monitor uses worker.pause_event
+        # → thermal_monitor set on worker before starting.
+        thermal_monitor = ThermalMonitor(
+            pause_event=worker.pause_event,
+            poll_interval_seconds=ACTIVE_PROFILE.thermal_poll_interval_seconds,
+            warning_temp=ACTIVE_PROFILE.thermal_warning_temp,
+            critical_temp=ACTIVE_PROFILE.thermal_critical_temp,
+            resume_temp=ACTIVE_PROFILE.thermal_resume_temp,
+        )
+        worker._thermal_monitor = thermal_monitor
         thread = threading.Thread(
             target=self._run_worker,
             args=(monitoring.id, worker),
