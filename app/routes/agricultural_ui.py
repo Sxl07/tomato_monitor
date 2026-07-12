@@ -815,3 +815,4 @@ def monitoring_abort(request: Request, id: int):
         if monitoring is None:
             return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
         return RedirectResponse(url=f"/modulos/{monitoring.module_id}", status_code=303)
+

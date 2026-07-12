@@ -100,7 +100,8 @@ class CaptureWorker:
         # Threading signals
         self.abort_event = threading.Event()
         self.finalize_event = threading.Event()
-        self.pause_event = threading.Event()  # Cooperative pause (thermal, manual)
+        self.pause_event = threading.Event()  # Manual pause (e.g., from pause_session)
+        self.thermal_pause_event = threading.Event()  # Thermal pause (from ThermalMonitor)
         self.complete_event = self.finalize_event  # Alias for backward compat with complete_session()
 
         # State
@@ -109,6 +110,7 @@ class CaptureWorker:
         self._reference_frame: Optional[np.ndarray] = None
         self._last_snapshot_time: float = 0.0
         self._capture_start_time: float = 0.0
+        self._resources_released: bool = False
 
         # Metrics accumulators (initialized here so capture_metrics is safe before run())
         self._total_loop_cycles: int = 0
@@ -172,10 +174,32 @@ class CaptureWorker:
             exit_reason=self._exit_reason,
         )
 
+    def release_resources(self) -> None:
+        """Release FrameSource and stop ThermalMonitor idempotently.
+
+        Can be called even if run() hasn't started. Safe to call multiple times.
+        """
+        if self._resources_released:
+            return
+        self._resources_released = True
+
+        try:
+            self._frame_source.release()
+        except Exception as release_err:
+            logger.warning(f"Error releasing frame source: {release_err}")
+
+        if self._thermal_monitor is not None:
+            stop_fn = getattr(self._thermal_monitor, "stop", None)
+            if callable(stop_fn):
+                try:
+                    stop_fn()
+                except Exception:
+                    pass
+
     def run(self) -> None:
         """Main capture loop. Exits on finalize_event, abort_event, or error.
 
-        Always releases the frame source (and stops ThermalMonitor) in the finally block.
+        Always calls release_resources() in the finally block.
         """
         self._capture_start_time = time.monotonic()
         # Reset metrics for this run (safe to call run() multiple times in tests)
@@ -187,18 +211,18 @@ class CaptureWorker:
         self._exit_reason = ""
         loop_period = 1.0 / self._capture_loop_fps if self._capture_loop_fps > 0 else 0.2
 
-        # Start thermal monitor if available
-        if self._thermal_monitor is not None:
-            start_fn = getattr(self._thermal_monitor, "start", None)
-            if callable(start_fn):
-                start_fn()
-
         try:
+            # Start thermal monitor (inside try so failure is caught)
+            if self._thermal_monitor is not None:
+                start_fn = getattr(self._thermal_monitor, "start", None)
+                if callable(start_fn):
+                    start_fn()
+
             self._emit_log("info", "Captura iniciada — esperando frames...")
 
             while not self.abort_event.is_set() and not self.finalize_event.is_set():
-                # Cooperative pause: wait while pause_event is set
-                while self.pause_event.is_set() and not self.abort_event.is_set() and not self.finalize_event.is_set():
+                # Cooperative pause: wait while manual OR thermal pause is active
+                while (self.pause_event.is_set() or self.thermal_pause_event.is_set()) and not self.abort_event.is_set() and not self.finalize_event.is_set():
                     time.sleep(0.1)
 
                 # Re-check exit conditions after pause
@@ -254,20 +278,7 @@ class CaptureWorker:
             self._emit_log("error", f"Error en captura: {e}")
 
         finally:
-            # Always release the frame source
-            try:
-                self._frame_source.release()
-            except Exception as release_err:
-                logger.warning(f"Error releasing frame source: {release_err}")
-
-            # Stop thermal monitor if available
-            if self._thermal_monitor is not None:
-                stop_fn = getattr(self._thermal_monitor, "stop", None)
-                if callable(stop_fn):
-                    try:
-                        stop_fn()
-                    except Exception:
-                        pass
+            self.release_resources()
 
     def _should_capture(self, frame: np.ndarray) -> tuple[bool, str]:
         """Evaluate whether to capture this frame.

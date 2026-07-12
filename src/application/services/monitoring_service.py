@@ -215,12 +215,10 @@ class MonitoringService:
             scene_gate_hsv_threshold=ACTIVE_PROFILE.scene_gate_hsv_threshold,
         )
 
-        # Create ThermalMonitor — CaptureWorker accepts it as optional kwarg.
-        # Use a dedicated pause_event for thermal pauses (capture loop is fast
-        # so thermal pauses are less critical, but we still monitor temperature).
-        thermal_pause_event = threading.Event()
+        # Create ThermalMonitor — uses worker.thermal_pause_event so that
+        # thermal pauses don't interfere with manual pause_event.
         thermal_monitor = ThermalMonitor(
-            pause_event=thermal_pause_event,
+            pause_event=worker.thermal_pause_event,
             poll_interval_seconds=ACTIVE_PROFILE.thermal_poll_interval_seconds,
             warning_temp=ACTIVE_PROFILE.thermal_warning_temp,
             critical_temp=ACTIVE_PROFILE.thermal_critical_temp,
@@ -588,6 +586,7 @@ class MonitoringService:
             logger.error(
                 f"Failed to create thread-local DB session for monitoring {monitoring_id}: {e}"
             )
+            worker.release_resources()
             self._registry.remove(monitoring_id)
             return
 
@@ -611,6 +610,7 @@ class MonitoringService:
                 f"Failed to transition monitoring {monitoring_id} to running: {e}"
             )
             thread_session.close()
+            worker.release_resources()
             self._registry.remove(monitoring_id)
             return
 

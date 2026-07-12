@@ -1009,3 +1009,215 @@ class TestCompleteEventAlias:
 
         assert frame_source.released is True
         assert frame_source._current < 1000
+
+
+# ---------------------------------------------------------------------------
+# Test: Thermal pause event (separate from manual pause)
+# ---------------------------------------------------------------------------
+
+
+class TestThermalPauseEvent:
+    """Verify thermal_pause_event blocks capture independently of pause_event."""
+
+    def test_thermal_pause_blocks_capture(self):
+        """While thermal_pause_event is set, no new snapshots are captured."""
+        worker, frame_source, snapshot_repo, _, _ = _build_worker(
+            num_frames=100,
+            capture_loop_fps=100.0,
+            min_seconds_between_snapshots=0.0,
+        )
+
+        worker.thermal_pause_event.set()
+
+        with patch(
+            "src.application.services.capture_worker.should_capture_new_image",
+            return_value=(True, {}),
+        ), patch("cv2.imwrite", return_value=True):
+            def stop_after_pause():
+                time.sleep(0.15)
+                worker.abort_event.set()
+
+            t = threading.Thread(target=stop_after_pause)
+            t.start()
+            worker.run()
+            t.join()
+
+        assert worker.snapshot_count == 0
+
+    def test_thermal_pause_clear_resumes_capture(self):
+        """After thermal_pause_event is cleared, worker resumes capturing."""
+        worker, frame_source, snapshot_repo, _, _ = _build_worker(
+            num_frames=100,
+            capture_loop_fps=100.0,
+            min_seconds_between_snapshots=0.0,
+        )
+
+        worker.thermal_pause_event.set()
+
+        with patch(
+            "src.application.services.capture_worker.should_capture_new_image",
+            return_value=(True, {}),
+        ), patch("cv2.imwrite", return_value=True):
+            def unpause_then_stop():
+                time.sleep(0.05)
+                worker.thermal_pause_event.clear()
+                time.sleep(0.08)
+                worker.finalize_event.set()
+
+            t = threading.Thread(target=unpause_then_stop)
+            t.start()
+            worker.run()
+            t.join()
+
+        assert worker.snapshot_count >= 1
+
+    def test_abort_during_thermal_pause_exits(self):
+        """abort_event during thermal pause exits and releases frame_source."""
+        worker, frame_source, _, _, _ = _build_worker(num_frames=100)
+        worker.thermal_pause_event.set()
+
+        with patch("cv2.imwrite", return_value=True):
+            def abort():
+                time.sleep(0.05)
+                worker.abort_event.set()
+
+            t = threading.Thread(target=abort)
+            t.start()
+            worker.run()
+            t.join()
+
+        assert frame_source.released is True
+        assert worker.snapshot_count == 0
+
+    def test_finalize_during_thermal_pause_exits(self):
+        """finalize_event during thermal pause exits and releases frame_source."""
+        worker, frame_source, _, _, _ = _build_worker(num_frames=100)
+        worker.thermal_pause_event.set()
+
+        with patch("cv2.imwrite", return_value=True):
+            def finalize():
+                time.sleep(0.05)
+                worker.finalize_event.set()
+
+            t = threading.Thread(target=finalize)
+            t.start()
+            worker.run()
+            t.join()
+
+        assert frame_source.released is True
+        assert worker.snapshot_count == 0
+
+    def test_both_pauses_active_requires_both_cleared(self):
+        """Both pause_event and thermal_pause_event active → must clear both to resume."""
+        worker, frame_source, snapshot_repo, _, _ = _build_worker(
+            num_frames=100,
+            capture_loop_fps=100.0,
+            min_seconds_between_snapshots=0.0,
+        )
+
+        worker.pause_event.set()
+        worker.thermal_pause_event.set()
+
+        with patch(
+            "src.application.services.capture_worker.should_capture_new_image",
+            return_value=(True, {}),
+        ), patch("cv2.imwrite", return_value=True):
+            def clear_sequence():
+                time.sleep(0.05)
+                # Clear only thermal — should still be paused (manual still active)
+                worker.thermal_pause_event.clear()
+                time.sleep(0.08)
+                # Now clear manual too — should resume
+                worker.pause_event.clear()
+                time.sleep(0.08)
+                worker.finalize_event.set()
+
+            t = threading.Thread(target=clear_sequence)
+            t.start()
+            worker.run()
+            t.join()
+
+        # Should have captured only after BOTH were cleared
+        assert worker.snapshot_count >= 1
+
+
+# ---------------------------------------------------------------------------
+# Test: release_resources() idempotency and thermal_monitor.start() failure
+# ---------------------------------------------------------------------------
+
+
+class TestReleaseResources:
+    """Verify release_resources() is idempotent and handles failures."""
+
+    def test_release_resources_idempotent(self):
+        """Calling release_resources() twice only releases once."""
+        worker, frame_source, _, _, _ = _build_worker(num_frames=5)
+
+        worker.release_resources()
+        assert frame_source.released is True
+
+        # Reset to check it doesn't call again
+        frame_source._released = False
+        worker.release_resources()
+        assert frame_source._released is False  # NOT released again
+
+    def test_release_resources_stops_thermal(self):
+        """release_resources() stops thermal monitor."""
+        frame_source = FakeFrameSource(num_frames=5)
+        snapshot_repo = FakeSnapshotRepo()
+        monitoring_repo = FakeMonitoringRepo()
+        db_session = FakeDbSession()
+        thermal = MagicMock()
+        thermal.stop = MagicMock()
+
+        worker = CaptureWorker(
+            monitoring_id=1,
+            frame_source=frame_source,
+            snapshot_repo=snapshot_repo,
+            monitoring_repo=monitoring_repo,
+            db_session=db_session,
+            thermal_monitor=thermal,
+        )
+
+        worker.release_resources()
+        thermal.stop.assert_called_once()
+
+        # Second call doesn't call stop again
+        thermal.stop.reset_mock()
+        worker.release_resources()
+        thermal.stop.assert_not_called()
+
+    def test_thermal_start_failure_releases_resources(self):
+        """If thermal_monitor.start() raises, frame_source is still released."""
+        frame_source = FakeFrameSource(num_frames=10)
+        snapshot_repo = FakeSnapshotRepo()
+        monitoring_repo = FakeMonitoringRepo()
+        db_session = FakeDbSession()
+        thermal = MagicMock()
+        thermal.start = MagicMock(side_effect=RuntimeError("Hardware fault"))
+        thermal.stop = MagicMock()
+
+        worker = CaptureWorker(
+            monitoring_id=1,
+            frame_source=frame_source,
+            snapshot_repo=snapshot_repo,
+            monitoring_repo=monitoring_repo,
+            db_session=db_session,
+            thermal_monitor=thermal,
+        )
+
+        with patch("cv2.imwrite", return_value=True):
+            worker.run()
+
+        assert frame_source.released is True
+        thermal.stop.assert_called_once()
+        assert worker.error_reason is not None
+        assert worker.capture_metrics.exit_reason == "error"
+
+    def test_release_resources_callable_without_run(self):
+        """release_resources() works even if run() was never called."""
+        worker, frame_source, _, _, _ = _build_worker(num_frames=5)
+
+        # Never called run() — should still work
+        worker.release_resources()
+        assert frame_source.released is True

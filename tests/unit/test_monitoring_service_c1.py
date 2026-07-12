@@ -343,3 +343,93 @@ class TestActiveStatuses:
         from src.application.services.monitoring_service import _ACTIVE_STATUSES
 
         assert "analyzing" in _ACTIVE_STATUSES
+
+
+# ---------------------------------------------------------------------------
+# Test: _run_worker early failures release resources
+# ---------------------------------------------------------------------------
+
+
+class TestRunWorkerEarlyFailures:
+    """Verify _run_worker releases resources on early failures."""
+
+    def test_db_session_creation_failure_releases_resources(self):
+        """If DatabaseManager fails, worker.release_resources() is called."""
+        from src.application.services.monitoring_service import MonitoringService
+        from src.application.services.capture_worker import CaptureWorker
+
+        worker = CaptureWorker(
+            monitoring_id=1,
+            frame_source=MagicMock(),
+            snapshot_repo=MagicMock(),
+            monitoring_repo=MagicMock(),
+            db_session=MagicMock(),
+        )
+        worker.release_resources = MagicMock()
+
+        registry = MagicMock()
+        service = MonitoringService(
+            monitoring_repo=MagicMock(),
+            snapshot_repo=MagicMock(),
+            inspection_result_repo=MagicMock(),
+            metrics_repo=MagicMock(),
+            module_repo=MagicMock(),
+            runtime_registry=registry,
+        )
+
+        with patch(
+            "src.infrastructure.persistence.database.DatabaseManager",
+            side_effect=RuntimeError("Connection refused"),
+        ):
+            service._run_worker(1, worker)
+
+        worker.release_resources.assert_called_once()
+        registry.remove.assert_called_once_with(1)
+
+    def test_transition_failure_releases_resources(self):
+        """If initializing→running transition fails, release_resources called."""
+        from src.application.services.monitoring_service import MonitoringService
+        from src.application.services.capture_worker import CaptureWorker
+
+        worker = CaptureWorker(
+            monitoring_id=1,
+            frame_source=MagicMock(),
+            snapshot_repo=MagicMock(),
+            monitoring_repo=MagicMock(),
+            db_session=MagicMock(),
+        )
+        worker.release_resources = MagicMock()
+
+        registry = MagicMock()
+        service = MonitoringService(
+            monitoring_repo=MagicMock(),
+            snapshot_repo=MagicMock(),
+            inspection_result_repo=MagicMock(),
+            metrics_repo=MagicMock(),
+            module_repo=MagicMock(),
+            runtime_registry=registry,
+        )
+
+        # Make DB session work but transition fail
+        mock_session = MagicMock()
+        mock_db_manager = MagicMock()
+        mock_db_manager.get_session.return_value = mock_session
+
+        mock_monitoring_repo = MagicMock()
+        mock_monitoring_repo.update_status.side_effect = RuntimeError("DB locked")
+
+        with patch(
+            "src.infrastructure.persistence.database.DatabaseManager",
+            return_value=mock_db_manager,
+        ), patch(
+            "src.infrastructure.persistence.repositories.SqlMonitoringRepository",
+            return_value=mock_monitoring_repo,
+        ), patch(
+            "src.infrastructure.persistence.repositories.SqlSnapshotRepository",
+            return_value=MagicMock(),
+        ):
+            service._run_worker(1, worker)
+
+        worker.release_resources.assert_called_once()
+        mock_session.close.assert_called_once()
+        registry.remove.assert_called_once_with(1)

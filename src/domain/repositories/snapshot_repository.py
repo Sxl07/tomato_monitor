@@ -32,3 +32,8 @@ class SnapshotRepository(ABC):
     def get_by_id(self, id: int) -> Optional[Snapshot]:
         """Return the snapshot with the given id, or None if not found."""
         ...
+
+    @abstractmethod
+    def update_has_detections(self, id: int, has_detections: bool) -> Snapshot:
+        """Update the has_detections field on a snapshot. Return updated entity."""
+        ...

@@ -75,6 +75,11 @@ class ExecutionProfile:
     thermal_critical_temp: float
     thermal_resume_temp: float
 
+    # Analysis phase parameters
+    analysis_skip_maturity: bool
+    analysis_thermal_pause_threshold: float
+    analysis_thermal_resume_threshold: float
+
     # Memory budget
     memory_warning_rss_mb: int
 
@@ -101,6 +106,9 @@ EDGE_PROFILE = ExecutionProfile(
     thermal_warning_temp=72.0,
     thermal_critical_temp=78.0,
     thermal_resume_temp=65.0,
+    analysis_skip_maturity=False,
+    analysis_thermal_pause_threshold=72.0,
+    analysis_thermal_resume_threshold=65.0,
     memory_warning_rss_mb=3000,
 )
 
@@ -126,6 +134,9 @@ FULL_PROFILE = ExecutionProfile(
     thermal_warning_temp=78.0,
     thermal_critical_temp=85.0,
     thermal_resume_temp=72.0,
+    analysis_skip_maturity=False,
+    analysis_thermal_pause_threshold=78.0,
+    analysis_thermal_resume_threshold=72.0,
     memory_warning_rss_mb=4000,
 )
 
