@@ -83,6 +83,7 @@ class AnalysisResult:
     analysis_duration_seconds: float = 0.0
     best_results_by_track: dict = field(default_factory=dict)  # track_id → TrackBestResult
     errors: list = field(default_factory=list)
+    report_paths: dict = field(default_factory=dict)
 
 
 class SnapshotAnalysisService:
@@ -105,6 +106,8 @@ class SnapshotAnalysisService:
         thermal_monitor: Any = None,
         analysis_skip_maturity: bool = False,
         log_service: Any = None,
+        report_writer: Optional[object] = None,
+        profile_name: Optional[str] = None,
     ):
         self._monitoring_id = monitoring_id
         self._snapshot_repo = snapshot_repo
@@ -116,11 +119,15 @@ class SnapshotAnalysisService:
         self._thermal_monitor = thermal_monitor
         self._analysis_skip_maturity = analysis_skip_maturity
         self._log_service = log_service
+        self._report_writer = report_writer
+        self._profile_name = profile_name
 
         self._progress = AnalysisProgress()
         self._best_results_by_track: Dict[int, TrackBestResult] = {}
         self._errors: List[str] = []
         self._error_reason: Optional[str] = None
+        self._per_snapshot_rows: List[dict] = []
+        self._per_detection_rows: List[dict] = []
 
     @property
     def progress(self) -> AnalysisProgress:
@@ -132,21 +139,24 @@ class SnapshotAnalysisService:
         """Reason for fatal error, if any."""
         return self._error_reason
 
+    def _reset_state(self) -> None:
+        """Reset all mutable state for a fresh run."""
+        self._progress = AnalysisProgress()
+        self._best_results_by_track = {}
+        self._errors = []
+        self._error_reason = None
+        self._per_snapshot_rows = []
+        self._per_detection_rows = []
+        self._start_time = time.time()
+
     def run(self) -> AnalysisResult:
         """Execute the full analysis pipeline on all snapshots.
 
         Returns:
             AnalysisResult with final metrics and per-track best detections.
         """
-        start_time = time.time()
-
-        # Reset state
-        self._progress = AnalysisProgress()
-        self._best_results_by_track = {}
-        self._errors = []
-        self._error_reason = None
-
-        self._progress.status = "running"
+        self._reset_state()
+        result = None
 
         try:
             # Start thermal monitor (inside try — fatal if it raises)
@@ -155,7 +165,7 @@ class SnapshotAnalysisService:
                 if callable(start_fn):
                     start_fn()
 
-            return self._run_inner(start_time)
+            result = self._run_inner(self._start_time)
 
         except Exception as e:
             # Catch-all for any unexpected fatal error not handled inside _run_inner
@@ -167,13 +177,13 @@ class SnapshotAnalysisService:
                 self._db_session.rollback()
             except Exception:
                 pass
-            return self._build_result(
+            result = self._build_result(
                 snapshots_with_detections=0,
                 total_detection_rows=0,
-                duration=time.time() - start_time,
+                duration=time.time() - self._start_time,
             )
         finally:
-            # Always stop thermal monitor
+            # Stop thermal
             if self._thermal_monitor is not None:
                 stop_fn = getattr(self._thermal_monitor, "stop", None)
                 if callable(stop_fn):
@@ -181,9 +191,16 @@ class SnapshotAnalysisService:
                         stop_fn()
                     except Exception:
                         pass
+            # Generate reports AFTER thermal stop, for ALL outcomes
+            if result is not None:
+                self._generate_reports(result)
+
+        return result
 
     def _run_inner(self, start_time: float) -> AnalysisResult:
         """Inner run logic wrapped for thermal monitor safety."""
+        self._progress.status = "running"
+
         # 1. Get snapshots
         snapshots = self._snapshot_repo.get_by_monitoring(self._monitoring_id)
 
@@ -195,9 +212,10 @@ class SnapshotAnalysisService:
         # 3. If empty → return zeros
         if not snapshots:
             self._progress.status = "completed"
-            return AnalysisResult(
+            result = AnalysisResult(
                 analysis_duration_seconds=time.time() - start_time,
             )
+            return result
 
         # 4. Build pipeline components exactly once
         try:
@@ -231,15 +249,68 @@ class SnapshotAnalysisService:
                         time.sleep(0.25)
 
             try:
-                has_det, detection_rows = self._process_snapshot(snapshot, components)
+                has_det, detection_rows, frame_result, staged_best = self._process_snapshot(snapshot, components)
+
+                # Merge staged best results ONLY after successful commit
+                self._merge_staged_best(staged_best)
+
                 if has_det:
                     snapshots_with_detections += 1
                 total_detection_rows += detection_rows
                 self._progress.processed_snapshots += 1
+
+                # Collect per_snapshot row (after commit)
+                times = frame_result.get("times", {})
+                self._per_snapshot_rows.append({
+                    "monitoring_id": self._monitoring_id,
+                    "snapshot_id": snapshot.id,
+                    "frame_index": snapshot.frame_index,
+                    "image_path": snapshot.image_path,
+                    "status": "processed",
+                    "has_detections": has_det,
+                    "detections_count": frame_result.get("detections_count", 0),
+                    "tracked_count": frame_result.get("tracked_count", 0),
+                    "new_tracks_count": frame_result.get("new_tracks_count", 0),
+                    "reused_count": frame_result.get("reused_count", 0),
+                    "health_executed_count": frame_result.get("health_executed_count", 0),
+                    "maturity_executed_count": frame_result.get("maturity_executed_count", 0),
+                    "detection_sec": times.get("detection_sec"),
+                    "tracking_sec": times.get("tracking_sec"),
+                    "total_frame_sec": times.get("total_frame_sec"),
+                    "error": None,
+                })
+
+                # Collect per_detection rows (only after successful commit)
+                for det in frame_result.get("detections", []):
+                    self._per_detection_rows.append(
+                        self._build_per_detection_row(snapshot, det, frame_result)
+                    )
+
             except _FatalPersistenceError as e:
                 # DB failure is fatal — stop analysis immediately
                 self._error_reason = f"Fatal: {e}"
                 self._progress.status = "error"
+
+                # Record per_snapshot row for fatal error
+                self._per_snapshot_rows.append({
+                    "monitoring_id": self._monitoring_id,
+                    "snapshot_id": snapshot.id,
+                    "frame_index": snapshot.frame_index,
+                    "image_path": snapshot.image_path,
+                    "status": "fatal_error",
+                    "has_detections": False,
+                    "detections_count": 0,
+                    "tracked_count": 0,
+                    "new_tracks_count": 0,
+                    "reused_count": 0,
+                    "health_executed_count": 0,
+                    "maturity_executed_count": 0,
+                    "detection_sec": None,
+                    "tracking_sec": None,
+                    "total_frame_sec": None,
+                    "error": str(e),
+                })
+
                 try:
                     self._db_session.rollback()
                 except Exception:
@@ -254,6 +325,26 @@ class SnapshotAnalysisService:
                 self._progress.failed_snapshots += 1
                 error_msg = f"Snapshot {snapshot.frame_index}: {type(e).__name__}: {e}"
                 self._record_recoverable_error(error_msg)
+
+                # Record per_snapshot row for failed
+                self._per_snapshot_rows.append({
+                    "monitoring_id": self._monitoring_id,
+                    "snapshot_id": snapshot.id,
+                    "frame_index": snapshot.frame_index,
+                    "image_path": snapshot.image_path,
+                    "status": "failed",
+                    "has_detections": False,
+                    "detections_count": 0,
+                    "tracked_count": 0,
+                    "new_tracks_count": 0,
+                    "reused_count": 0,
+                    "health_executed_count": 0,
+                    "maturity_executed_count": 0,
+                    "detection_sec": None,
+                    "tracking_sec": None,
+                    "total_frame_sec": None,
+                    "error": str(e),
+                })
                 continue
 
             self._progress.unique_tracks = len(self._best_results_by_track)
@@ -284,13 +375,16 @@ class SnapshotAnalysisService:
             total_detection_rows=total_detection_rows,
             duration=duration,
         )
+
         return result
 
-    def _process_snapshot(self, snapshot: Snapshot, components: Any) -> tuple[bool, int]:
+    def _process_snapshot(self, snapshot: Snapshot, components: Any) -> tuple[bool, int, dict, dict]:
         """Process a single snapshot through the pipeline.
 
         Returns:
-            (has_detections, detection_rows) tuple.
+            (has_detections, detection_rows, frame_result, staged_best) tuple.
+            staged_best is a dict[int, TrackBestResult] computed locally — NOT yet
+            merged into self._best_results_by_track (caller merges after commit).
 
         Raises:
             RuntimeError: If image cannot be read.
@@ -313,10 +407,12 @@ class SnapshotAnalysisService:
             skip_maturity=self._analysis_skip_maturity,
         )
 
-        # d. Process detections
+        # d. Process detections — stage best results locally
         detections = frame_result.get("detections", [])
         has_detections = len(detections) > 0
         detection_rows = len(detections)
+
+        staged_best: Dict[int, TrackBestResult] = {}
 
         for det in detections:
             track_id = det.get("track_id")
@@ -346,10 +442,17 @@ class SnapshotAnalysisService:
                 maturity_stage = None
                 maturity_percent = None
 
-            # Compare to existing best
+            # Compare to existing best (check both committed and staged)
             existing = self._best_results_by_track.get(track_id)
-            if existing is None or area > existing.best_area:
-                self._best_results_by_track[track_id] = TrackBestResult(
+            staged_existing = staged_best.get(track_id)
+            # Use the better of committed vs staged as baseline
+            best_so_far = existing
+            if staged_existing is not None:
+                if best_so_far is None or staged_existing.best_area > best_so_far.best_area:
+                    best_so_far = staged_existing
+
+            if best_so_far is None or area > best_so_far.best_area:
+                staged_best[track_id] = TrackBestResult(
                     track_id=track_id,
                     snapshot_id=snapshot.id,
                     frame_index=snapshot.frame_index,
@@ -395,7 +498,17 @@ class SnapshotAnalysisService:
                 f"DB failure on snapshot {snapshot.frame_index}: {e}"
             ) from e
 
-        return has_detections, detection_rows
+        return has_detections, detection_rows, frame_result, staged_best
+
+    def _merge_staged_best(self, staged: Dict[int, TrackBestResult]) -> None:
+        """Merge staged best results into self._best_results_by_track.
+
+        Only called AFTER successful commit — prevents contamination on fatal errors.
+        """
+        for track_id, candidate in staged.items():
+            existing = self._best_results_by_track.get(track_id)
+            if existing is None or candidate.best_area > existing.best_area:
+                self._best_results_by_track[track_id] = candidate
 
     def _generate_crops(
         self, image_bgr: np.ndarray, detections: list, frame_index: int
@@ -500,6 +613,198 @@ class SnapshotAnalysisService:
             best_results_by_track=dict(self._best_results_by_track),
             errors=list(self._errors),
         )
+
+    def _build_per_detection_row(self, snapshot: Snapshot, det: dict, frame_result: dict) -> dict:
+        """Build a per-detection row dict for reporting."""
+        bbox = det.get("bbox", [0, 0, 0, 0])
+        x1, y1, x2, y2 = bbox
+        area = max(0, x2 - x1) * max(0, y2 - y1)
+
+        health_result = det.get("health_result") or {}
+        maturity_result = det.get("maturity_result") or {}
+        times = det.get("times", {})
+
+        return {
+            "monitoring_id": self._monitoring_id,
+            "snapshot_id": snapshot.id,
+            "frame_index": snapshot.frame_index,
+            "image_name": frame_result.get("image_name", os.path.basename(snapshot.image_path)),
+            "track_id": det.get("track_id"),
+            "detection_id": det.get("detection_id"),
+            "is_new_track": det.get("is_new_track", False),
+            "track_hits": det.get("track_hits", 0),
+            "reused_previous_result": det.get("reused_previous_result", False),
+            "selected_as_best": False,  # Marked later in _generate_reports
+            "decision_reason": det.get("decision_reason"),
+            "x1": x1,
+            "y1": y1,
+            "x2": x2,
+            "y2": y2,
+            "bbox_area": area,
+            "det_score": det.get("det_score", 0.0),
+            "health_executed": det.get("health_executed", False),
+            "health_label": health_result.get("label"),
+            "health_confidence": health_result.get("confidence"),
+            "prob_healthy": health_result.get("prob_healthy"),
+            "prob_unhealthy": health_result.get("prob_unhealthy"),
+            "maturity_executed": det.get("maturity_executed", False),
+            "usda_stage": maturity_result.get("usda_stage"),
+            "maturity_percent": maturity_result.get("maturity_percent"),
+            "maturity_confidence": maturity_result.get("confidence"),
+            "maturity_warning": maturity_result.get("warning"),
+            "crop_sec": times.get("crop_sec"),
+            "health_sec": times.get("health_sec"),
+            "maturity_sec": times.get("maturity_sec"),
+            "detection_pipeline_sec": times.get("detection_pipeline_sec"),
+        }
+
+    def _record_result_error(self, result: AnalysisResult, message: str) -> None:
+        """Record an error discovered during report generation into both self._errors and result.errors."""
+        if message not in self._errors:
+            self._errors.append(message)
+        if message not in result.errors:
+            result.errors.append(message)
+        self._emit_log("error", message)
+
+    def _generate_reports(self, result: AnalysisResult) -> None:
+        """Generate report files. Must NEVER trigger rollback or crash analysis.
+
+        Called AFTER thermal_monitor.stop() in the finally block has already executed.
+        """
+        try:
+            # Lazy import of writer (inside try — Correction 4)
+            writer = self._report_writer
+            if writer is None:
+                from src.infrastructure.persistence.local.snapshot_analysis_report_writer import SnapshotAnalysisReportWriter
+                writer = SnapshotAnalysisReportWriter()
+
+            # Lazy import of profile (inside try — Correction 4)
+            profile = self._profile_name
+            if profile is None:
+                try:
+                    from src.infrastructure.config.settings import ACTIVE_PROFILE
+                    profile = ACTIVE_PROFILE.name
+                except Exception:
+                    profile = None
+
+            # Mark selected_as_best without overwriting decision_reason
+            selected_tracks = set()
+            for row in self._per_detection_rows:
+                row["selected_as_best"] = False
+
+            for track_id, best in self._best_results_by_track.items():
+                if track_id in selected_tracks:
+                    continue
+                for row in self._per_detection_rows:
+                    if (row["track_id"] == track_id
+                            and row["snapshot_id"] == best.snapshot_id
+                            and row["frame_index"] == best.frame_index
+                            and row["x1"] == best.bbox[0]
+                            and row["y1"] == best.bbox[1]
+                            and row["x2"] == best.bbox[2]
+                            and row["y2"] == best.bbox[3]
+                            and not row["reused_previous_result"]):
+                        row["selected_as_best"] = True
+                        selected_tracks.add(track_id)
+                        break
+                else:
+                    # Correction 5: sync errors into both self._errors and result.errors
+                    self._record_result_error(result, f"Could not find best row for track {track_id}")
+
+            # Build summary_row
+            summary_row = {
+                "monitoring_id": self._monitoring_id,
+                "status": "completed" if self._error_reason is None else "error",
+                "total_snapshots": result.total_snapshots,
+                "processed_snapshots": result.processed_snapshots,
+                "failed_snapshots": result.failed_snapshots,
+                "snapshots_with_detections": result.snapshots_with_detections,
+                "total_detection_rows": result.total_detection_rows,
+                "unique_tomatoes": result.unique_tomatoes,
+                "healthy_count": result.healthy_count,
+                "unhealthy_count": result.unhealthy_count,
+                "unknown_health_count": result.unknown_health_count,
+                "maturity_green_count": result.maturity_counts.get("green", 0),
+                "maturity_breaker_count": result.maturity_counts.get("breaker", 0),
+                "maturity_turning_count": result.maturity_counts.get("turning", 0),
+                "maturity_pink_count": result.maturity_counts.get("pink", 0),
+                "maturity_light_red_count": result.maturity_counts.get("light_red", 0),
+                "maturity_red_count": result.maturity_counts.get("red", 0),
+                "analysis_duration_seconds": result.analysis_duration_seconds,
+                "errors_count": len(result.errors),
+                "error_reason": self._error_reason,
+            }
+
+            # Compute execution_counts from accumulated rows
+            execution_counts = {
+                "new_tracks": sum(r.get("new_tracks_count", 0) for r in self._per_snapshot_rows if r["status"] == "processed"),
+                "reused_rows": sum(1 for r in self._per_detection_rows if r.get("reused_previous_result")),
+                "health_executions": sum(1 for r in self._per_detection_rows if r.get("health_executed")),
+                "maturity_executions": sum(1 for r in self._per_detection_rows if r.get("maturity_executed")),
+            }
+
+            # Compute average_timings_seconds from processed rows
+            processed_rows = [r for r in self._per_snapshot_rows if r["status"] == "processed"]
+
+            def safe_avg(rows, key):
+                vals = [r[key] for r in rows if r.get(key) is not None]
+                return sum(vals) / len(vals) if vals else 0.0
+
+            average_timings_seconds = {
+                "detection": safe_avg(processed_rows, "detection_sec"),
+                "tracking": safe_avg(processed_rows, "tracking_sec"),
+                "total_frame": safe_avg(processed_rows, "total_frame_sec"),
+                "crop": safe_avg(self._per_detection_rows, "crop_sec"),
+                "health": safe_avg(self._per_detection_rows, "health_sec"),
+                "maturity": safe_avg(self._per_detection_rows, "maturity_sec"),
+                "detection_pipeline": safe_avg(self._per_detection_rows, "detection_pipeline_sec"),
+            }
+
+            duration = result.analysis_duration_seconds
+            analysis_metrics = {
+                "status": "completed" if self._error_reason is None else "error",
+                "error_reason": self._error_reason,
+                "total_snapshots": result.total_snapshots,
+                "processed_snapshots": result.processed_snapshots,
+                "failed_snapshots": result.failed_snapshots,
+                "snapshots_with_detections": result.snapshots_with_detections,
+                "total_detection_rows": result.total_detection_rows,
+                "unique_tomatoes": result.unique_tomatoes,
+                "healthy_count": result.healthy_count,
+                "unhealthy_count": result.unhealthy_count,
+                "unknown_health_count": result.unknown_health_count,
+                "maturity_counts": dict(result.maturity_counts),
+                "analysis_duration_seconds": duration,
+                "processed_snapshots_per_second": (result.processed_snapshots / duration) if duration > 0 else 0.0,
+                "detection_rows_per_second": (result.total_detection_rows / duration) if duration > 0 else 0.0,
+                "execution_counts": execution_counts,
+                "average_timings_seconds": average_timings_seconds,
+                "errors_count": len(result.errors),
+                "errors": list(result.errors),
+                "report_files": {},  # Filled after write
+            }
+
+            # Call report_writer
+            write_result = writer.write_reports(
+                monitoring_id=self._monitoring_id,
+                per_snapshot_rows=self._per_snapshot_rows,
+                per_detection_rows=self._per_detection_rows,
+                summary_row=summary_row,
+                analysis_metrics=analysis_metrics,
+                profile_name=profile,
+            )
+
+            # Merge report paths and errors into result
+            result.report_paths = write_result.paths
+
+            # Correction 8: Errors from writer emitted via LogService
+            if write_result.errors:
+                for err in write_result.errors:
+                    self._record_result_error(result, f"Report: {err}")
+
+        except Exception as e:
+            # Report generation must NEVER crash analysis or trigger rollback
+            self._record_result_error(result, f"Report generation failed: {e}")
 
     def _resolve_image_path(self, image_path: str) -> str:
         """Resolve image path and validate it's within the monitoring directory.

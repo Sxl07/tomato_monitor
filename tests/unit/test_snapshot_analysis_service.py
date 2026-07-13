@@ -1,4 +1,4 @@
-"""Unit tests for SnapshotAnalysisService — Spec 009, Phase C2A.
+﻿"""Unit tests for SnapshotAnalysisService â€” Spec 009, Phase C2A.
 
 Validates the isolated analysis service without requiring Detectron2.
 All heavy dependencies are injected via mocks/fakes.
@@ -139,6 +139,16 @@ def _make_detection(
     }
 
 
+class _NoOpReportWriter:
+    """No-op report writer for unit tests â€” never writes to disk."""
+
+    def write_reports(self, **kwargs):
+        from src.infrastructure.persistence.local.snapshot_analysis_report_writer import (
+            AnalysisReportWriteResult,
+        )
+        return AnalysisReportWriteResult(paths={}, errors=[])
+
+
 def _build_service(
     snapshots: list[Snapshot] = None,
     process_frame_results: list[dict] = None,
@@ -147,8 +157,11 @@ def _build_service(
     log_service: Any = None,
     components_factory_raises: bool = False,
     inspection_result_repo: FakeInspectionResultRepo = None,
+    report_writer: Any = None,
 ) -> tuple[SnapshotAnalysisService, FakeSnapshotRepo, FakeInspectionResultRepo, FakeDbSession, MagicMock, MagicMock]:
     """Build a SnapshotAnalysisService with fakes for testing.
+
+    By default injects a NoOp report writer to prevent writing to disk.
 
     Returns:
         (service, snapshot_repo, inspection_result_repo, db_session,
@@ -173,6 +186,10 @@ def _build_service(
         return_value=np.zeros((480, 640, 3), dtype=np.uint8)
     )
 
+    # Use NoOp writer by default to prevent writing to real outputs/
+    if report_writer is None:
+        report_writer = _NoOpReportWriter()
+
     service = SnapshotAnalysisService(
         monitoring_id=1,
         snapshot_repo=snapshot_repo,
@@ -184,6 +201,7 @@ def _build_service(
         analysis_skip_maturity=analysis_skip_maturity,
         thermal_monitor=thermal_monitor,
         log_service=log_service,
+        report_writer=report_writer,
     )
 
     return (
@@ -197,7 +215,7 @@ def _build_service(
 
 
 # ---------------------------------------------------------------------------
-# Test 1: Zero snapshots → returns zeros, components_factory NOT called
+# Test 1: Zero snapshots â†’ returns zeros, components_factory NOT called
 # ---------------------------------------------------------------------------
 
 
@@ -331,7 +349,7 @@ class TestComponentsReuse:
 
 
 # ---------------------------------------------------------------------------
-# Test 5: Same track_id in 3 snapshots → unique_tomatoes=1
+# Test 5: Same track_id in 3 snapshots â†’ unique_tomatoes=1
 # ---------------------------------------------------------------------------
 
 
@@ -339,7 +357,7 @@ class TestSameTrackDeduplication:
     """Verify same track_id across snapshots counts as one unique tomato."""
 
     def test_same_track_three_snapshots_one_tomato(self):
-        """Same track_id in 3 snapshots → unique_tomatoes=1, one InspectionResult."""
+        """Same track_id in 3 snapshots â†’ unique_tomatoes=1, one InspectionResult."""
         snapshots = [
             _make_snapshot(id=i + 1, monitoring_id=1, frame_index=i) for i in range(3)
         ]
@@ -379,7 +397,7 @@ class TestBestAreaReplacement:
             _make_snapshot(id=2, monitoring_id=1, frame_index=1),
             _make_snapshot(id=3, monitoring_id=1, frame_index=2),
         ]
-        # Small → medium → large bbox for same track
+        # Small â†’ medium â†’ large bbox for same track
         results = [
             _make_frame_result([_make_detection(track_id=1, bbox=[100, 100, 150, 150])]),
             _make_frame_result([_make_detection(track_id=1, bbox=[100, 100, 200, 200])]),
@@ -403,7 +421,7 @@ class TestBestAreaReplacement:
 
 
 # ---------------------------------------------------------------------------
-# Test 7: reused_previous_result=True → no TrackBestResult update
+# Test 7: reused_previous_result=True â†’ no TrackBestResult update
 # ---------------------------------------------------------------------------
 
 
@@ -411,7 +429,7 @@ class TestReusedDetections:
     """Verify reused detections don't update TrackBestResult."""
 
     def test_reused_no_best_result_update(self):
-        """reused_previous_result=True → no TrackBestResult update, no extra persist."""
+        """reused_previous_result=True â†’ no TrackBestResult update, no extra persist."""
         snapshots = [
             _make_snapshot(id=1, monitoring_id=1, frame_index=0),
             _make_snapshot(id=2, monitoring_id=1, frame_index=1),
@@ -443,7 +461,7 @@ class TestReusedDetections:
 
 
 # ---------------------------------------------------------------------------
-# Test 8: Two distinct track_ids → unique_tomatoes=2
+# Test 8: Two distinct track_ids â†’ unique_tomatoes=2
 # ---------------------------------------------------------------------------
 
 
@@ -451,7 +469,7 @@ class TestMultipleTracks:
     """Verify distinct track_ids are counted separately."""
 
     def test_two_tracks_two_unique_tomatoes(self):
-        """Two distinct track_ids → unique_tomatoes=2."""
+        """Two distinct track_ids â†’ unique_tomatoes=2."""
         snapshots = [
             _make_snapshot(id=1, monitoring_id=1, frame_index=0),
         ]
@@ -477,7 +495,7 @@ class TestMultipleTracks:
 
 
 # ---------------------------------------------------------------------------
-# Test 9: Snapshot with detections → has_detections=True, annotated saved
+# Test 9: Snapshot with detections â†’ has_detections=True, annotated saved
 # ---------------------------------------------------------------------------
 
 
@@ -536,7 +554,7 @@ class TestHasDetections:
 
 
 # ---------------------------------------------------------------------------
-# Test 10: Snapshot without detections → has_detections=False
+# Test 10: Snapshot without detections â†’ has_detections=False
 # ---------------------------------------------------------------------------
 
 
@@ -564,7 +582,7 @@ class TestNoDetections:
 
 
 # ---------------------------------------------------------------------------
-# Test 11: Missing image (cv2.imread returns None) → failed_snapshots++
+# Test 11: Missing image (cv2.imread returns None) â†’ failed_snapshots++
 # ---------------------------------------------------------------------------
 
 
@@ -572,7 +590,7 @@ class TestMissingImage:
     """Verify failed image reads increment failed_snapshots and continue."""
 
     def test_imread_none_increments_failed_continues(self):
-        """cv2.imread returning None → failed_snapshots==1, continues to next."""
+        """cv2.imread returning None â†’ failed_snapshots==1, continues to next."""
         snapshots = [
             _make_snapshot(id=1, monitoring_id=1, frame_index=0,
                           image_path="outputs/monitorings/1/snapshots/raw/missing.jpg"),
@@ -604,7 +622,7 @@ class TestMissingImage:
 
 
 # ---------------------------------------------------------------------------
-# Test 12: No health_result → health_label="unknown", still counted
+# Test 12: No health_result â†’ health_label="unknown", still counted
 # ---------------------------------------------------------------------------
 
 
@@ -612,7 +630,7 @@ class TestMissingHealth:
     """Verify missing health_result defaults to unknown."""
 
     def test_no_health_result_defaults_unknown(self):
-        """Detection without health_result → health_label='unknown', still a tomato."""
+        """Detection without health_result â†’ health_label='unknown', still a tomato."""
         snapshots = [
             _make_snapshot(id=1, monitoring_id=1, frame_index=0),
         ]
@@ -649,7 +667,7 @@ class TestMissingHealth:
 
 
 # ---------------------------------------------------------------------------
-# Test 13: analysis_skip_maturity=True → maturity not stored
+# Test 13: analysis_skip_maturity=True â†’ maturity not stored
 # ---------------------------------------------------------------------------
 
 
@@ -825,7 +843,7 @@ class TestTotalDetectionRows:
     """Verify total_detection_rows is accumulated correctly."""
 
     def test_one_snapshot_three_detections(self):
-        """1 snapshot with 3 detections → total_detection_rows=3."""
+        """1 snapshot with 3 detections â†’ total_detection_rows=3."""
         snapshots = [
             _make_snapshot(id=1, monitoring_id=1, frame_index=0),
         ]
@@ -850,7 +868,7 @@ class TestTotalDetectionRows:
         assert result.total_detection_rows == 3
 
     def test_two_snapshots_mixed_detections(self):
-        """2 snapshots with 2 and 1 detections → total_detection_rows=3."""
+        """2 snapshots with 2 and 1 detections â†’ total_detection_rows=3."""
         snapshots = [
             _make_snapshot(id=1, monitoring_id=1, frame_index=0),
             _make_snapshot(id=2, monitoring_id=1, frame_index=1),
@@ -911,7 +929,7 @@ class TestFailedSnapshotsExactCount:
     """Verify failed_snapshots is not double-counted."""
 
     def test_failed_snapshots_exact_count(self):
-        """1 missing image + 1 valid → failed=1, processed=1, total=2."""
+        """1 missing image + 1 valid â†’ failed=1, processed=1, total=2."""
         snapshots = [
             _make_snapshot(id=1, monitoring_id=1, frame_index=0,
                           image_path="outputs/monitorings/1/snapshots/raw/missing.jpg"),
@@ -1057,7 +1075,7 @@ class TestErrorReasonAndFatalErrors:
     """Verify error_reason is set on fatal errors."""
 
     def test_components_factory_raises_sets_error_reason(self):
-        """components_factory raises → error_reason set, progress.status='error'."""
+        """components_factory raises â†’ error_reason set, progress.status='error'."""
         snapshots = [_make_snapshot(id=1, monitoring_id=1, frame_index=0)]
 
         service, _, _, db_session, _, _ = _build_service(
@@ -1074,7 +1092,7 @@ class TestErrorReasonAndFatalErrors:
         assert service.progress.status == "error"
 
     def test_persist_failure_sets_error_reason(self):
-        """inspection_result_repo.create raises → error_reason set, rollback called."""
+        """inspection_result_repo.create raises â†’ error_reason set, rollback called."""
         snapshots = [_make_snapshot(id=1, monitoring_id=1, frame_index=0)]
         results = [_make_frame_result([_make_detection(track_id=1)])]
 
@@ -1124,7 +1142,7 @@ class TestImwriteValidation:
     """Verify cv2.imwrite return value is checked."""
 
     def test_imwrite_false_annotated_logs_error_continues(self):
-        """imwrite returns False for annotated → error logged, analysis continues."""
+        """imwrite returns False for annotated â†’ error logged, analysis continues."""
         snapshots = [_make_snapshot(id=1, monitoring_id=1, frame_index=0)]
         results = [_make_frame_result([_make_detection(track_id=1)])]
 
@@ -1152,7 +1170,7 @@ class TestImwriteValidation:
         assert any("Failed to save annotated" in e for e in result.errors)
 
     def test_imwrite_false_crop_logs_error_continues(self):
-        """imwrite returns False for crop → error logged, continues."""
+        """imwrite returns False for crop â†’ error logged, continues."""
         snapshots = [_make_snapshot(id=1, monitoring_id=1, frame_index=0)]
         results = [_make_frame_result([_make_detection(track_id=1)])]
 
@@ -1185,7 +1203,7 @@ class TestPathTraversal:
     """Verify path traversal is rejected."""
 
     def test_path_traversal_rejected(self):
-        """Snapshot with path containing '..' → failed_snapshots incremented, cv2.imread NOT called."""
+        """Snapshot with path containing '..' â†’ failed_snapshots incremented, cv2.imread NOT called."""
         snapshots = [
             _make_snapshot(
                 id=1, monitoring_id=1, frame_index=0,
@@ -1213,7 +1231,7 @@ class TestPathTraversal:
         assert not any("secret" in p for p in imread_paths)
 
     def test_path_outside_monitoring_rejected(self):
-        """Snapshot with path outside monitoring dir → failed."""
+        """Snapshot with path outside monitoring dir â†’ failed."""
         snapshots = [
             _make_snapshot(
                 id=1, monitoring_id=1, frame_index=0,
@@ -1242,7 +1260,7 @@ class TestLogServiceIntegration:
     """Verify LogService integration."""
 
     def test_log_service_that_raises_does_not_crash_analysis(self):
-        """LogService that raises → analysis still completes."""
+        """LogService that raises â†’ analysis still completes."""
         log_service = MagicMock()
         log_service.add_entry = MagicMock(side_effect=RuntimeError("Log broken"))
 
@@ -1343,6 +1361,7 @@ class TestDbFatalErrors:
             components_factory=components_factory,
             process_frame_fn=process_frame_mock,
             annotation_renderer=annotation_renderer,
+            report_writer=_NoOpReportWriter(),
         )
 
         dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -1409,6 +1428,7 @@ class TestRepoGetFails:
             components_factory=MagicMock(),
             process_frame_fn=MagicMock(),
             annotation_renderer=MagicMock(),
+            report_writer=_NoOpReportWriter(),
         )
 
         result = service.run()
@@ -1470,6 +1490,7 @@ class TestAnnotationRendererFailure:
             components_factory=components_factory,
             process_frame_fn=process_frame_mock,
             annotation_renderer=failing_renderer,
+            report_writer=_NoOpReportWriter(),
         )
 
         dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -1550,7 +1571,7 @@ class TestLogServiceFailureDuringErrorRecording:
         process_frame_mock = MagicMock(
             side_effect=lambda img, comp, name, **kw: next(results_iter)
         )
-        # Renderer raises → triggers _record_recoverable_error → LogService raises
+        # Renderer raises â†’ triggers _record_recoverable_error â†’ LogService raises
         failing_renderer = MagicMock(side_effect=RuntimeError("Renderer crash"))
 
         service = SnapshotAnalysisService(
@@ -1562,6 +1583,7 @@ class TestLogServiceFailureDuringErrorRecording:
             process_frame_fn=process_frame_mock,
             annotation_renderer=failing_renderer,
             log_service=log_service,
+            report_writer=_NoOpReportWriter(),
         )
 
         dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -1573,3 +1595,52 @@ class TestLogServiceFailureDuringErrorRecording:
         # Analysis still completed despite LogService failure
         assert service.progress.status == "completed"
         assert result.processed_snapshots == 1
+
+
+# ---------------------------------------------------------------------------
+# Test: Report failure uses _record_result_error with LogService
+# ---------------------------------------------------------------------------
+
+
+class TestReportFailureUsesRecordResultError:
+    """Verify report failures go through _record_result_error."""
+
+    def test_writer_failure_emits_log_and_records_once(self):
+        """Writer failure â†’ error in result.errors once, LogService attempted, no rollback."""
+        log_service = MagicMock()
+
+        failing_writer = MagicMock()
+        failing_writer.write_reports = MagicMock(
+            side_effect=RuntimeError("Disk exploded")
+        )
+
+        snapshots = [
+            _make_snapshot(id=1, monitoring_id=1, frame_index=0),
+        ]
+        results = [_make_frame_result([_make_detection(track_id=1)])]
+
+        service, _, _, db_session, _, _ = _build_service(
+            snapshots=snapshots,
+            process_frame_results=results,
+            log_service=log_service,
+            report_writer=failing_writer,
+        )
+
+        dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
+        with patch("cv2.imread", return_value=dummy_img), \
+             patch("cv2.imwrite", return_value=True), \
+             patch("os.makedirs"):
+            result = service.run()
+
+        # Status remains completed
+        assert service.progress.status == "completed"
+
+        # Error appears exactly once in result.errors
+        report_errors = [e for e in result.errors if "Report generation failed" in e]
+        assert len(report_errors) == 1
+
+        # LogService was attempted
+        log_service.add_entry.assert_called()
+
+        # No rollback from report failure
+        assert db_session.rollback_count == 0
