@@ -816,3 +816,61 @@ def monitoring_abort(request: Request, id: int):
             return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
         return RedirectResponse(url=f"/modulos/{monitoring.module_id}", status_code=303)
 
+
+@router.post("/monitoreos/{id}/finalizar-captura")
+def monitoring_finalize_capture(request: Request, id: int):
+    """Finalize the capture phase and start deferred analysis.
+
+    Delegates exclusively to MonitoringService.finalize_capture() which:
+    - Signals the worker to stop capturing (NOT abort)
+    - Waits for camera release
+    - Starts analysis thread if snapshots exist
+    - Transitions to 'completed' directly if zero snapshots
+
+    Always redirects to the execution screen regardless of outcome.
+    """
+    from src.application.services.monitoring_service import (
+        MonitoringNotFoundError,
+        FinalizationInProgressError,
+    )
+    from src.domain.exceptions import InvalidTransitionError
+
+    _logger.info(f"UI finalize-capture request received for monitoring {id}")
+
+    monitoring_service = get_monitoring_service(request)
+    try:
+        monitoring = monitoring_service.finalize_capture(id)
+        _logger.info(
+            f"UI finalize-capture accepted for monitoring {id}, "
+            f"status={monitoring.status}"
+        )
+        return RedirectResponse(
+            url=f"/monitoreos/{id}/ejecucion", status_code=303
+        )
+    except MonitoringNotFoundError:
+        _logger.warning(f"UI finalize-capture: monitoring {id} not found")
+        return RedirectResponse(
+            url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303
+        )
+    except FinalizationInProgressError:
+        _logger.info(
+            f"UI finalize-capture: monitoring {id} already being finalized"
+        )
+        return RedirectResponse(
+            url=f"/monitoreos/{id}/ejecucion", status_code=303
+        )
+    except InvalidTransitionError:
+        _logger.info(
+            f"UI finalize-capture: monitoring {id} invalid transition"
+        )
+        monitoring_repo = get_monitoring_repository(request)
+        monitoring = monitoring_repo.get_by_id(id)
+        if monitoring is None:
+            return RedirectResponse(
+                url="/invernaderos?error=Monitoreo+no+encontrado",
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=f"/monitoreos/{id}/ejecucion", status_code=303
+        )
+
