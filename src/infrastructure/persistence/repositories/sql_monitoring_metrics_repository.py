@@ -21,6 +21,9 @@ from src.infrastructure.persistence.models.monitoring_model import MonitoringMod
 # Terminal statuses that allow metrics creation
 _ALLOWED_STATUSES = {"completed", "aborted"}
 
+# Statuses that allow pending metrics creation (during finalization)
+_PENDING_ALLOWED_STATUSES = {"running", "analyzing"}
+
 
 class SqlMonitoringMetricsRepository(MonitoringMetricsRepository):
     """SQLAlchemy-backed repository for MonitoringMetrics entities.
@@ -51,21 +54,28 @@ class SqlMonitoringMetricsRepository(MonitoringMetricsRepository):
         if monitoring.status not in _ALLOWED_STATUSES:
             raise MetricsNotAllowedError(monitoring_id, monitoring.status)
 
-        model = MonitoringMetricsModel(
-            monitoring_id=monitoring_id,
-            total_tomatoes=metrics.total_tomatoes,
-            healthy_count=metrics.healthy_count,
-            unhealthy_count=metrics.unhealthy_count,
-            pct_healthy=metrics.pct_healthy,
-            pct_unhealthy=metrics.pct_unhealthy,
-            pct_green=metrics.pct_green,
-            pct_breaker=metrics.pct_breaker,
-            pct_turning=metrics.pct_turning,
-            pct_pink=metrics.pct_pink,
-            pct_light_red=metrics.pct_light_red,
-            pct_red=metrics.pct_red,
-            snapshots_with_detections=metrics.snapshots_with_detections,
-        )
+        model = self._to_model(monitoring_id, metrics)
+        self._session.add(model)
+        self._session.flush()
+        return self._to_entity(model)
+
+    def create_pending_for_finalization(
+        self, monitoring_id: int, metrics: MonitoringMetrics
+    ) -> MonitoringMetrics:
+        """Persist pending metrics. Flushes without commit.
+
+        Guards:
+            - Raises ParentNotFoundError if monitoring_id does not exist.
+            - Raises MetricsNotAllowedError if monitoring status is not in
+              {running, analyzing}.
+        """
+        monitoring = self._session.get(MonitoringModel, monitoring_id)
+        if monitoring is None:
+            raise ParentNotFoundError("Monitoring", monitoring_id)
+        if monitoring.status not in _PENDING_ALLOWED_STATUSES:
+            raise MetricsNotAllowedError(monitoring_id, monitoring.status)
+
+        model = self._to_model(monitoring_id, metrics)
         self._session.add(model)
         self._session.flush()
         return self._to_entity(model)
@@ -80,6 +90,24 @@ class SqlMonitoringMetricsRepository(MonitoringMetricsRepository):
         if model is None:
             return None
         return self._to_entity(model)
+
+    def _to_model(self, monitoring_id: int, metrics: MonitoringMetrics) -> MonitoringMetricsModel:
+        """Convert domain entity to ORM model."""
+        return MonitoringMetricsModel(
+            monitoring_id=monitoring_id,
+            total_tomatoes=metrics.total_tomatoes,
+            healthy_count=metrics.healthy_count,
+            unhealthy_count=metrics.unhealthy_count,
+            pct_healthy=metrics.pct_healthy,
+            pct_unhealthy=metrics.pct_unhealthy,
+            pct_green=metrics.pct_green,
+            pct_breaker=metrics.pct_breaker,
+            pct_turning=metrics.pct_turning,
+            pct_pink=metrics.pct_pink,
+            pct_light_red=metrics.pct_light_red,
+            pct_red=metrics.pct_red,
+            snapshots_with_detections=metrics.snapshots_with_detections,
+        )
 
     def _to_entity(self, model: MonitoringMetricsModel) -> MonitoringMetrics:
         """Convert an ORM model instance to a domain entity."""

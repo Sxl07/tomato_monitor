@@ -183,14 +183,39 @@ class SnapshotAnalysisReportWriter:
             raise
         return target_path
 
-    def _write_pipeline_metrics(
+    def write_capture_metrics(
+        self,
+        monitoring_id: int,
+        capture_metrics: dict,
+        profile_name: Optional[str] = None,
+    ) -> AnalysisReportWriteResult:
+        """Write capture phase metrics to pipeline_metrics.json.
+
+        Preserves existing 'analysis' section and unknown keys.
+        Uses atomic write. Invalid existing JSON is not overwritten.
+        """
+        result = AnalysisReportWriteResult()
+        metrics_path = self._base_dir / str(monitoring_id) / "pipeline_metrics.json"
+
+        try:
+            path = self._write_pipeline_metrics_section(
+                metrics_path, monitoring_id, "capture", capture_metrics, profile_name
+            )
+            result.paths["pipeline_metrics_json"] = str(path)
+        except Exception as e:
+            result.errors.append(f"pipeline_metrics.json: {e}")
+
+        return result
+
+    def _write_pipeline_metrics_section(
         self,
         target_path: Path,
         monitoring_id: int,
-        analysis_metrics: dict,
+        section_key: str,
+        section_data: dict,
         profile_name: Optional[str],
     ) -> Path:
-        """Update pipeline_metrics.json preserving existing sections."""
+        """Write/update a section in pipeline_metrics.json preserving other sections."""
         existing: dict = {}
         if target_path.exists():
             try:
@@ -201,12 +226,11 @@ class SnapshotAnalysisReportWriter:
             except (json.JSONDecodeError, ValueError) as e:
                 raise RuntimeError(f"Invalid existing pipeline_metrics.json: {e}")
 
-        # Merge: preserve existing keys, update ours
         existing["schema_version"] = 1
         existing["monitoring_id"] = monitoring_id
         if profile_name is not None:
             existing["profile_name"] = profile_name
-        existing["analysis"] = analysis_metrics
+        existing[section_key] = section_data
 
         # Atomic write
         target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -225,3 +249,15 @@ class SnapshotAnalysisReportWriter:
                 pass
             raise
         return target_path
+
+    def _write_pipeline_metrics(
+        self,
+        target_path: Path,
+        monitoring_id: int,
+        analysis_metrics: dict,
+        profile_name: Optional[str],
+    ) -> Path:
+        """Update pipeline_metrics.json preserving existing sections (analysis section)."""
+        return self._write_pipeline_metrics_section(
+            target_path, monitoring_id, "analysis", analysis_metrics, profile_name
+        )

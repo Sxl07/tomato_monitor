@@ -30,6 +30,24 @@ import pytest
 
 from src.application.services.capture_worker import CaptureWorker, CaptureMetrics
 
+# Store the project root before any chdir
+_PROJECT_ROOT = Path.cwd()
+
+
+# ---------------------------------------------------------------------------
+# Fixture: isolate tests from real outputs/ directory
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolate_from_outputs(tmp_path, monkeypatch):
+    """Run every test with CWD set to a temporary directory.
+
+    This prevents CaptureWorker's os.makedirs("outputs/monitorings/...") from
+    creating real directories in the repository's outputs/ folder.
+    """
+    monkeypatch.chdir(tmp_path)
+
 
 # ---------------------------------------------------------------------------
 # Test helpers / fakes
@@ -152,7 +170,7 @@ class TestNoInference:
 
     def test_no_inference_imports_in_module(self):
         """CaptureWorker module must not import any inference modules."""
-        source_path = Path("src/application/services/capture_worker.py")
+        source_path = _PROJECT_ROOT / "src/application/services/capture_worker.py"
         source_code = source_path.read_text(encoding="utf-8")
         tree = ast.parse(source_code)
 
@@ -183,7 +201,7 @@ class TestNoInference:
 
     def test_no_inference_function_calls_in_source(self):
         """CaptureWorker source must not contain calls to inference functions."""
-        source_path = Path("src/application/services/capture_worker.py")
+        source_path = _PROJECT_ROOT / "src/application/services/capture_worker.py"
         source_code = source_path.read_text(encoding="utf-8")
 
         forbidden_calls = [
@@ -1221,3 +1239,86 @@ class TestReleaseResources:
         # Never called run() — should still work
         worker.release_resources()
         assert frame_source.released is True
+
+
+# ---------------------------------------------------------------------------
+# Test: CaptureMetrics duration freeze — Spec 009, C2 Part 1
+# ---------------------------------------------------------------------------
+
+
+class TestCaptureMetricsFreeze:
+    """Verify capture_metrics.duration_seconds is frozen after run() completes."""
+
+    def test_two_reads_after_run_same_duration(self):
+        """Two reads of capture_metrics after run() return the same duration_seconds."""
+        worker, frame_source, snapshot_repo, _, _ = _build_worker(
+            num_frames=10,
+            min_seconds_between_snapshots=0.0,
+        )
+
+        with patch(
+            "src.application.services.capture_worker.should_capture_new_image",
+            return_value=(True, {}),
+        ), patch("cv2.imwrite", return_value=True):
+            def stop():
+                time.sleep(0.05)
+                worker.finalize_event.set()
+
+            t = threading.Thread(target=stop)
+            t.start()
+            worker.run()
+            t.join()
+
+        # Read metrics twice with a small delay
+        metrics_1 = worker.capture_metrics
+        time.sleep(0.05)
+        metrics_2 = worker.capture_metrics
+
+        assert metrics_1.duration_seconds == metrics_2.duration_seconds
+        assert metrics_1.duration_seconds > 0
+
+    def test_exit_reason_finalize_when_finalize_event(self):
+        """exit_reason is 'finalize' when finalize_event triggers the stop."""
+        worker, frame_source, snapshot_repo, _, _ = _build_worker(
+            num_frames=100,
+            min_seconds_between_snapshots=0.0,
+        )
+
+        with patch(
+            "src.application.services.capture_worker.should_capture_new_image",
+            return_value=(True, {}),
+        ), patch("cv2.imwrite", return_value=True):
+            def stop():
+                time.sleep(0.05)
+                worker.finalize_event.set()
+
+            t = threading.Thread(target=stop)
+            t.start()
+            worker.run()
+            t.join()
+
+        assert worker.capture_metrics.exit_reason == "finalize"
+
+    def test_total_snapshots_matches_snapshot_count(self):
+        """capture_metrics.total_snapshots matches worker.snapshot_count after run."""
+        worker, frame_source, snapshot_repo, _, _ = _build_worker(
+            num_frames=20,
+            min_seconds_between_snapshots=0.0,
+        )
+
+        with patch(
+            "src.application.services.capture_worker.should_capture_new_image",
+            return_value=(True, {}),
+        ), patch("cv2.imwrite", return_value=True):
+            def stop():
+                time.sleep(0.06)
+                worker.finalize_event.set()
+
+            t = threading.Thread(target=stop)
+            t.start()
+            worker.run()
+            t.join()
+
+        metrics = worker.capture_metrics
+        assert metrics.total_snapshots == worker.snapshot_count
+        assert metrics.total_snapshots >= 1

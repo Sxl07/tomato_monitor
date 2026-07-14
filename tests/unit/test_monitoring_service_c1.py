@@ -384,7 +384,8 @@ class TestRunWorkerEarlyFailures:
             service._run_worker(1, worker)
 
         worker.release_resources.assert_called_once()
-        registry.remove.assert_called_once_with(1)
+        registry.remove_runtime.assert_called_once_with(1)
+        registry.remove.assert_not_called()
 
     def test_transition_failure_releases_resources(self):
         """If initializing→running transition fails, release_resources called."""
@@ -432,4 +433,5 @@ class TestRunWorkerEarlyFailures:
 
         worker.release_resources.assert_called_once()
         mock_session.close.assert_called_once()
-        registry.remove.assert_called_once_with(1)
+        registry.remove_runtime.assert_called_once_with(1)
+        registry.remove.assert_not_called()

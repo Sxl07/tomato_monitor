@@ -110,6 +110,7 @@ class CaptureWorker:
         self._reference_frame: Optional[np.ndarray] = None
         self._last_snapshot_time: float = 0.0
         self._capture_start_time: float = 0.0
+        self._capture_end_time: float = 0.0
         self._resources_released: bool = False
 
         # Metrics accumulators (initialized here so capture_metrics is safe before run())
@@ -137,7 +138,12 @@ class CaptureWorker:
     @property
     def capture_metrics(self) -> CaptureMetrics:
         """Capture phase metrics for pipeline_metrics.json."""
-        duration = time.monotonic() - self._capture_start_time if self._capture_start_time else 0.0
+        if self._capture_end_time > 0:
+            duration = self._capture_end_time - self._capture_start_time
+        elif self._capture_start_time > 0:
+            duration = time.monotonic() - self._capture_start_time
+        else:
+            duration = 0.0
         avg_iter = (
             (sum(self._iteration_times) / len(self._iteration_times) * 1000)
             if self._iteration_times
@@ -212,6 +218,8 @@ class CaptureWorker:
         loop_period = 1.0 / self._capture_loop_fps if self._capture_loop_fps > 0 else 0.2
 
         try:
+            self._capture_end_time = 0.0
+
             # Start thermal monitor (inside try so failure is caught)
             if self._thermal_monitor is not None:
                 start_fn = getattr(self._thermal_monitor, "start", None)
@@ -278,6 +286,8 @@ class CaptureWorker:
             self._emit_log("error", f"Error en captura: {e}")
 
         finally:
+            if self._capture_end_time == 0.0:
+                self._capture_end_time = time.monotonic()
             self.release_resources()
 
     def _should_capture(self, frame: np.ndarray) -> tuple[bool, str]:

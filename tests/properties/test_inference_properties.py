@@ -13,6 +13,7 @@ worker's control flow logic on machines where these are not installed.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Any, Optional, Tuple
 from unittest.mock import MagicMock, patch
 
@@ -20,6 +21,19 @@ import numpy as np
 import pytest
 from hypothesis import given, settings, HealthCheck
 from hypothesis import strategies as st
+
+
+# ---------------------------------------------------------------------------
+# Fixture: isolate tests from real outputs/ directory
+# ---------------------------------------------------------------------------
+
+_PROJECT_ROOT = Path.cwd()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_from_outputs(tmp_path, monkeypatch):
+    """Redirect CWD to tmp so MonitoringWorker.pipeline_metrics writes there."""
+    monkeypatch.chdir(tmp_path)
 
 
 # --- Module-level mocking before any project imports ---
