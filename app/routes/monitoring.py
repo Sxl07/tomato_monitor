@@ -9,7 +9,9 @@ Requirements: 9.1-9.10
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import logging
+
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from src.application.dtos.monitoring_dtos import (
@@ -26,6 +28,7 @@ from src.application.services.monitoring_service import (
 )
 from src.domain.exceptions import InvalidTransitionError, ParentNotFoundError
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/monitoring", tags=["monitoring"])
 
@@ -190,12 +193,17 @@ async def complete_monitoring(
 @router.get("/{monitoring_id}/status", response_model=MonitoringStatusResponse)
 async def get_monitoring_status(
     monitoring_id: int,
+    request: Request,
     service: MonitoringService = Depends(get_monitoring_service),
 ) -> MonitoringStatusResponse:
-    """Get the current status, counters, and configuration of a monitoring session."""
+    """Get the current status, counters, and configuration of a monitoring session.
+
+    Includes analysis_processed and analysis_total read from the in-memory
+    runtime registry (not persisted). Defaults to 0/0 when no analysis
+    runtime is available.
+    """
     try:
         monitoring = service.get_status(monitoring_id)
-        return MonitoringStatusResponse.model_validate(monitoring)
     except MonitoringNotFoundError as e:
         return JSONResponse(
             status_code=404,
@@ -204,3 +212,38 @@ async def get_monitoring_status(
                 current_status=None,
             ).model_dump(),
         )
+
+    # Read analysis progress from runtime registry (best-effort)
+    analysis_processed = 0
+    analysis_total = 0
+
+    try:
+        registry = getattr(request.app.state, "monitoring_runtime_registry", None)
+        if registry is not None:
+            runtime = registry.get_worker(monitoring_id)
+            if runtime is not None:
+                progress = getattr(runtime, "progress", None)
+                if progress is not None:
+                    analysis_processed = int(
+                        getattr(progress, "processed_snapshots", 0) or 0
+                    )
+                    analysis_total = int(
+                        getattr(progress, "total_snapshots", 0) or 0
+                    )
+    except Exception as e:
+        logger.warning(
+            f"Failed to read analysis progress for monitoring {monitoring_id}: {e}"
+        )
+        analysis_processed = 0
+        analysis_total = 0
+
+    analysis_processed = max(0, analysis_processed)
+    analysis_total = max(0, analysis_total)
+
+    response = MonitoringStatusResponse.model_validate(monitoring)
+    return response.model_copy(
+        update={
+            "analysis_processed": analysis_processed,
+            "analysis_total": analysis_total,
+        }
+    )
