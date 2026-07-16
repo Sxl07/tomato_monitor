@@ -330,17 +330,22 @@ def build_snapshot_gallery(
 ) -> list[SnapshotThumbnail]:
     """Build context for the snapshot gallery grid.
 
-    Only includes snapshots where has_detections is True and whose
-    image_path passes path traversal validation against OUTPUTS_DIR.
+    Prefers annotated snapshots when present on disk, falls back to raw
+    snapshots. Only includes snapshots where has_detections is True and
+    whose image_path passes path traversal validation against OUTPUTS_DIR.
 
     Args:
         snapshots: List of SnapshotModel instances.
         monitoring_id: The monitoring ID for constructing image URLs.
 
     Returns:
-        List of SnapshotThumbnail for snapshots with detections and valid paths.
+        List of SnapshotThumbnail for snapshots with detections and valid paths,
+        sorted by frame_index ascending.
     """
+    from pathlib import Path as _Path
+
     thumbnails: list[SnapshotThumbnail] = []
+    monitoring_dir = OUTPUTS_DIR / "monitorings" / str(monitoring_id)
 
     for snapshot in snapshots:
         if not snapshot.has_detections:
@@ -352,13 +357,20 @@ def build_snapshot_gallery(
         except PathTraversalError:
             logger.warning(
                 "Skipping snapshot %d — image_path failed path validation",
-                snapshot.id if snapshot.id else snapshot.frame_index,
+                snapshot.id if hasattr(snapshot, "id") and snapshot.id else snapshot.frame_index,
             )
             continue
 
-        image_url = (
-            f"/snapshots/{monitoring_id}/snapshots/snapshot_{snapshot.frame_index}.jpg"
-        )
+        # Build filename with 6-digit padding
+        filename = f"snapshot_{snapshot.frame_index:06d}.jpg"
+
+        # Check if annotated snapshot exists on disk
+        annotated_path = monitoring_dir / "annotated_snapshots" / filename
+        if annotated_path.exists():
+            image_url = f"/snapshots/{monitoring_id}/annotated_snapshots/{filename}"
+        else:
+            # Fallback to raw snapshot
+            image_url = f"/snapshots/{monitoring_id}/snapshots/raw/{filename}"
 
         thumbnails.append(
             SnapshotThumbnail(
@@ -368,5 +380,8 @@ def build_snapshot_gallery(
                 has_detections=True,
             )
         )
+
+    # Sort by frame_index ascending for stable gallery ordering
+    thumbnails.sort(key=lambda t: t.frame_index)
 
     return thumbnails
