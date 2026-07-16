@@ -772,9 +772,14 @@ class MonitoringService:
         """Detect and mark orphaned sessions for a module.
 
         A session is "orphaned" if it has an active status in the database
-        but no corresponding live worker thread in memory. This can happen
-        when the server restarts, the worker crashes silently, or the daemon
-        thread dies without updating the DB.
+        but no corresponding live runtime thread (capture worker or analysis
+        service) in memory. This can happen when the server restarts, the
+        worker crashes silently, or the daemon thread dies without updating
+        the DB.
+
+        Covers all active statuses including 'analyzing' — an analysis thread
+        that has died without transitioning to completed/error is treated as
+        orphaned. Snapshots and partial metrics are preserved.
 
         Orphaned sessions are transitioned to 'error' status so they no
         longer block new monitorings for the module.

@@ -231,7 +231,7 @@ def build_monitoring_history(
 ) -> list[MonitoringHistoryItem]:
     """Build context items for the monitoring history list.
 
-    Only includes monitorings with terminal status (completed or aborted).
+    Only includes monitorings with terminal status (completed, aborted, or error).
     Sorted by date descending (most recent first).
 
     Args:
@@ -241,7 +241,7 @@ def build_monitoring_history(
     Returns:
         List of MonitoringHistoryItem sorted by started_at descending.
     """
-    terminal_statuses = {"completed", "aborted"}
+    terminal_statuses = {"completed", "aborted", "error"}
     terminal_monitorings = [m for m in monitorings if m.status in terminal_statuses]
 
     # Sort by started_at descending (most recent first)

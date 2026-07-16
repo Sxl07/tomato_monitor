@@ -30,8 +30,12 @@
         <div class="card-body">
             <h3 class="card-title">{{ item.date }} — {{ item.time }}</h3>
             <p class="card-subtitle">{{ item.total_tomatoes }} tomates detectados — {{ item.pct_healthy | round(0) | int }}% sanos</p>
-            {% if item.status == "aborted" %}
+            {% if item.status == "completed" %}
+            <span class="badge badge-success">Completado</span>
+            {% elif item.status == "aborted" %}
             <span class="badge badge-warning">Cancelado</span>
+            {% elif item.status == "error" %}
+            <span class="badge badge-danger">Error</span>
             {% endif %}
         </div>
     </a>
