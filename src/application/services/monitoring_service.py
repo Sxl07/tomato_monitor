@@ -1,13 +1,14 @@
 """MonitoringService: orchestrates the monitoring session lifecycle.
 
 Creates, controls, and finalizes monitoring sessions. Spawns a
-MonitoringWorker in a daemon thread for the capture loop and
-communicates with it via threading.Event signals.
+CaptureWorker in a daemon thread for the fast capture loop and
+launches a deferred SnapshotAnalysisService thread for inference.
 
 Enforces:
 - One active session per module (non-terminal statuses).
 - Valid state machine transitions via MonitoringStatus value object.
 - Metrics computation on terminal states (completed, aborted).
+- aborted is reserved for explicit operator cancellation; system failures → error.
 """
 
 from __future__ import annotations

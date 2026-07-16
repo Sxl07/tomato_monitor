@@ -48,48 +48,6 @@ import logging as _logging
 _logger = _logging.getLogger(__name__)
 
 
-def _build_inference_runner():
-    """Construct SnapshotInferenceRunner with loaded models.
-
-    Returns None if models cannot be loaded (files missing, import errors, etc.).
-    Logs the cost of on-demand loading for visibility.
-    """
-    try:
-        from src.infrastructure.vision.detectron_detector import build_tomato_detector
-        from src.infrastructure.vision.resnet_health_classifier import build_health_model_resnet
-        from src.infrastructure.vision.snapshot_inference_runner import SnapshotInferenceRunner
-        from src.infrastructure.config.settings import DETECTION_MODEL_PATH as det_path
-        from src.infrastructure.config.settings import HEALTH_MODEL_B_PATH
-
-        # Verify model files exist before attempting to load
-        if not det_path.exists():
-            _logger.warning(f"Detection model not found at {det_path}")
-            return None
-        if not HEALTH_MODEL_B_PATH.exists():
-            _logger.warning(f"Health model not found at {HEALTH_MODEL_B_PATH}")
-            return None
-
-        _logger.info("Cargando modelos de inferencia (esto puede tomar unos segundos)...")
-        detector = build_tomato_detector(det_path)
-        health_model, health_transform = build_health_model_resnet(HEALTH_MODEL_B_PATH)
-        _logger.info("Modelos de inferencia cargados correctamente.")
-
-        from src.infrastructure.config.settings import ACTIVE_PROFILE
-
-        return SnapshotInferenceRunner(
-            detector=detector,
-            health_model=health_model,
-            health_transform=health_transform,
-            skip_maturity=ACTIVE_PROFILE.skip_maturity,
-            detection_score_threshold=ACTIVE_PROFILE.detection_score_threshold,
-            inference_input_size=(ACTIVE_PROFILE.inference_input_width, ACTIVE_PROFILE.inference_input_height),
-            run_maturity_only_for_healthy=ACTIVE_PROFILE.run_maturity_only_for_healthy,
-        )
-    except Exception as e:
-        _logger.error(f"Error loading inference models: {e}")
-        return None
-
-
 # ---------------------------------------------------------------------------
 # Home
 # ---------------------------------------------------------------------------
