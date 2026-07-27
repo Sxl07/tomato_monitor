@@ -38,28 +38,41 @@ Home (Inicio)
 
 ## Monitoring system states
 
-The system transitions through six states during a monitoring session:
+The system transitions through the following states during a monitoring session:
 
 ```
-IDLE → INITIALIZING → RUNNING → FINISHING → COMPLETED
+IDLE → INITIALIZING → RUNNING → ANALYZING → COMPLETED
+                          ↓           ↓
+                       PAUSED       ERROR
                           ↓
-                       PAUSED (recoverable)
-                          ↓
-                       ABORTED (user stop)
+                       ABORTED (explicit user cancellation)
                           ↓
                        ERROR (unrecoverable)
 ```
 
+**Note:** `IDLE` is NOT a persisted state — it means no active monitoring exists for the module. `FINISHING` is retained for backward compatibility but the capture-first flow uses `RUNNING → ANALYZING → COMPLETED`.
+
 | State | Description | UI Indicator | User Actions Available |
 |---|---|---|---|
 | `IDLE` | System ready, no active monitoring | — | Start new monitoring |
-| `INITIALIZING` | Camera starting, models loading | Spinner + "Iniciando..." | None (brief transition) |
-| `RUNNING` | Robot active, capturing and processing | Live counter + "Monitoreando..." | "Detener Monitoreo" button |
+| `INITIALIZING` | Camera starting | Spinner + "Iniciando..." | None (brief transition) |
+| `RUNNING` | Camera active, capturing snapshots | Live counter "Snapshots capturados: N" | "Finalizar captura" (primary), "Cancelar monitoreo" (destructive) |
 | `PAUSED` | Processing paused (e.g., high temperature) | Yellow banner + "Pausado" | "Reanudar" or "Cancelar" |
-| `FINISHING` | Recorrido complete, consolidating results | Progress bar + "Finalizando..." | None (brief transition) |
-| `COMPLETED` | Monitoring saved, report available | Green checkmark + metrics | View report, start new |
-| `ABORTED` | User stopped the monitoring early | Orange icon + "Cancelado" | Save partial or discard |
+| `ANALYZING` | Deferred inference on captured snapshots | Spinner + progress "Analizando snapshots... (X/Y)" | No action buttons; polling continues; thermal pause shows alert |
+| `FINISHING` | Legacy: consolidating results | Progress bar + "Finalizando..." | None (brief transition) |
+| `COMPLETED` | Monitoring saved, report available | Auto-redirect to report screen | View report, start new |
+| `ABORTED` | User explicitly cancelled the monitoring | Orange icon + "Cancelado" | Partial results preserved |
 | `ERROR` | Unrecoverable failure (camera lost, etc.) | Red icon + error message | Acknowledge and return |
+
+### ANALYZING state details
+
+- Entered when the farmer finalizes capture (has ≥1 snapshot).
+- Camera is released before entering this state.
+- UI shows progress bar with X/Y snapshots processed.
+- If thermal protection triggers during analysis: yellow alert "Pausado por temperatura ({temp}°C)".
+- When analysis completes → auto-transition to `COMPLETED` → redirect to report.
+- If analysis fails → transition to `ERROR`.
+- No user action buttons during analyzing (no abort, no pause).
 
 ---
 

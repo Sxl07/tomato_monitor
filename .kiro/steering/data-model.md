@@ -68,7 +68,7 @@ Represents a single robot traversal and monitoring session for a module.
 |---|---|---|---|
 | `id` | Integer | PK, autoincrement | Unique identifier |
 | `module_id` | Integer | FK → Module, NOT NULL | Module being monitored |
-| `status` | String(20) | NOT NULL, default="initializing" | One of: `initializing`, `running`, `paused`, `finishing`, `completed`, `aborted`, `error` |
+| `status` | String(20) | NOT NULL, default="initializing" | One of: `initializing`, `running`, `paused`, `finishing`, `analyzing`, `completed`, `aborted`, `error` |
 | `started_at` | DateTime | NOT NULL, default=now | When the monitoring began |
 | `completed_at` | DateTime | nullable | When the monitoring ended |
 | `width_m` | Float | NOT NULL | Module width confirmed at monitoring start |
@@ -79,7 +79,7 @@ Represents a single robot traversal and monitoring session for a module.
 
 **Relations:** Belongs to one module. Has many snapshots. Has one MonitoringMetrics.
 **CRUD:** Create under module, read by module, read by id, update status/counters, delete (cascade to snapshots and metrics).
-**Status transitions:** `initializing → running → finishing → completed` (happy path). Also: `running → paused → running`, `running → aborted`, `any → error`.
+**Status transitions:** `initializing → running → analyzing → completed` (capture-first happy path). Also: `running → finishing → completed` (legacy), `running → paused → running`, `running → aborted` (explicit cancellation only), `analyzing → completed`, `analyzing → error`, `any non-terminal → error`. `aborted` is reserved exclusively for explicit operator cancellation; system failures transition to `error`.
 
 ---
 
@@ -152,7 +152,8 @@ Pre-computed aggregated metrics for a completed monitoring session. Calculated o
 | `computed_at` | DateTime | NOT NULL, default=now | When metrics were calculated |
 
 **Relations:** One-to-one with Monitoring.
-**CRUD:** Create at monitoring completion. Read by monitoring. No manual updates — recalculate if needed.
+**CRUD:** Create at monitoring completion or finalization. Read by monitoring. No manual updates — recalculate if needed.
+**Note:** Metrics are computed when the monitoring reaches `completed` state (after `analyzing` finishes successfully). For `aborted` sessions, partial metrics with zero values are persisted. The `analyzing` state does NOT have metrics yet — they are created only upon successful transition to `completed`.
 
 ---
 

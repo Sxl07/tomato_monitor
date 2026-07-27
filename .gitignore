@@ -1,6 +1,5 @@
 # Entornos virtuales
 .venv/
-.kiro/
 venv/
 ENV/
 env/
@@ -8,6 +7,11 @@ bin/
 lib/
 include/
 share/
+
+# Kiro temporary files (steering, specs, hooks, settings ARE versioned)
+.kiro/cache/
+.kiro/tmp/
+.kiro/logs/
 
 # Python cache y compilados
 __pycache__/
@@ -26,3 +30,13 @@ build/
 data/*.db
 data/*.db-wal
 data/*.db-shm
+
+# Outputs (snapshots, annotated images, pipeline_metrics, reports)
+outputs/
+
+# Model weights (large binary files)
+models/**/*.pth
+
+# Test caches
+.hypothesis/
+.pytest_cache/

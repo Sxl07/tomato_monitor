@@ -7,34 +7,60 @@ tomato_monitor/
 ├── app/                        # Presentación: FastAPI, rutas, templates, CSS
 │   ├── main.py                 # Entry point: registra routers
 │   ├── dependencies.py         # Inyección de dependencias (manual, por request)
-│   └── routes/                 # ui.py | pipeline.py | sessions.py
+│   ├── context_builders.py     # Builders de contexto para templates
+│   └── routes/                 # agricultural_ui.py | monitoring.py | monitoring_api.py | ui.py | pipeline.py | sessions.py
 ├── src/
 │   ├── domain/                 # Entidades, value objects, políticas, interfaces de repos
+│   │   ├── entities/           # monitoring.py, snapshot.py, greenhouse.py, module.py, etc.
+│   │   ├── interfaces/         # frame_source.py, robot_movement_service.py, decision_service.py
+│   │   ├── repositories/       # ABCs: monitoring, snapshot, inspection_result, metrics, module, greenhouse
+│   │   └── value_objects/      # monitoring_status.py (state machine con ANALYZING)
 │   ├── application/            # DTOs, servicios de app, casos de uso
+│   │   ├── services/           # monitoring_service.py, capture_worker.py, snapshot_analysis_service.py, monitoring_runtime_registry.py, pipeline_metrics.py, camera_service.py, model_service.py, log_service.py
+│   │   └── dtos/               # monitoring_dtos.py
 │   └── infrastructure/
-│       ├── config/             # settings.py (rutas/device/modelos), thresholds.py
-│       ├── vision/             # Motor de visión: detector, tracker, health, maturity, gate
+│       ├── config/             # settings.py (perfiles edge/full), thresholds.py
+│       ├── vision/             # Motor de visión: detector, tracker, health, maturity, gate, orchestrator, runner, annotation_renderer
+│       ├── camera/             # Frame sources: opencv, raspberry (Picamera2), video_file
+│       ├── monitoring/         # thermal_monitor.py
+│       ├── security/           # path_sanitizer.py
 │       └── persistence/
-│           ├── local/          # CSV + filesystem (activo)
+│           ├── repositories/   # SQLAlchemy implementations
+│           ├── local/          # CSV + filesystem (legacy benchmark mode)
 │           └── cloud/          # Stub PostgreSQL (no activo)
+├── tests/                      # Suite pytest (~806 tests)
+│   ├── unit/                   # Tests unitarios (no requieren hardware)
+│   ├── domain/                 # Tests de entidades y value objects
+│   ├── infrastructure/         # Tests de persistencia y repos
+│   ├── application/            # Tests de servicios de aplicación
+│   ├── properties/             # Tests property-based (Hypothesis)
+│   ├── conftest.py             # Fixtures compartidas (in-memory SQLite)
+│   └── test_imports.py         # Verifica importabilidad de módulos
 ├── legacy/                     # Pipeline anterior migrado — solo referencia, no importar
 ├── models/
 │   ├── modelo_d2/model.pth     # RetinaNet R-50-FPN (detección)
 │   └── health_model/model.pth  # ResNet-18 (sanidad)
 ├── data/
 │   ├── images/                 # Imágenes de referencia
-│   └── videos/                 # Videos de entrada (video_02.mp4)
-├── outputs/
-│   ├── experiments/            # Sesiones con reports/, snapshots/, annotated_video/
-│   └── meta/sessions.csv       # Registro de sesiones
+│   ├── videos/                 # Videos de entrada (video_02.mp4)
+│   └── tomato_monitor.db       # SQLite (no versionado)
+├── outputs/                    # NO versionado — generado en runtime
+│   └── monitorings/{id}/       # snapshots/raw/, annotated_snapshots/, crops/, reports/
 ├── scripts/                    # Smoke tests y scripts de benchmark/utilidad
 ├── docs/
 │   ├── decisions/              # ADR-001, ADR-002, ADR-003
 │   ├── benchmarks/             # benchmark-template.md, raspberry-baseline.md
-│   └── thesis-notes/           # current-state.md, next-steps.md
+│   └── thesis-notes/           # current-state.md, next-steps.md, limitations.md
 └── .kiro/
     ├── steering/               # Steering files (este directorio)
-    └── specs/                  # 001, 002, 003, 004
+    └── specs/                  # 001..010 + bugfix specs
+```
+
+### Ubicación futura propuesta (no creada aún)
+
+```
+src/infrastructure/robot/       # Adapters de hardware: NoOp, Simulated, BTS7960, etc.
+scripts/hardware/               # Scripts aislados para validar GPIO/motores sin sistema completo
 ```
 
 ## Reglas de organización

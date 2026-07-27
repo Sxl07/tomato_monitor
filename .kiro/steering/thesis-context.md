@@ -10,21 +10,27 @@ Desarrollar y evaluar un sistema de monitoreo visual de tomates cherry ejecutabl
 
 ## Fase actual del proyecto
 
-Validación funcional del pipeline completo en RPi 5. El siguiente hito es el benchmark de línea base (ver `docs/benchmarks/raspberry-baseline.md`).
+Pipeline capture-first completamente validado en Raspberry Pi 5. El flujo Greenhouse → Module → Monitoring → preview → capture → finalize-capture → analyzing → report funciona end-to-end. El siguiente hito es la spec 013 — Robot Orchestrator Foundation.
 
 ## Specs en curso
 
+Estado basado en `tasks.md` y validación manual reportada.
+
 | Spec | Directorio | Estado |
 |---|---|---|
-| 001 — Benchmark de línea base | `.kiro/specs/001-raspberry-baseline-benchmark/` | Fases 1-3 completadas |
-| 002 — Integración cámara live | `.kiro/specs/002-camera-live-integration/` | Absorbida por Spec 007 |
-| 003 — Optimización edge | `.kiro/specs/003-edge-pipeline-optimization/` | Planificada (depende de 001, 007) |
+| 001 — Benchmark de línea base | `.kiro/specs/001-raspberry-baseline-benchmark/` | Parcialmente completada (fases 1-3 done, benchmark formal pendiente) |
+| 002 — Integración cámara live | `.kiro/specs/002-camera-live-integration/` | Absorbida por Spec 007/009 |
+| 003 — Optimización edge | `.kiro/specs/003-edge-pipeline-optimization/` | Planificada (depende de benchmark formal) |
 | 004 — Documentación tesis | `.kiro/specs/004-thesis-documentation/` | Parcialmente completada |
-| 005 — Calidad y seguridad | `.kiro/specs/005-code-quality-and-security-hardening/` | Planificada |
-| 006 — Modelo de datos agrícola | `.kiro/specs/006-agricultural-data-model/` | **Próxima a crear** |
-| 007 — Flujo de monitoreo live | `.kiro/specs/007-monitoring-execution-flow/` | Planificada (depende de 001, 006) |
-| 008 — UI agrícola | `.kiro/specs/008-agricultural-ui-redesign/` | Planificada (depende de 006, 007) |
-| 009 — Métricas y reportes | `.kiro/specs/009-aggregated-metrics-reports/` | Planificada (depende de 006, 007) |
+| 005 — Calidad y seguridad | `.kiro/specs/005-code-quality-and-security-hardening/` | Parcial (tests automatizados activos, hardening formal pendiente) |
+| 006 — Modelo de datos agrícola | `.kiro/specs/006-agricultural-data-model/` | **Completada** |
+| 007 — Flujo de monitoreo live | `.kiro/specs/007-monitoring-execution-flow/` | Core completado, superseded por spec 009 para flujo capture-first |
+| 008 — UI agrícola | `.kiro/specs/008-agricultural-ui-redesign/` | Planificada |
+| 008 — Hybrid monitoring pipeline | `.kiro/specs/008-lightweight-hybrid-monitoring-pipeline/` | **Completada** + validada en RPi |
+| 009 — Capture-first final analysis | `.kiro/specs/009-capture-first-final-analysis-pipeline/` | **Completada** + validada en RPi (20 snapshots, analyzing OK, reporte OK, ~75.7°C) |
+| 010 — Monitoring UX enhancement | `.kiro/specs/010-monitoring-ux-enhancement/` | Core completado (tests opcionales pendientes) |
+| camera-live-fix | `.kiro/specs/camera-live-fix/` | Bugfix completado |
+| monitoring-session-flow-fix | `.kiro/specs/monitoring-session-flow-fix/` | Bugfix completado |
 
 ## Criterios académicos aplicables
 
