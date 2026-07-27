@@ -17,17 +17,31 @@ from src.infrastructure.vision.cropper import (
     crop_from_box,
     is_crop_large_enough,
 )
-from src.infrastructure.vision.detectron_detector import (
-    build_tomato_detector,
-    run_detection,
-    extract_detection_dicts,
-)
-from src.infrastructure.vision.resnet_health_classifier import (
-    build_health_model_resnet,
-    predict_health,
-)
-from src.infrastructure.vision.maturity_estimator import estimate_maturity_for_crop
 from src.infrastructure.vision.tracker_adapter import SimpleTracker
+
+
+# Heavy ML imports are deferred to functions that need them to allow
+# this module to be imported without Detectron2/torch installed (for testing).
+def _import_detector():
+    from src.infrastructure.vision.detectron_detector import (
+        build_tomato_detector,
+        run_detection,
+        extract_detection_dicts,
+    )
+    return build_tomato_detector, run_detection, extract_detection_dicts
+
+
+def _import_health():
+    from src.infrastructure.vision.resnet_health_classifier import (
+        build_health_model_resnet,
+        predict_health,
+    )
+    return build_health_model_resnet, predict_health
+
+
+def _import_maturity():
+    from src.infrastructure.vision.maturity_estimator import estimate_maturity_for_crop
+    return estimate_maturity_for_crop
 
 
 @dataclass
@@ -41,6 +55,9 @@ class PipelineComponents:
 
 
 def build_pipeline_components() -> PipelineComponents:
+    build_tomato_detector, _, _ = _import_detector()
+    build_health_model_resnet, _ = _import_health()
+
     detector = build_tomato_detector()
     health_model, health_transform = build_health_model_resnet()
     tracker = SimpleTracker()
@@ -61,10 +78,15 @@ def process_frame(
     image_bgr: np.ndarray,
     components: PipelineComponents,
     image_name: str,
+    *,
+    skip_maturity: bool = False,
 ) -> Dict[str, Any]:
     frame_start = time.time()
 
     h, w = image_bgr.shape[:2]
+
+    _, run_detection, extract_detection_dicts = _import_detector()
+    _, predict_health = _import_health()
 
     t0 = time.time()
     outputs = run_detection(components.detector, image_bgr)
@@ -176,7 +198,8 @@ def process_frame(
 
         det_result["decision_reason"] = final_decision.reason
 
-        if final_decision.should_run_maturity:
+        if final_decision.should_run_maturity and not skip_maturity:
+            estimate_maturity_for_crop = _import_maturity()
             maturity_start = time.time()
             maturity_payload = estimate_maturity_for_crop(crop_bgr)
             det_result["times"]["maturity_sec"] = time.time() - maturity_start

@@ -57,111 +57,13 @@ def get_session_service() -> SessionService:
 
 
 # ---------------------------------------------------------------------------
-# New SQLite-based dependencies (used by agricultural data routes)
-# ---------------------------------------------------------------------------
-
-
-def get_db_session(request: Request) -> Generator[Session, None, None]:
-    """Provide a transactional SQLAlchemy session scoped to a single request.
-
-    Commits on success, rolls back on exception, and always closes the session.
-    """
-    db_manager: DatabaseManager = request.app.state.db_manager
-    session = db_manager.get_session()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
-
-
-def get_greenhouse_repository(request: Request) -> SqlGreenhouseRepository:
-    """Provide a SqlGreenhouseRepository backed by the app's DatabaseManager."""
-    db_manager: DatabaseManager = request.app.state.db_manager
-    return SqlGreenhouseRepository(session=db_manager.get_session())
-
-
-def get_module_repository(request: Request) -> SqlModuleRepository:
-    """Provide a SqlModuleRepository backed by the app's DatabaseManager."""
-    db_manager: DatabaseManager = request.app.state.db_manager
-    return SqlModuleRepository(session=db_manager.get_session())
-
-
-def get_monitoring_repository(request: Request) -> SqlMonitoringRepository:
-    """Provide a SqlMonitoringRepository backed by the app's DatabaseManager."""
-    db_manager: DatabaseManager = request.app.state.db_manager
-    return SqlMonitoringRepository(session=db_manager.get_session())
-
-
-def get_snapshot_repository(request: Request) -> SqlSnapshotRepository:
-    """Provide a SqlSnapshotRepository backed by the app's DatabaseManager."""
-    db_manager: DatabaseManager = request.app.state.db_manager
-    return SqlSnapshotRepository(session=db_manager.get_session())
-
-
-def get_inspection_result_repository(request: Request) -> SqlInspectionResultRepository:
-    """Provide a SqlInspectionResultRepository backed by the app's DatabaseManager."""
-    db_manager: DatabaseManager = request.app.state.db_manager
-    return SqlInspectionResultRepository(session=db_manager.get_session())
-
-
-def get_monitoring_metrics_repository(request: Request) -> SqlMonitoringMetricsRepository:
-    """Provide a SqlMonitoringMetricsRepository backed by the app's DatabaseManager."""
-    db_manager: DatabaseManager = request.app.state.db_manager
-    return SqlMonitoringMetricsRepository(session=db_manager.get_session())
-
-
-# ---------------------------------------------------------------------------
-# Composite service dependencies
-# ---------------------------------------------------------------------------
-
-
-def get_monitoring_service(request: Request) -> "MonitoringService":
-    """Provide MonitoringService with all repositories from DatabaseManager."""
-    from src.application.services.monitoring_service import MonitoringService
-
-    db_manager: DatabaseManager = request.app.state.db_manager
-    session = db_manager.get_session()
-    registry = request.app.state.monitoring_runtime_registry
-    return MonitoringService(
-        monitoring_repo=SqlMonitoringRepository(session),
-        snapshot_repo=SqlSnapshotRepository(session),
-        inspection_result_repo=SqlInspectionResultRepository(session),
-        metrics_repo=SqlMonitoringMetricsRepository(session),
-        module_repo=SqlModuleRepository(session),
-        runtime_registry=registry,
-    )
-
-
-# ---------------------------------------------------------------------------
-# New SQLite-based dependencies (used by agricultural data routes)
+# New SQLite-based dependencies (request-scoped session)
 # ---------------------------------------------------------------------------
 
 # IMPORTANT: Use a scoped session that is created once per request,
 # committed on success, rolled back on error, and always closed.
 # All repositories within the same request share the SAME session
 # to avoid "database is locked" errors with SQLite.
-
-
-def get_db_session(request: Request) -> Generator[Session, None, None]:
-    """Provide a transactional SQLAlchemy session scoped to a single request.
-
-    Commits on success, rolls back on exception, and always closes the session.
-    Use this as a dependency in route handlers that need direct session access.
-    """
-    db_manager: DatabaseManager = request.app.state.db_manager
-    session = db_manager.get_session()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 def _get_request_session(request: Request) -> Session:
@@ -174,6 +76,23 @@ def _get_request_session(request: Request) -> Session:
         db_manager: DatabaseManager = request.app.state.db_manager
         request.state._db_session = db_manager.get_session()
     return request.state._db_session
+
+
+def get_db_session(request: Request) -> Generator[Session, None, None]:
+    """Provide a transactional SQLAlchemy session scoped to a single request.
+
+    Commits on success, rolls back on exception, and always closes the session.
+    Use this as a dependency in route handlers that need direct session access.
+    """
+    session = _get_request_session(request)
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def get_greenhouse_repository(request: Request) -> SqlGreenhouseRepository:

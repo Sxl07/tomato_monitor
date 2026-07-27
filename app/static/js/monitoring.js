@@ -14,9 +14,10 @@
  *   - Elapsed time counter (MM:SS) updating every second
  *   - Auto-redirect to report on completed status
  *   - Temperature warning banner
+ *   - Analysis progress (X/Y snapshots) during analyzing state
  *
  * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 5.3, 5.9, 5.10, 6.1,
- *              6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 9.3, 10.3, 14.2, 14.3, 14.4
+ *              6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 9.3, 10.3, 12.3, 14.2, 14.3, 14.4
  */
 
 (function () {
@@ -44,6 +45,7 @@
         "running",
         "paused",
         "finishing",
+        "analyzing",
         "completed",
         "aborted",
         "error"
@@ -123,8 +125,10 @@
         if (TERMINAL_STATES.indexOf(currentStatus) === -1) {
             // Request 2: Activity log
             pollLog(monitoringId);
-            // Request 3: Last snapshot
-            pollLastSnapshot(monitoringId);
+            // Request 3: Last snapshot (only during capture, not analysis)
+            if (currentStatus !== "analyzing") {
+                pollLastSnapshot(monitoringId);
+            }
         }
     }
 
@@ -185,10 +189,70 @@
             }
         }
 
+        // Always update analysis progress (even without state change)
+        updateAnalysisProgress(data);
+
         // Handle state transition
         if (data.status && data.status !== currentStatus) {
             handleStateTransition(data.status);
             currentStatus = data.status;
+        }
+    }
+
+    // --- Analysis progress ---
+
+    /**
+     * Update the analysis progress UI elements.
+     * @param {object} data - Status response data with analysis_processed and analysis_total.
+     */
+    function updateAnalysisProgress(data) {
+        var processed = parseInt(data.analysis_processed, 10);
+        var total = parseInt(data.analysis_total, 10);
+
+        // Normalize invalid values
+        if (isNaN(processed) || processed < 0) processed = 0;
+        if (isNaN(total) || total < 0) total = 0;
+        // Clamp processed to total when total > 0
+        if (total > 0 && processed > total) processed = total;
+
+        var textEl = document.getElementById("analysis-progress-text");
+        var processedEl = document.getElementById("analysis-processed");
+        var totalEl = document.getElementById("analysis-total");
+        var fillEl = document.getElementById("analysis-progress-fill");
+
+        if (total <= 0) {
+            if (textEl) textEl.textContent = "Preparando análisis...";
+            if (processedEl) processedEl.textContent = "0";
+            if (totalEl) totalEl.textContent = "0";
+            if (fillEl) {
+                fillEl.style.width = "0%";
+                fillEl.setAttribute("aria-valuenow", "0");
+            }
+        } else {
+            var pct = Math.floor((processed / total) * 100);
+            if (pct < 0) pct = 0;
+            if (pct > 100) pct = 100;
+
+            if (textEl) textEl.textContent = "Analizando snapshots... (" + processed + "/" + total + ")";
+            if (processedEl) processedEl.textContent = String(processed);
+            if (totalEl) totalEl.textContent = String(total);
+            if (fillEl) {
+                fillEl.style.width = pct + "%";
+                fillEl.setAttribute("aria-valuenow", String(pct));
+            }
+        }
+    }
+
+    // --- Monitoring actions disable/enable ---
+
+    /**
+     * Disable or enable all monitoring action buttons.
+     * @param {boolean} disabled
+     */
+    function setMonitoringActionsDisabled(disabled) {
+        var buttons = document.querySelectorAll("[data-monitoring-action]");
+        for (var i = 0; i < buttons.length; i++) {
+            buttons[i].disabled = !!disabled;
         }
     }
 
@@ -377,9 +441,22 @@
             }
         });
 
+        // Also hide overlays when transitioning to a real state
+        var finalizingOverlay = document.getElementById("finalizing-capture-overlay");
+        if (finalizingOverlay) { finalizingOverlay.classList.add("hidden"); }
+        var stoppingOverlay = document.getElementById("stopping-overlay");
+        if (stoppingOverlay) { stoppingOverlay.classList.add("hidden"); }
+
         // Manage elapsed timer based on status
         if (newStatus === "running") {
             startElapsedTimer();
+            setMonitoringActionsDisabled(false);
+        } else if (newStatus === "paused") {
+            stopElapsedTimer();
+            setMonitoringActionsDisabled(false);
+        } else if (newStatus === "analyzing") {
+            stopElapsedTimer();
+            setMonitoringActionsDisabled(true);
         } else {
             stopElapsedTimer();
         }
@@ -424,7 +501,6 @@
 
     /**
      * Show a reconnection/error banner at the top of the page.
-     * Creates a banner element if it doesn't already exist.
      * @param {string} message
      */
     function showErrorBanner(message) {
@@ -445,7 +521,6 @@
             banner.appendChild(icon);
             banner.appendChild(text);
 
-            // Insert at the top of main content
             var main = document.querySelector(".main-content");
             if (main && main.firstChild) {
                 main.insertBefore(banner, main.firstChild);
@@ -476,8 +551,7 @@
     // --- Visibility handling ---
 
     /**
-     * Handle page visibility changes — pause polling when hidden,
-     * resume when visible.
+     * Handle page visibility changes — pause polling when hidden, resume when visible.
      */
     function handleVisibilityChange() {
         if (document.hidden) {
@@ -488,12 +562,10 @@
             stopElapsedTimer();
         } else {
             if (currentMonitoringId !== null && pollingIntervalId === null) {
-                // Resume polling: immediate poll then interval
                 pollCycle(currentMonitoringId);
                 pollingIntervalId = setInterval(function () {
                     pollCycle(currentMonitoringId);
                 }, POLL_INTERVAL_MS);
-                // Resume elapsed timer if running
                 if (currentStatus === "running") {
                     startElapsedTimer();
                 }
@@ -504,7 +576,8 @@
     // --- Expose public API on window ---
     window.startMonitoringPolling = startMonitoringPolling;
     window.stopMonitoringPolling = stopMonitoringPolling;
-    // Expose formatElapsedTime for testing (Property 5)
     window.formatElapsedTime = formatElapsedTime;
+    window.updateAnalysisProgress = updateAnalysisProgress;
+    window.setMonitoringActionsDisabled = setMonitoringActionsDisabled;
 
 })();

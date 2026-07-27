@@ -23,10 +23,10 @@ class Track:
         self.score = score
         self.hits += 1
         self.missed = 0
-
-        area = bbox_area(bbox)
-        if area > self.best_area:
-            self.best_area = area
+        # NOTE: best_area is NOT updated here. It represents the best area
+        # that was actually processed (health/maturity). It is updated by
+        # process_frame() after successful processing via DeduplicationPolicy.
+        # See Spec 009 hardening correction 1.
 
 
 def bbox_area(bbox: Tuple[int, int, int, int]) -> int:

@@ -129,13 +129,9 @@ class TestMonitoringStartBugCondition:
         # Mock frame source factory
         mock_frame_source = MagicMock()
 
-        # Mock inference runner builder
-        mock_inference_runner = MagicMock()
-
         with patch("app.routes.agricultural_ui.get_module_repository") as mock_get_module_repo, \
              patch("app.routes.agricultural_ui.get_monitoring_service") as mock_get_monitoring_svc, \
              patch("src.application.services.frame_source_factory.create_frame_source") as mock_create_fs, \
-             patch("app.routes.agricultural_ui._build_inference_runner") as mock_build_runner, \
              patch("app.routes.agricultural_ui.ModelService") as mock_model_svc_cls, \
              patch("app.dependencies.get_log_service") as mock_get_log_svc, \
              patch("app.routes.agricultural_ui.DETECTION_MODEL_PATH", Path("/fake/model.pth")):
@@ -147,7 +143,6 @@ class TestMonitoringStartBugCondition:
 
             mock_get_monitoring_svc.return_value = mock_monitoring_service
             mock_create_fs.return_value = mock_frame_source
-            mock_build_runner.return_value = mock_inference_runner
 
             mock_model_svc_instance = MagicMock()
             mock_model_svc_instance.check_availability.return_value = MagicMock(value="available")

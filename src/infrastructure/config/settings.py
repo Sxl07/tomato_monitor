@@ -75,6 +75,11 @@ class ExecutionProfile:
     thermal_critical_temp: float
     thermal_resume_temp: float
 
+    # Analysis phase parameters
+    analysis_skip_maturity: bool
+    analysis_thermal_pause_threshold: float
+    analysis_thermal_resume_threshold: float
+
     # Memory budget
     memory_warning_rss_mb: int
 
@@ -84,10 +89,10 @@ EDGE_PROFILE = ExecutionProfile(
     camera_width=480,
     camera_height=360,
     camera_fps=5,
-    capture_loop_fps=2.0,
-    min_seconds_between_snapshots=8.0,
-    max_seconds_without_snapshot=30.0,
-    gate_resolution=(160, 160),
+    capture_loop_fps=5.0,
+    min_seconds_between_snapshots=1.0,
+    max_seconds_without_snapshot=3.0,
+    gate_resolution=(240, 240),
     scene_gate_cooldown_frames=30,
     scene_gate_timeout_frames=75,
     scene_gate_orb_threshold=35,
@@ -101,6 +106,9 @@ EDGE_PROFILE = ExecutionProfile(
     thermal_warning_temp=72.0,
     thermal_critical_temp=78.0,
     thermal_resume_temp=65.0,
+    analysis_skip_maturity=False,
+    analysis_thermal_pause_threshold=72.0,
+    analysis_thermal_resume_threshold=65.0,
     memory_warning_rss_mb=3000,
 )
 
@@ -110,9 +118,9 @@ FULL_PROFILE = ExecutionProfile(
     camera_height=480,
     camera_fps=10,
     capture_loop_fps=5.0,
-    min_seconds_between_snapshots=4.0,
-    max_seconds_without_snapshot=15.0,
-    gate_resolution=(320, 320),
+    min_seconds_between_snapshots=1.0,
+    max_seconds_without_snapshot=3.0,
+    gate_resolution=(240, 240),
     scene_gate_cooldown_frames=18,
     scene_gate_timeout_frames=45,
     scene_gate_orb_threshold=35,
@@ -126,6 +134,9 @@ FULL_PROFILE = ExecutionProfile(
     thermal_warning_temp=78.0,
     thermal_critical_temp=85.0,
     thermal_resume_temp=72.0,
+    analysis_skip_maturity=False,
+    analysis_thermal_pause_threshold=78.0,
+    analysis_thermal_resume_threshold=72.0,
     memory_warning_rss_mb=4000,
 )
 

@@ -51,7 +51,7 @@ class TestActiveSessionEnforcement:
         assert first.status == "initializing"
 
         # Simulate the check that MonitoringService performs
-        _ACTIVE_STATUSES = {"initializing", "running", "paused", "finishing"}
+        _ACTIVE_STATUSES = {"initializing", "running", "paused", "finishing", "analyzing"}
         existing = mon_repo.get_by_module(module_id)
         active = [m for m in existing if m.status in _ACTIVE_STATUSES]
 
@@ -73,7 +73,7 @@ class TestActiveSessionEnforcement:
         mon_repo.update_status(first.id, "completed")
 
         # Verify completed status doesn't count as active
-        _ACTIVE_STATUSES = {"initializing", "running", "paused", "finishing"}
+        _ACTIVE_STATUSES = {"initializing", "running", "paused", "finishing", "analyzing"}
         existing = mon_repo.get_by_module(module_id)
         active = [m for m in existing if m.status in _ACTIVE_STATUSES]
 
@@ -97,7 +97,7 @@ class TestActiveSessionEnforcement:
         mon_repo.update_status(first.id, "aborted")
 
         # Verify aborted status doesn't count as active
-        _ACTIVE_STATUSES = {"initializing", "running", "paused", "finishing"}
+        _ACTIVE_STATUSES = {"initializing", "running", "paused", "finishing", "analyzing"}
         existing = mon_repo.get_by_module(module_id)
         active = [m for m in existing if m.status in _ACTIVE_STATUSES]
 
@@ -112,12 +112,29 @@ class TestActiveSessionEnforcement:
         )
         mon_repo.update_status(first.id, "running")
 
-        _ACTIVE_STATUSES = {"initializing", "running", "paused", "finishing"}
+        _ACTIVE_STATUSES = {"initializing", "running", "paused", "finishing", "analyzing"}
         existing = mon_repo.get_by_module(module_id)
         active = [m for m in existing if m.status in _ACTIVE_STATUSES]
 
         assert len(active) == 1
         assert active[0].status == "running"
+
+    def test_analyzing_session_blocks_new_monitoring(self, db_session):
+        """An analyzing monitoring blocks a new session (it's active)."""
+        module_id, mon_repo = self._create_module(db_session)
+
+        first = mon_repo.create(
+            module_id, Monitoring(module_id=module_id, width_m=1.0, length_m=1.0)
+        )
+        mon_repo.update_status(first.id, "running")
+        mon_repo.update_status(first.id, "analyzing")
+
+        _ACTIVE_STATUSES = {"initializing", "running", "paused", "finishing", "analyzing"}
+        existing = mon_repo.get_by_module(module_id)
+        active = [m for m in existing if m.status in _ACTIVE_STATUSES]
+
+        assert len(active) == 1
+        assert active[0].status == "analyzing"
 
 
 class TestMonitoringNotFoundError:

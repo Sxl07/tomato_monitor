@@ -1,0 +1,23 @@
+{
+  "profile_name": "edge",
+  "total_cycles": 9,
+  "snapshots_per_minute": 45104.49,
+  "inferences_per_minute": 45104.49,
+  "peak_temperature_c": 0.0,
+  "peak_rss_mb": 0.0,
+  "average_timings_ms": {
+    "camera_read_ms": 0.01,
+    "scene_gate_ms": 0.0,
+    "snapshot_save_ms": 0.01,
+    "inference_total_ms": 0.0,
+    "detection_ms": 0.0,
+    "health_ms": 0.0,
+    "maturity_ms": 0.0,
+    "persistence_ms": 0.07
+  },
+  "snapshot_reasons": {
+    "first_frame": 1,
+    "scene_change": 0,
+    "timeout": 8
+  }
+}

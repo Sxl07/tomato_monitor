@@ -93,6 +93,26 @@ class SqlSnapshotRepository(SnapshotRepository):
             return None
         return self._to_entity(model)
 
+    def update_has_detections(self, id: int, has_detections: bool) -> Snapshot:
+        """Update the has_detections field on a snapshot.
+
+        Args:
+            id: Snapshot primary key.
+            has_detections: New value for has_detections flag.
+
+        Returns:
+            Updated Snapshot domain entity.
+
+        Raises:
+            ParentNotFoundError: If no snapshot exists with the given id.
+        """
+        model = self._session.get(SnapshotModel, id)
+        if model is None:
+            raise ParentNotFoundError("Snapshot", id)
+        model.has_detections = has_detections
+        self._session.flush()
+        return self._to_entity(model)
+
     def _validate_image_path(self, path: str) -> None:
         """Validate image path before database insertion.
 

@@ -48,48 +48,6 @@ import logging as _logging
 _logger = _logging.getLogger(__name__)
 
 
-def _build_inference_runner():
-    """Construct SnapshotInferenceRunner with loaded models.
-
-    Returns None if models cannot be loaded (files missing, import errors, etc.).
-    Logs the cost of on-demand loading for visibility.
-    """
-    try:
-        from src.infrastructure.vision.detectron_detector import build_tomato_detector
-        from src.infrastructure.vision.resnet_health_classifier import build_health_model_resnet
-        from src.infrastructure.vision.snapshot_inference_runner import SnapshotInferenceRunner
-        from src.infrastructure.config.settings import DETECTION_MODEL_PATH as det_path
-        from src.infrastructure.config.settings import HEALTH_MODEL_B_PATH
-
-        # Verify model files exist before attempting to load
-        if not det_path.exists():
-            _logger.warning(f"Detection model not found at {det_path}")
-            return None
-        if not HEALTH_MODEL_B_PATH.exists():
-            _logger.warning(f"Health model not found at {HEALTH_MODEL_B_PATH}")
-            return None
-
-        _logger.info("Cargando modelos de inferencia (esto puede tomar unos segundos)...")
-        detector = build_tomato_detector(det_path)
-        health_model, health_transform = build_health_model_resnet(HEALTH_MODEL_B_PATH)
-        _logger.info("Modelos de inferencia cargados correctamente.")
-
-        from src.infrastructure.config.settings import ACTIVE_PROFILE
-
-        return SnapshotInferenceRunner(
-            detector=detector,
-            health_model=health_model,
-            health_transform=health_transform,
-            skip_maturity=ACTIVE_PROFILE.skip_maturity,
-            detection_score_threshold=ACTIVE_PROFILE.detection_score_threshold,
-            inference_input_size=(ACTIVE_PROFILE.inference_input_width, ACTIVE_PROFILE.inference_input_height),
-            run_maturity_only_for_healthy=ACTIVE_PROFILE.run_maturity_only_for_healthy,
-        )
-    except Exception as e:
-        _logger.error(f"Error loading inference models: {e}")
-        return None
-
-
 # ---------------------------------------------------------------------------
 # Home
 # ---------------------------------------------------------------------------
@@ -654,24 +612,7 @@ def monitoring_start(
             "back_url": f"/modulos/{id}",
         })
 
-    # 2. Inference runner (detector + health + maturity models)
-    inference_runner = _build_inference_runner()
-    if inference_runner is None:
-        errors = ["No se pudieron cargar los modelos de inferencia. Verifica que los archivos estén en su lugar."]
-        frame_source.release()
-        return templates.TemplateResponse(request, "agricultural/monitoring_setup.html", {
-            "title": f"Nuevo Monitoreo — {module.name}",
-            "module": module,
-            "width_m": width_m,
-            "length_m": length_m,
-            "notes": notes,
-            "errors": errors,
-            "model_status": model_status,
-            "show_back": True,
-            "back_url": f"/modulos/{id}",
-        })
-
-    # 3. DB session and log service
+    # 2. DB session and log service (no inference models loaded at start)
     from app.dependencies import _get_request_session
     db_session = _get_request_session(request)
     log_service = get_log_service(request)
@@ -685,7 +626,6 @@ def monitoring_start(
             length_m=length,
             notes=validated_notes,
             frame_source=frame_source,
-            inference_runner=inference_runner,
             db_session=db_session,
             log_service=log_service,
         )
@@ -833,3 +773,62 @@ def monitoring_abort(request: Request, id: int):
         if monitoring is None:
             return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
         return RedirectResponse(url=f"/modulos/{monitoring.module_id}", status_code=303)
+
+
+@router.post("/monitoreos/{id}/finalizar-captura")
+def monitoring_finalize_capture(request: Request, id: int):
+    """Finalize the capture phase and start deferred analysis.
+
+    Delegates exclusively to MonitoringService.finalize_capture() which:
+    - Signals the worker to stop capturing (NOT abort)
+    - Waits for camera release
+    - Starts analysis thread if snapshots exist
+    - Transitions to 'completed' directly if zero snapshots
+
+    Always redirects to the execution screen regardless of outcome.
+    """
+    from src.application.services.monitoring_service import (
+        MonitoringNotFoundError,
+        FinalizationInProgressError,
+    )
+    from src.domain.exceptions import InvalidTransitionError
+
+    _logger.info(f"UI finalize-capture request received for monitoring {id}")
+
+    monitoring_service = get_monitoring_service(request)
+    try:
+        monitoring = monitoring_service.finalize_capture(id)
+        _logger.info(
+            f"UI finalize-capture accepted for monitoring {id}, "
+            f"status={monitoring.status}"
+        )
+        return RedirectResponse(
+            url=f"/monitoreos/{id}/ejecucion", status_code=303
+        )
+    except MonitoringNotFoundError:
+        _logger.warning(f"UI finalize-capture: monitoring {id} not found")
+        return RedirectResponse(
+            url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303
+        )
+    except FinalizationInProgressError:
+        _logger.info(
+            f"UI finalize-capture: monitoring {id} already being finalized"
+        )
+        return RedirectResponse(
+            url=f"/monitoreos/{id}/ejecucion", status_code=303
+        )
+    except InvalidTransitionError:
+        _logger.info(
+            f"UI finalize-capture: monitoring {id} invalid transition"
+        )
+        monitoring_repo = get_monitoring_repository(request)
+        monitoring = monitoring_repo.get_by_id(id)
+        if monitoring is None:
+            return RedirectResponse(
+                url="/invernaderos?error=Monitoreo+no+encontrado",
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=f"/monitoreos/{id}/ejecucion", status_code=303
+        )
+

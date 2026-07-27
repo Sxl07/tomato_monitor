@@ -1,20 +1,22 @@
 """Shared runtime registry for active monitoring workers and threads.
 
-This module provides a thread-safe singleton that tracks which MonitoringWorker
-instances and their threads are currently alive. It is stored on app.state and
-shared across all request-scoped MonitoringService instances.
+This module provides a thread-safe singleton that tracks which worker
+instances (CaptureWorker during capture, SnapshotAnalysisService during
+analysis) and their threads are currently alive. It is stored on app.state
+and shared across all request-scoped MonitoringService instances.
 
 This solves the core bug: MonitoringService is created per-request, but worker
 state must persist across requests to correctly handle abort, orphan detection,
 and camera lock ownership.
+
+Additionally provides finalization claims so that only one thread may finalize
+a given monitoring session at a time (prevents race between capture completion
+callback and explicit user finalization).
 """
 
 import threading
 import logging
-from typing import Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from src.application.services.monitoring_worker import MonitoringWorker
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +30,12 @@ class MonitoringRuntimeRegistry:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._workers: dict[int, "MonitoringWorker"] = {}
+        self._workers: dict[int, object | None] = {}
         self._threads: dict[int, threading.Thread] = {}
+        self._finalization_claims: set[int] = set()
 
     def register(
-        self, monitoring_id: int, worker: "MonitoringWorker", thread: threading.Thread
+        self, monitoring_id: int, worker: object | None, thread: threading.Thread
     ) -> None:
         """Register a worker and its thread for a monitoring session."""
         with self._lock:
@@ -42,7 +45,7 @@ class MonitoringRuntimeRegistry:
                 f"Registry: registered worker for monitoring {monitoring_id}."
             )
 
-    def get_worker(self, monitoring_id: int) -> Optional["MonitoringWorker"]:
+    def get_worker(self, monitoring_id: int) -> object | None:
         """Get the worker for a monitoring session, or None."""
         with self._lock:
             return self._workers.get(monitoring_id)
@@ -52,11 +55,41 @@ class MonitoringRuntimeRegistry:
         with self._lock:
             return self._threads.get(monitoring_id)
 
-    def remove(self, monitoring_id: int) -> None:
-        """Remove worker and thread references for a monitoring session."""
+    def set_worker(self, monitoring_id: int, worker: object | None) -> None:
+        """Update the worker/runtime for a session without replacing the thread."""
+        with self._lock:
+            self._workers[monitoring_id] = worker
+
+    def remove_runtime(self, monitoring_id: int) -> None:
+        """Remove worker and thread but preserve finalization claim."""
         with self._lock:
             self._workers.pop(monitoring_id, None)
             self._threads.pop(monitoring_id, None)
+
+    def claim_finalization(self, monitoring_id: int) -> bool:
+        """Attempt to claim exclusive finalization. Returns True if claimed, False if already claimed."""
+        with self._lock:
+            if monitoring_id in self._finalization_claims:
+                return False
+            self._finalization_claims.add(monitoring_id)
+            return True
+
+    def release_finalization(self, monitoring_id: int) -> None:
+        """Release a finalization claim."""
+        with self._lock:
+            self._finalization_claims.discard(monitoring_id)
+
+    def is_finalization_claimed(self, monitoring_id: int) -> bool:
+        """Check if finalization is currently claimed."""
+        with self._lock:
+            return monitoring_id in self._finalization_claims
+
+    def remove(self, monitoring_id: int) -> None:
+        """Remove worker, thread, and finalization claim for a monitoring session."""
+        with self._lock:
+            self._workers.pop(monitoring_id, None)
+            self._threads.pop(monitoring_id, None)
+            self._finalization_claims.discard(monitoring_id)
             logger.info(
                 f"Registry: removed worker for monitoring {monitoring_id}."
             )

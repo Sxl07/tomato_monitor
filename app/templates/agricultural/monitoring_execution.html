@@ -26,10 +26,6 @@
             <span id="counter-snapshots" class="live-counter-value">{{ monitoring.total_snapshots }}</span>
             <span class="live-counter-label">Snapshots capturados</span>
         </div>
-        <div class="live-counter">
-            <span id="counter-tomatoes" class="live-counter-value">{{ monitoring.total_detections }}</span>
-            <span class="live-counter-label">Tomates detectados</span>
-        </div>
     </div>
 
     {# Last snapshot thumbnail #}
@@ -44,9 +40,26 @@
     </div>
 
     <div class="execution-actions">
-        <button type="button" class="btn btn-danger btn-full" onclick="showConfirmDialog('abort-dialog')">
-            Detener Monitoreo
+        <button type="button" class="btn btn-primary btn-full" data-monitoring-action onclick="showConfirmDialog('finalize-dialog')">
+            Finalizar captura
         </button>
+        <button type="button" class="btn btn-danger btn-full" data-monitoring-action onclick="showConfirmDialog('abort-dialog')" style="margin-top: 8px;">
+            Cancelar monitoreo
+        </button>
+    </div>
+</div>
+
+{# --- Analyzing --- #}
+<div id="status-analyzing" class="execution-status-block {% if monitoring.status != 'analyzing' %}hidden{% endif %}">
+    <div class="execution-center">
+        <div class="spinner spinner--lg"></div>
+        <p id="analysis-progress-text" class="execution-status-text">Preparando análisis...</p>
+        <div class="live-counters" style="margin-top: 8px;">
+            <span id="analysis-processed">0</span> / <span id="analysis-total">0</span> snapshots
+        </div>
+        <div class="progress-bar" style="margin-top: 12px;">
+            <div id="analysis-progress-fill" class="progress-bar-fill" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width: 0%;"></div>
+        </div>
     </div>
 </div>
 
@@ -58,8 +71,8 @@
     </div>
 
     <div class="execution-actions btn-group">
-        <button type="button" class="btn btn-primary" id="btn-resume" disabled>Reanudar</button>
-        <button type="button" class="btn btn-danger" onclick="showConfirmDialog('abort-dialog')">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btn-resume" data-monitoring-action disabled>Reanudar</button>
+        <button type="button" class="btn btn-danger" data-monitoring-action onclick="showConfirmDialog('abort-dialog')">Cancelar</button>
     </div>
 </div>
 
@@ -111,6 +124,19 @@
     </div>
 </div>
 
+{# --- Finalize capture confirmation dialog --- #}
+<div id="finalize-dialog" class="dialog-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="finalize-dialog-message">
+    <div class="dialog">
+        <p id="finalize-dialog-message" class="dialog-message">La cámara se liberará y comenzará el análisis de los snapshots capturados.</p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" onclick="hideConfirmDialog('finalize-dialog')">Cancelar</button>
+            <form id="finalize-form" method="post" action="/monitoreos/{{ monitoring.id }}/finalizar-captura" style="margin:0;">
+                <button type="submit" id="btn-confirm-finalize" class="btn btn-primary">Finalizar captura</button>
+            </form>
+        </div>
+    </div>
+</div>
+
 {# --- Abort confirmation dialog --- #}
 <div id="abort-dialog" class="dialog-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="abort-dialog-message">
     <div class="dialog">
@@ -121,6 +147,15 @@
                 <button type="submit" id="btn-confirm-abort" class="btn btn-danger">Detener</button>
             </form>
         </div>
+    </div>
+</div>
+
+{# --- Finalizing capture overlay (shown after finalize is submitted) --- #}
+<div id="finalizing-capture-overlay" class="execution-status-block hidden">
+    <div class="execution-center">
+        <div class="spinner spinner--lg"></div>
+        <p class="execution-status-text">Finalizando captura...</p>
+        <p class="text-secondary" style="font-size: var(--font-size-small);">Liberando cámara antes de iniciar el análisis.</p>
     </div>
 </div>
 
@@ -144,48 +179,57 @@ function hideConfirmDialog(dialogId) {
 }
 
 document.addEventListener("DOMContentLoaded", function () {
-    var form = document.getElementById("abort-form");
-    if (!form) return;
+    // --- Abort form submission ---
+    var abortForm = document.getElementById("abort-form");
+    if (abortForm) {
+        abortForm.addEventListener("submit", function (event) {
+            event.preventDefault();
+            if (abortForm.dataset.submitting === "true") return;
+            abortForm.dataset.submitting = "true";
 
-    form.addEventListener("submit", function (event) {
-        event.preventDefault();
+            if (typeof stopMonitoringPolling === "function") {
+                stopMonitoringPolling();
+            }
 
-        // Guard against double submit
-        if (form.dataset.submitting === "true") {
-            return;
-        }
-        form.dataset.submitting = "true";
+            var btn = document.getElementById("btn-confirm-abort");
+            if (btn) { btn.disabled = true; btn.textContent = "Deteniendo..."; }
 
-        // Stop polling immediately
-        if (typeof stopMonitoringPolling === "function") {
-            stopMonitoringPolling();
-        }
+            hideConfirmDialog("abort-dialog");
+            var blocks = document.querySelectorAll(".execution-status-block");
+            for (var i = 0; i < blocks.length; i++) { blocks[i].classList.add("hidden"); }
 
-        // Disable button
-        var btn = document.getElementById("btn-confirm-abort");
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = "Deteniendo...";
-        }
+            var overlay = document.getElementById("stopping-overlay");
+            if (overlay) { overlay.classList.remove("hidden"); }
 
-        // Hide dialog
-        hideConfirmDialog("abort-dialog");
+            abortForm.submit();
+        });
+    }
 
-        // Hide all status blocks
-        var blocks = document.querySelectorAll(".execution-status-block");
-        for (var i = 0; i < blocks.length; i++) {
-            blocks[i].classList.add("hidden");
-        }
+    // --- Finalize form submission ---
+    var finalizeForm = document.getElementById("finalize-form");
+    if (finalizeForm) {
+        finalizeForm.addEventListener("submit", function (event) {
+            event.preventDefault();
+            if (finalizeForm.dataset.submitting === "true") return;
+            finalizeForm.dataset.submitting = "true";
 
-        // Show stopping overlay
-        var overlay = document.getElementById("stopping-overlay");
-        if (overlay) {
-            overlay.classList.remove("hidden");
-        }
+            if (typeof stopMonitoringPolling === "function") {
+                stopMonitoringPolling();
+            }
 
-        // Submit the form — browser will follow the 303 redirect
-        form.submit();
-    });
+            var btn = document.getElementById("btn-confirm-finalize");
+            if (btn) { btn.disabled = true; btn.textContent = "Finalizando..."; }
+
+            hideConfirmDialog("finalize-dialog");
+            var blocks = document.querySelectorAll(".execution-status-block");
+            for (var i = 0; i < blocks.length; i++) { blocks[i].classList.add("hidden"); }
+
+            var overlay = document.getElementById("finalizing-capture-overlay");
+            if (overlay) { overlay.classList.remove("hidden"); }
+
+            finalizeForm.submit();
+        });
+    }
 });
 </script>
 <script src="/static/js/monitoring.js"></script>

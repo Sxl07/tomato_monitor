@@ -31,6 +31,17 @@ class MonitoringMetricsRepository(ABC):
         ...
 
     @abstractmethod
+    def create_pending_for_finalization(
+        self, monitoring_id: int, metrics: MonitoringMetrics
+    ) -> MonitoringMetrics:
+        """Persist metrics for a session being finalized (running or analyzing).
+
+        Flushes but does NOT commit. The subsequent status transition
+        to 'completed' in the same session will commit both.
+        """
+        ...
+
+    @abstractmethod
     def get_by_monitoring(self, monitoring_id: int) -> Optional[MonitoringMetrics]:
         """Return the metrics for the given monitoring, or None if not found."""
         ...

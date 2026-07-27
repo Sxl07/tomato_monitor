@@ -17,6 +17,7 @@ class MonitoringState(str, Enum):
     RUNNING = "running"
     PAUSED = "paused"
     FINISHING = "finishing"
+    ANALYZING = "analyzing"
     COMPLETED = "completed"
     ABORTED = "aborted"
     ERROR = "error"
@@ -27,9 +28,10 @@ class MonitoringStatus:
 
     The state machine enforces the following transitions:
         - initializing → running, error
-        - running → paused, finishing, aborted, error
+        - running → paused, finishing, analyzing, completed, aborted, error
         - paused → running, aborted, error
         - finishing → completed, error
+        - analyzing → completed, error
         - completed, aborted, error → (no transitions allowed)
     """
 
@@ -41,6 +43,8 @@ class MonitoringStatus:
         MonitoringState.RUNNING: {
             MonitoringState.PAUSED,
             MonitoringState.FINISHING,
+            MonitoringState.ANALYZING,
+            MonitoringState.COMPLETED,
             MonitoringState.ABORTED,
             MonitoringState.ERROR,
         },
@@ -50,6 +54,10 @@ class MonitoringStatus:
             MonitoringState.ERROR,
         },
         MonitoringState.FINISHING: {
+            MonitoringState.COMPLETED,
+            MonitoringState.ERROR,
+        },
+        MonitoringState.ANALYZING: {
             MonitoringState.COMPLETED,
             MonitoringState.ERROR,
         },

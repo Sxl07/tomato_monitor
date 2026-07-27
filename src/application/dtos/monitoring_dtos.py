@@ -35,6 +35,8 @@ class MonitoringStatusResponse(MonitoringResponse):
     width_m: float
     length_m: float
     notes: Optional[str] = None
+    analysis_processed: int = 0
+    analysis_total: int = 0
 
 
 class ErrorResponse(BaseModel):
