@@ -37,6 +37,12 @@ class MonitoringStatusResponse(MonitoringResponse):
     notes: Optional[str] = None
     analysis_processed: int = 0
     analysis_total: int = 0
+    temperature: Optional[float] = None
+    pause_reason: Optional[str] = None
+    analysis_thermal_paused: bool = False
+    analysis_peak_temperature_c: float = 0.0
+    analysis_thermal_pause_count: int = 0
+    analysis_thermal_pause_duration_seconds: float = 0.0
 
 
 class ErrorResponse(BaseModel):

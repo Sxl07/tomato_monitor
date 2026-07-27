@@ -192,6 +192,9 @@
         // Always update analysis progress (even without state change)
         updateAnalysisProgress(data);
 
+        // Update thermal state during analysis
+        updateAnalysisThermalState(data);
+
         // Handle state transition
         if (data.status && data.status !== currentStatus) {
             handleStateTransition(data.status);
@@ -239,6 +242,58 @@
             if (fillEl) {
                 fillEl.style.width = pct + "%";
                 fillEl.setAttribute("aria-valuenow", String(pct));
+            }
+        }
+    }
+
+    // --- Analysis thermal state ---
+
+    /**
+     * Show or hide the analysis thermal alert based on response data.
+     * @param {object} data - Status response data with analysis_thermal_paused and related fields.
+     */
+    function updateAnalysisThermalState(data) {
+        var alertEl = document.getElementById("analysis-thermal-alert");
+        var textEl = document.getElementById("analysis-thermal-text");
+        var statsEl = document.getElementById("analysis-thermal-stats");
+        var progressTextEl = document.getElementById("analysis-progress-text");
+
+        if (!alertEl) return;
+
+        if (data.analysis_thermal_paused === true) {
+            alertEl.classList.remove("hidden");
+
+            // Set pause reason text
+            var pauseText = data.pause_reason
+                ? data.pause_reason
+                : "Pausado por temperatura. Esperando que la Raspberry Pi se enfríe para continuar el análisis.";
+            if (textEl) {
+                textEl.textContent = pauseText;
+            }
+
+            // Update progress text to show paused state
+            if (progressTextEl) {
+                var total = parseInt(data.analysis_total, 10);
+                var processed = parseInt(data.analysis_processed, 10);
+                if (!isNaN(total) && total > 0 && !isNaN(processed)) {
+                    progressTextEl.textContent = "Pausado por temperatura... (" + processed + "/" + total + ")";
+                }
+            }
+
+            // Show temperature stats
+            if (statsEl) {
+                if (typeof data.temperature === "number" && data.temperature >= 0) {
+                    statsEl.textContent = "Temperatura actual: " + data.temperature.toFixed(1) + "°C";
+                } else if (typeof data.analysis_peak_temperature_c === "number" && data.analysis_peak_temperature_c > 0) {
+                    statsEl.textContent = "Temperatura máxima observada: " + data.analysis_peak_temperature_c.toFixed(1) + "°C";
+                } else {
+                    statsEl.textContent = "";
+                }
+            }
+        } else {
+            alertEl.classList.add("hidden");
+            if (statsEl) {
+                statsEl.textContent = "";
             }
         }
     }
@@ -578,6 +633,7 @@
     window.stopMonitoringPolling = stopMonitoringPolling;
     window.formatElapsedTime = formatElapsedTime;
     window.updateAnalysisProgress = updateAnalysisProgress;
+    window.updateAnalysisThermalState = updateAnalysisThermalState;
     window.setMonitoringActionsDisabled = setMonitoringActionsDisabled;
 
 })();

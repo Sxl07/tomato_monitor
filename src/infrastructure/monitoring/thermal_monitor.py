@@ -41,6 +41,17 @@ class ThermalMonitor:
         self._total_pause_duration: float = 0.0
         self._pause_start_time: Optional[float] = None
         self._cooling_warning_at_start: bool = False
+        self._current_temperature: Optional[float] = None
+
+    @property
+    def pause_event(self) -> threading.Event:
+        """The threading.Event used to signal thermal pause."""
+        return self._pause_event
+
+    @property
+    def current_temperature(self) -> Optional[float]:
+        """Last read temperature in °C (None if never read)."""
+        return self._current_temperature
 
     @property
     def peak_temperature(self) -> float:
@@ -53,6 +64,19 @@ class ThermalMonitor:
     @property
     def total_pause_duration_seconds(self) -> float:
         return self._total_pause_duration
+
+    @property
+    def cooling_warning_at_start(self) -> bool:
+        """Whether temperature was above warning threshold at monitor start."""
+        return self._cooling_warning_at_start
+
+    def _record_temperature(self, temp: float) -> None:
+        """Record a temperature reading, updating current and peak."""
+        if temp is None:
+            return
+        self._current_temperature = float(temp)
+        if self._current_temperature > self._peak_temperature:
+            self._peak_temperature = self._current_temperature
 
     def start(self) -> None:
         """Start the temperature monitoring thread (daemon)."""
@@ -67,16 +91,22 @@ class ThermalMonitor:
     def stop(self) -> None:
         """Stop the monitoring thread."""
         self._running = False
+        # Account for in-progress pause duration
+        if self._pause_start_time is not None:
+            self._total_pause_duration += time.time() - self._pause_start_time
+            self._pause_start_time = None
         if self._thread is not None:
             self._thread.join(timeout=self._poll_interval * 2)
 
     def get_session_metadata(self) -> dict:
         """Return thermal session stats for inclusion in monitoring metadata."""
         return {
-            "peak_temperature_c": self._peak_temperature,
-            "pause_count": self._pause_count,
-            "total_pause_duration_s": self._total_pause_duration,
-            "cooling_warning_at_start": self._cooling_warning_at_start,
+            "peak_temperature_c": self.peak_temperature,
+            "pause_count": self.pause_count,
+            "total_pause_duration_s": self.total_pause_duration_seconds,
+            "cooling_warning_at_start": self.cooling_warning_at_start,
+            "current_temperature_c": self.current_temperature,
+            "is_paused": self.pause_event.is_set(),
         }
 
     def _monitor_loop(self) -> None:
@@ -90,6 +120,7 @@ class ThermalMonitor:
 
         # Initial temperature check
         temp = self._read_temperature()
+        self._record_temperature(temp)
         if temp is not None and temp > self._warning_temp:
             self._cooling_warning_at_start = True
             logger.warning(
@@ -104,12 +135,9 @@ class ThermalMonitor:
                 break
 
             temp = self._read_temperature()
+            self._record_temperature(temp)
             if temp is None:
                 continue
-
-            # Track peak
-            if temp > self._peak_temperature:
-                self._peak_temperature = temp
 
             # Critical: pause
             if temp >= self._critical_temp and not self._pause_event.is_set():

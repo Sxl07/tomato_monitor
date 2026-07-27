@@ -61,6 +61,7 @@ class ExecutionProfile:
     scene_gate_hsv_threshold: float
 
     # Inference input size (independent of capture resolution)
+    # inference_input_width/height: Recorded in pipeline_metrics.json for performance evaluation
     inference_input_width: int
     inference_input_height: int
 
@@ -76,6 +77,7 @@ class ExecutionProfile:
     thermal_resume_temp: float
 
     # Analysis phase parameters
+    # analysis_skip_maturity: Recorded in pipeline_metrics.json for performance evaluation
     analysis_skip_maturity: bool
     analysis_thermal_pause_threshold: float
     analysis_thermal_resume_threshold: float

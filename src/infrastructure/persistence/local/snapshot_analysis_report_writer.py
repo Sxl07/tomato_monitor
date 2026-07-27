@@ -55,6 +55,9 @@ SUMMARY_COLUMNS = [
     "maturity_green_count", "maturity_breaker_count", "maturity_turning_count",
     "maturity_pink_count", "maturity_light_red_count", "maturity_red_count",
     "analysis_duration_seconds", "errors_count", "error_reason",
+    "thermal_peak_temperature_c", "thermal_pause_count",
+    "thermal_pause_duration_seconds", "thermal_cooling_warning_at_start",
+    "thermal_was_paused",
 ]
 
 
