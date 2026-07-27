@@ -21,6 +21,18 @@
 
 <a href="/modulos/{{ module.id }}/monitoreo/nuevo" class="btn btn-primary btn-large btn-full-width">Iniciar Nuevo Monitoreo</a>
 
+{% if active_monitoring %}
+<div class="card" style="margin-top: 16px; margin-bottom: 16px;">
+    <div class="card-body">
+        <h3 class="card-title">Monitoreo en curso</h3>
+        <p class="card-subtitle">Estado: {{ active_monitoring.status_label }}</p>
+        <p class="card-subtitle">Iniciado: {{ active_monitoring.started_at_display }}</p>
+        <a href="{{ active_monitoring.execution_url }}" class="btn btn-primary" style="margin-top: 8px;">Volver al monitoreo</a>
+    </div>
+</div>
+<p class="text-secondary" style="margin-bottom: 16px;">Ya existe un monitoreo activo para este módulo.</p>
+{% endif %}
+
 <h2 class="section-header">Historial de Monitoreos</h2>
 
 {% if history %}

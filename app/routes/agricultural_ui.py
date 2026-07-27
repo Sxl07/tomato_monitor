@@ -16,6 +16,7 @@ from app.context_builders import (
     build_monitoring_history,
     build_report_metrics,
     build_snapshot_gallery,
+    build_active_monitoring_context,
     _format_date_spanish,
     _format_time,
 )
@@ -367,6 +368,7 @@ def module_detail(request: Request, id: int):
             metrics_by_monitoring[m.id] = metrics
 
     history = build_monitoring_history(monitorings, metrics_by_monitoring)
+    active_monitoring = build_active_monitoring_context(monitorings)
 
     # Format dimensions for info panel
     if module.width_m is not None and module.length_m is not None:
@@ -379,6 +381,7 @@ def module_detail(request: Request, id: int):
         "module": module,
         "dimensions_display": dimensions_display,
         "history": history,
+        "active_monitoring": active_monitoring,
         "show_back": True,
         "back_url": f"/invernaderos/{module.greenhouse_id}",
     })
