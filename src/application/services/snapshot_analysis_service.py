@@ -39,6 +39,11 @@ class AnalysisProgress:
     current_frame_index: int = -1
     unique_tracks: int = 0
     status: str = "pending"  # "pending", "running", "completed", "error"
+    thermal_paused: bool = False
+    thermal_current_temperature_c: Optional[float] = None
+    thermal_peak_temperature_c: float = 0.0
+    thermal_pause_count: int = 0
+    thermal_pause_duration_seconds: float = 0.0
 
 
 @dataclass
@@ -84,6 +89,11 @@ class AnalysisResult:
     best_results_by_track: dict = field(default_factory=dict)  # track_id → TrackBestResult
     errors: list = field(default_factory=list)
     report_paths: dict = field(default_factory=dict)
+    thermal_peak_temperature_c: float = 0.0
+    thermal_pause_count: int = 0
+    thermal_pause_duration_seconds: float = 0.0
+    thermal_cooling_warning_at_start: bool = False
+    thermal_was_paused: bool = False
 
 
 class SnapshotAnalysisService:
@@ -132,12 +142,140 @@ class SnapshotAnalysisService:
     @property
     def progress(self) -> AnalysisProgress:
         """Current analysis progress (read-only snapshot)."""
+        self._refresh_thermal_progress()
         return self._progress
 
     @property
     def error_reason(self) -> Optional[str]:
         """Reason for fatal error, if any."""
         return self._error_reason
+
+    def _refresh_thermal_progress(self) -> None:
+        """Safely read thermal state into progress fields.
+
+        Prefers get_session_metadata() for a consistent snapshot, falling
+        back to direct property reads on older monitors.
+        """
+        try:
+            tm = self._thermal_monitor
+            if tm is None:
+                return
+
+            # Try get_session_metadata() first
+            metadata = None
+            get_meta_fn = getattr(tm, "get_session_metadata", None)
+            if callable(get_meta_fn):
+                try:
+                    metadata = get_meta_fn()
+                except Exception:
+                    metadata = None
+
+            if metadata and isinstance(metadata, dict):
+                # Read from metadata dict
+                try:
+                    val = metadata.get("peak_temperature_c")
+                    if val is not None and self._is_numeric(val):
+                        self._progress.thermal_peak_temperature_c = max(0.0, float(val))
+                except Exception:
+                    pass
+
+                try:
+                    val = metadata.get("current_temperature_c")
+                    if val is not None and self._is_numeric(val):
+                        self._progress.thermal_current_temperature_c = max(0.0, float(val))
+                    elif val is None:
+                        self._progress.thermal_current_temperature_c = None
+                except Exception:
+                    pass
+
+                try:
+                    val = metadata.get("pause_count")
+                    if val is not None and self._is_numeric(val):
+                        self._progress.thermal_pause_count = max(0, int(val))
+                except Exception:
+                    pass
+
+                try:
+                    val = metadata.get("total_pause_duration_s")
+                    if val is not None and self._is_numeric(val):
+                        self._progress.thermal_pause_duration_seconds = max(0.0, float(val))
+                except Exception:
+                    pass
+
+                try:
+                    val = metadata.get("cooling_warning_at_start")
+                    if isinstance(val, bool):
+                        self._progress.thermal_cooling_warning_at_start = val
+                except Exception:
+                    pass
+
+                try:
+                    val = metadata.get("is_paused")
+                    if isinstance(val, bool):
+                        self._progress.thermal_paused = val
+                except Exception:
+                    pass
+            else:
+                # Fallback to direct property reads
+                try:
+                    pause_event = getattr(tm, "pause_event", None)
+                    if pause_event is not None:
+                        self._progress.thermal_paused = pause_event.is_set()
+                except Exception:
+                    pass
+
+                try:
+                    current_temp = getattr(tm, "current_temperature", None)
+                    if current_temp is not None and self._is_numeric(current_temp):
+                        self._progress.thermal_current_temperature_c = max(0.0, float(current_temp))
+                    elif current_temp is None:
+                        self._progress.thermal_current_temperature_c = None
+                except Exception:
+                    pass
+
+                try:
+                    peak = getattr(tm, "peak_temperature", None)
+                    if peak is not None and self._is_numeric(peak):
+                        self._progress.thermal_peak_temperature_c = max(0.0, float(peak))
+                except Exception:
+                    pass
+
+                try:
+                    pause_count = getattr(tm, "pause_count", None)
+                    if pause_count is not None and self._is_numeric(pause_count):
+                        self._progress.thermal_pause_count = max(0, int(pause_count))
+                except Exception:
+                    pass
+
+                try:
+                    total_pause = getattr(tm, "total_pause_duration_seconds", None)
+                    if total_pause is not None and self._is_numeric(total_pause):
+                        self._progress.thermal_pause_duration_seconds = max(0.0, float(total_pause))
+                except Exception:
+                    pass
+
+                try:
+                    cooling_flag = getattr(tm, "cooling_warning_at_start", None)
+                    if isinstance(cooling_flag, bool):
+                        self._progress.thermal_cooling_warning_at_start = cooling_flag
+                except Exception:
+                    pass
+        except Exception:
+            pass  # Thermal read failure must never crash progress
+
+    @staticmethod
+    def _is_numeric(val) -> bool:
+        """Check if a value is a real numeric type (not a mock or string)."""
+        if isinstance(val, bool):
+            return False
+        if isinstance(val, (int, float)):
+            # Guard against mock objects that pass isinstance checks
+            try:
+                float(val)
+                return True
+            except (TypeError, ValueError):
+                return False
+        return False
 
     def _reset_state(self) -> None:
         """Reset all mutable state for a fresh run."""
@@ -246,7 +384,12 @@ class SnapshotAnalysisService:
                 pause_event = getattr(self._thermal_monitor, "pause_event", None)
                 if pause_event is not None:
                     while pause_event.is_set():
+                        self._refresh_thermal_progress()
+                        self._progress.thermal_paused = True
                         time.sleep(0.25)
+                    if self._progress.thermal_paused:
+                        self._refresh_thermal_progress()
+                        self._progress.thermal_paused = False
 
             try:
                 has_det, detection_rows, frame_result, staged_best = self._process_snapshot(snapshot, components)
@@ -612,7 +755,41 @@ class SnapshotAnalysisService:
             analysis_duration_seconds=duration,
             best_results_by_track=dict(self._best_results_by_track),
             errors=list(self._errors),
+            thermal_peak_temperature_c=self._get_thermal_metric("peak_temperature", 0.0),
+            thermal_pause_count=self._get_thermal_metric("pause_count", 0),
+            thermal_pause_duration_seconds=self._get_thermal_metric("total_pause_duration_seconds", 0.0),
+            thermal_cooling_warning_at_start=self._get_thermal_flag("_cooling_warning_at_start", False),
+            thermal_was_paused=self._get_thermal_metric("pause_count", 0) > 0,
         )
+
+    def _get_thermal_metric(self, attr: str, default):
+        """Safely read a metric property from thermal_monitor."""
+        try:
+            tm = self._thermal_monitor
+            if tm is None:
+                return default
+            val = getattr(tm, attr, default)
+            if val is None:
+                return default
+            # Guard against non-numeric values (e.g., MagicMock)
+            if not isinstance(val, (int, float)):
+                return default
+            return val
+        except Exception:
+            return default
+
+    def _get_thermal_flag(self, attr: str, default: bool) -> bool:
+        """Safely read an internal flag from thermal_monitor."""
+        try:
+            tm = self._thermal_monitor
+            if tm is None:
+                return default
+            val = getattr(tm, attr, default)
+            if isinstance(val, bool):
+                return val
+            return default
+        except Exception:
+            return default
 
     def _build_per_detection_row(self, snapshot: Snapshot, det: dict, frame_result: dict) -> dict:
         """Build a per-detection row dict for reporting."""
@@ -733,6 +910,11 @@ class SnapshotAnalysisService:
                 "analysis_duration_seconds": result.analysis_duration_seconds,
                 "errors_count": len(result.errors),
                 "error_reason": self._error_reason,
+                "thermal_peak_temperature_c": result.thermal_peak_temperature_c,
+                "thermal_pause_count": result.thermal_pause_count,
+                "thermal_pause_duration_seconds": result.thermal_pause_duration_seconds,
+                "thermal_cooling_warning_at_start": result.thermal_cooling_warning_at_start,
+                "thermal_was_paused": result.thermal_was_paused,
             }
 
             # Compute execution_counts from accumulated rows
@@ -761,6 +943,11 @@ class SnapshotAnalysisService:
             }
 
             duration = result.analysis_duration_seconds
+            seconds_per_processed_snapshot = (
+                (duration / result.processed_snapshots)
+                if result.processed_snapshots > 0
+                else 0.0
+            )
             analysis_metrics = {
                 "status": "completed" if self._error_reason is None else "error",
                 "error_reason": self._error_reason,
@@ -775,10 +962,22 @@ class SnapshotAnalysisService:
                 "unknown_health_count": result.unknown_health_count,
                 "maturity_counts": dict(result.maturity_counts),
                 "analysis_duration_seconds": duration,
+                "seconds_per_processed_snapshot": seconds_per_processed_snapshot,
                 "processed_snapshots_per_second": (result.processed_snapshots / duration) if duration > 0 else 0.0,
                 "detection_rows_per_second": (result.total_detection_rows / duration) if duration > 0 else 0.0,
                 "execution_counts": execution_counts,
                 "average_timings_seconds": average_timings_seconds,
+                "thermal": {
+                    "peak_temperature_c": result.thermal_peak_temperature_c,
+                    "pause_count": result.thermal_pause_count,
+                    "total_pause_duration_seconds": result.thermal_pause_duration_seconds,
+                    "cooling_warning_at_start": result.thermal_cooling_warning_at_start,
+                    "was_paused": result.thermal_was_paused,
+                },
+                "performance_config": {
+                    "analysis_skip_maturity": self._analysis_skip_maturity,
+                    "profile_name": profile,
+                },
                 "errors_count": len(result.errors),
                 "errors": list(result.errors),
                 "report_files": {},  # Filled after write

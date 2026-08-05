@@ -99,6 +99,17 @@ class SnapshotThumbnail:
     has_detections: bool
 
 
+@dataclass
+class ActiveMonitoringContext:
+    """Context for rendering an active monitoring card on the module detail screen."""
+
+    id: int
+    status: str
+    status_label: str
+    started_at_display: str
+    execution_url: str
+
+
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
@@ -138,6 +149,55 @@ def _get_last_monitoring_date(monitorings: list) -> Optional[str]:
 
     most_recent = max(completed, key=lambda m: m.started_at)
     return _format_date_spanish(most_recent.started_at)
+
+
+# Status labels for active monitoring card (Spanish, farmer-friendly)
+_ACTIVE_STATUS_LABELS = {
+    "initializing": "Inicializando",
+    "running": "Capturando snapshots",
+    "paused": "Pausado",
+    "finishing": "Finalizando",
+    "analyzing": "Analizando snapshots",
+}
+
+# Active statuses for the module detail card
+_ACTIVE_MONITORING_STATUSES = {"initializing", "running", "paused", "finishing", "analyzing"}
+
+
+def build_active_monitoring_context(
+    monitorings: list,
+) -> Optional[ActiveMonitoringContext]:
+    """Build context for the active monitoring card on module detail.
+
+    Returns a context object for the most recent active (non-terminal) monitoring,
+    or None if no active monitoring exists.
+
+    Args:
+        monitorings: List of monitoring objects with status and started_at attributes.
+
+    Returns:
+        ActiveMonitoringContext or None.
+    """
+    active = [m for m in monitorings if m.status in _ACTIVE_MONITORING_STATUSES]
+    if not active:
+        return None
+
+    # Pick the most recent if multiple exist (shouldn't normally happen)
+    most_recent = max(active, key=lambda m: m.started_at)
+
+    status_label = _ACTIVE_STATUS_LABELS.get(most_recent.status, most_recent.status)
+    started_at_display = (
+        f"{_format_date_spanish(most_recent.started_at)} — "
+        f"{_format_time(most_recent.started_at)}"
+    )
+
+    return ActiveMonitoringContext(
+        id=most_recent.id,
+        status=most_recent.status,
+        status_label=status_label,
+        started_at_display=started_at_display,
+        execution_url=f"/monitoreos/{most_recent.id}/ejecucion",
+    )
 
 
 # ---------------------------------------------------------------------------

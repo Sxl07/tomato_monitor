@@ -56,3 +56,40 @@ Manual, en `app/dependencies.py`. Las instancias se crean por llamada. Sin conte
 - No mover lógica de dominio a la capa de presentación.
 - No usar `legacy/` como fuente de imports en código activo; es solo referencia.
 - Toda nueva capacidad de visión se integra en `src/infrastructure/vision/`, no en `legacy/`.
+
+## Reglas para hardware y orquestación robótica
+
+### 1. Single Camera Owner
+
+- Solo un componente puede abrir físicamente la cámara durante una sesión de monitoreo.
+- `CaptureWorker` es el owner exclusivo durante la fase de captura.
+- Un servicio de navegación visual (`VisualNavigationService`) NO debe abrir la cámara directamente.
+- La navegación visual consume frames, snapshots o metadatos proporcionados por el owner de cámara (buffer compartido o snapshots guardados).
+- Esta regla previene conflictos con Picamera2 que solo permite una apertura concurrente.
+
+### 2. RobotOrchestrator por encima de MonitoringService
+
+- El futuro `RobotOrchestrator` coordina preflight, movimiento del robot y monitoreo.
+- No reemplaza `MonitoringService` — lo invoca.
+- No reemplaza `CaptureWorker` — MonitoringService sigue creándolo.
+- No reemplaza `SnapshotAnalysisService` — el flujo diferido permanece intacto.
+- No mezcla lógica GPIO/motores con lógica de negocio de monitoreo.
+- El orquestador tiene su propia máquina de estados, ortogonal a `MonitoringState`.
+
+### 3. Hardware via ports/adapters
+
+- Motores, batería, sensores de hardware y navegación deben tener interfaces abstractas (ABCs) en `src/domain/interfaces/` o `src/application/`.
+- Las implementaciones concretas viven en `src/infrastructure/robot/`.
+- Antes de implementar un adapter real (GPIO, BTS7960, etc.), debe existir un adapter `NoOp` o `Simulated` que permita desarrollo y testing sin hardware.
+- Los adapters NoOp logean llamadas sin efecto. Los Simulated mantienen estado virtual (posición, batería).
+
+### 4. Integración progresiva de hardware
+
+El hardware se integra en fases estrictas:
+
+1. **Simulación**: Adapters simulados, RobotOrchestrator funcional end-to-end sin hardware real. Tests automatizados.
+2. **Scripts aislados GPIO**: Validación de señales y motores en `scripts/hardware/`, sin el sistema completo.
+3. **Adapter concreto**: Implementación de `BTS7960MotorController` (u otro) implementando el ABC de dominio.
+4. **Integración**: Conexión del adapter real con el flujo de monitoreo completo.
+
+Cada fase requiere su propia validación antes de avanzar a la siguiente.

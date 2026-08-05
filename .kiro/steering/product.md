@@ -37,23 +37,31 @@ Greenhouse (Invernadero)
 
 ## Current capabilities (validated)
 
+- Greenhouse / Module / Monitoring data hierarchy with full CRUD (SQLite + SQLAlchemy)
+- Capture-first workflow: CaptureWorker captures raw snapshots without inference
+- Deferred analysis: SnapshotAnalysisService processes snapshots after capture completes
+- State machine with ANALYZING state for deferred inference phase
+- Live camera preview before starting monitoring
 - Detectron2 / RetinaNet detection running on RPi 5 CPU
 - ResNet-18 health classification (healthy / unhealthy)
 - Maturity estimation via GrabCut + HSV/CIELab colorimetry (6-stage USDA scale)
-- Scene Gate (ORB + HSV histogram) as change detection mechanism
+- Scene Gate (ORB + HSV histogram) with time-based cooldown/timeout
 - FastAPI web interface accessible on local network and touchscreen
-- Local persistence (currently CSV + filesystem; evolving to SQLite)
+- SQLite persistence with hierarchical data model (Greenhouse → Module → Monitoring → Snapshot → Result → Metrics)
+- Historical monitoring consultation per module
+- Monitoring report with annotated snapshots, health/maturity metrics
+- Thermal protection: pause during high temperature, visibility in UI
+- Second monitoring without restarting the application (camera release validated)
 - Raspberry Pi AI Camera connected and validated at hardware level
+- Execution profiles (edge/full) selectable via environment variable
 
 ## Target capabilities (next phases)
 
-- Live camera stream with intelligent snapshot capture (change detection)
-- Inference per snapshot (not per video frame)
-- Agricultural metric reports: total count, % by maturity stage, % healthy/unhealthy
-- SQLite persistence with hierarchical data model (Greenhouse → Module → Monitoring → Snapshot → Result)
-- Historical monitoring consultation per module
-- Touchscreen-optimized UI for the farmer
 - Robot traversal integration with configurable module dimensions
+- RobotOrchestrator coordinating movement + capture + analysis
+- Preflight checks (camera, models, motors, battery, storage, temperature)
+- Simulated motor adapters for development without hardware
+- Touchscreen-optimized UI refinements based on field testing
 
 ## Primary output
 
@@ -82,8 +90,10 @@ The primary output is **NOT** an annotated video. The primary output is:
 - Not replacing Detectron2 without measured evidence justifying the change
 - Not using AI Camera NPU for inference until explicitly validated
 - Not implementing cloud persistence, remote sync, or multi-user authentication
-- Not controlling robot motors directly from the application (separate subsystem)
+- Not controlling robot motors directly from the application (hardware orchestration will be a separate, simulation-first phase)
 - Not generating annotated video as the primary output
+- Not implementing autonomous navigation without an approved spec
+- Not integrating real GPIO/motor hardware without simulated adapter validation first
 
 ## Relationship with legacy video pipeline
 

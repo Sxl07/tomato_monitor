@@ -1006,7 +1006,7 @@ class TestImportability:
         assert SnapshotAnalysisReportWriter is not None
         assert len(PER_SNAPSHOT_COLUMNS) == 16
         assert len(PER_DETECTION_COLUMNS) == 31
-        assert len(SUMMARY_COLUMNS) == 20
+        assert len(SUMMARY_COLUMNS) == 25
 
     def test_analysis_result_has_report_paths(self):
         """AnalysisResult dataclass has report_paths field."""
@@ -1675,3 +1675,91 @@ class TestWriterConstructorFailure:
         # Analysis still completes (or was already completed before reports)
         assert service.progress.status == "completed"
         assert any("Report generation failed" in e for e in result.errors)
+
+# ---------------------------------------------------------------------------
+# Test 12B: Thermal section in pipeline_metrics.json
+# ---------------------------------------------------------------------------
+
+
+class TestThermalSectionInPipelineMetrics:
+    """Verify thermal and performance_config sections in pipeline_metrics.json."""
+
+    def test_thermal_section_present_in_metrics(self, tmp_path):
+        """pipeline_metrics.json analysis section includes 'thermal' key."""
+        snapshots = [_make_snapshot(id=1, monitoring_id=1, frame_index=0)]
+        results = [_make_frame_result()]
+
+        service, _, _, _, _ = _build_service_with_reports(
+            tmp_path, snapshots=snapshots, process_frame_results=results,
+            profile_name="edge",
+        )
+        _run_service(service)
+
+        metrics_path = tmp_path / "1" / "pipeline_metrics.json"
+        with open(metrics_path, "r") as f:
+            data = json.load(f)
+
+        assert "analysis" in data
+        assert "thermal" in data["analysis"]
+        thermal = data["analysis"]["thermal"]
+        assert "peak_temperature_c" in thermal
+        assert "pause_count" in thermal
+        assert "total_pause_duration_seconds" in thermal
+        assert "cooling_warning_at_start" in thermal
+        assert "was_paused" in thermal
+
+    def test_performance_config_present_in_metrics(self, tmp_path):
+        """pipeline_metrics.json analysis section includes 'performance_config' key."""
+        snapshots = [_make_snapshot(id=1, monitoring_id=1, frame_index=0)]
+        results = [_make_frame_result()]
+
+        service, _, _, _, _ = _build_service_with_reports(
+            tmp_path, snapshots=snapshots, process_frame_results=results,
+            profile_name="edge", analysis_skip_maturity=True,
+        )
+        _run_service(service)
+
+        metrics_path = tmp_path / "1" / "pipeline_metrics.json"
+        with open(metrics_path, "r") as f:
+            data = json.load(f)
+
+        assert "performance_config" in data["analysis"]
+        pc = data["analysis"]["performance_config"]
+        assert pc["analysis_skip_maturity"] is True
+        assert pc["profile_name"] == "edge"
+
+    def test_seconds_per_processed_snapshot_in_metrics(self, tmp_path):
+        """pipeline_metrics.json analysis section has seconds_per_processed_snapshot."""
+        snapshots = [_make_snapshot(id=1, monitoring_id=1, frame_index=0)]
+        results = [_make_frame_result()]
+
+        service, _, _, _, _ = _build_service_with_reports(
+            tmp_path, snapshots=snapshots, process_frame_results=results,
+        )
+        _run_service(service)
+
+        metrics_path = tmp_path / "1" / "pipeline_metrics.json"
+        with open(metrics_path, "r") as f:
+            data = json.load(f)
+
+        assert "seconds_per_processed_snapshot" in data["analysis"]
+        assert isinstance(data["analysis"]["seconds_per_processed_snapshot"], float)
+
+    def test_summary_csv_has_thermal_columns(self, tmp_path):
+        """summary.csv includes thermal columns."""
+        snapshots = [_make_snapshot(id=1, monitoring_id=1, frame_index=0)]
+        results = [_make_frame_result()]
+
+        service, _, _, _, _ = _build_service_with_reports(
+            tmp_path, snapshots=snapshots, process_frame_results=results,
+        )
+        _run_service(service)
+
+        reports_dir = tmp_path / "1" / "reports"
+        headers, rows = _read_csv(reports_dir / "summary.csv")
+
+        assert "thermal_peak_temperature_c" in headers
+        assert "thermal_pause_count" in headers
+        assert "thermal_pause_duration_seconds" in headers
+        assert "thermal_cooling_warning_at_start" in headers
+        assert "thermal_was_paused" in headers

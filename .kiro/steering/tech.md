@@ -5,14 +5,21 @@
 | Categoría | Tecnología | Versión en uso |
 |---|---|---|
 | Lenguaje | Python | 3.10+ |
-| Framework web | FastAPI + Uvicorn | sin pin en req.txt |
+| Framework web | FastAPI + Uvicorn | 0.115.12 / 0.34.3 |
 | Templates | Jinja2 | 3.1.6 |
+| ORM / Persistencia | SQLAlchemy + SQLite | 2.0.41 |
 | Deep learning | PyTorch + TorchVision | 2.10.0 / 0.25.0 |
 | Detección | Detectron2 (RetinaNet R-50-FPN) | desde GitHub |
 | Visión | OpenCV | 4.13.0.92 |
 | Numérico | NumPy | 2.4.3 |
 | Datos | Pandas | 3.0.1 |
 | OS objetivo | Raspberry Pi OS / Debian Bookworm 64-bit | — |
+
+## Configuración de perfiles
+
+- `TOMATO_MONITOR_PROFILE=edge` (default): parámetros conservadores para Raspberry Pi 5.
+- `TOMATO_MONITOR_PROFILE=full`: parámetros más agresivos para desarrollo en PC.
+- Selección via variable de entorno. Valor inválido → fallback a edge con warning.
 
 ## Hardware objetivo
 
@@ -43,3 +50,9 @@
 - NumPy 2.x tiene breaking changes respecto a 1.x; Detectron2 fue construido originalmente contra 1.x — monitorear incompatibilidades silenciosas
 - PyTorch 2.10.0 es reciente; los wheels para ARM64 pueden no existir en PyPI; puede requerir compilación o wheel de terceros
 - `pandas 3.0.1` tiene cambios semánticos respecto a 2.x; no usar `.applymap()` ni otras APIs deprecadas
+
+## Restricciones para hardware robótico (futuro)
+
+- No agregar `gpiozero`, `gpiod`, `RPi.GPIO` ni drivers de motor hasta que exista una spec aprobada de hardware.
+- El hardware real de motores (BTS7960) aún NO está implementado en software.
+- Toda librería de hardware debe validarse en ARM64 antes de agregarla a requirements.

@@ -211,3 +211,43 @@ class TestProfileEnvVarSelection:
         finally:
             if env_backup is not None:
                 os.environ["TOMATO_MONITOR_PROFILE"] = env_backup
+
+
+# ---------------------------------------------------------------------------
+# 12B: Verify analysis parameters still present on profiles
+# ---------------------------------------------------------------------------
+
+
+class TestAnalysisParamsPresent:
+    """Verify analysis_skip_maturity and inference dimensions are present."""
+
+    def test_edge_has_analysis_skip_maturity(self):
+        from src.infrastructure.config.settings import EDGE_PROFILE
+        assert hasattr(EDGE_PROFILE, "analysis_skip_maturity")
+        assert isinstance(EDGE_PROFILE.analysis_skip_maturity, bool)
+
+    def test_full_has_analysis_skip_maturity(self):
+        from src.infrastructure.config.settings import FULL_PROFILE
+        assert hasattr(FULL_PROFILE, "analysis_skip_maturity")
+        assert isinstance(FULL_PROFILE.analysis_skip_maturity, bool)
+
+    def test_edge_has_inference_dimensions(self):
+        from src.infrastructure.config.settings import EDGE_PROFILE
+        assert hasattr(EDGE_PROFILE, "inference_input_width")
+        assert hasattr(EDGE_PROFILE, "inference_input_height")
+        assert EDGE_PROFILE.inference_input_width > 0
+        assert EDGE_PROFILE.inference_input_height > 0
+
+    def test_full_has_inference_dimensions(self):
+        from src.infrastructure.config.settings import FULL_PROFILE
+        assert hasattr(FULL_PROFILE, "inference_input_width")
+        assert hasattr(FULL_PROFILE, "inference_input_height")
+        assert FULL_PROFILE.inference_input_width > 0
+        assert FULL_PROFILE.inference_input_height > 0
+
+    def test_analysis_thermal_thresholds_present(self):
+        from src.infrastructure.config.settings import EDGE_PROFILE, FULL_PROFILE
+        assert hasattr(EDGE_PROFILE, "analysis_thermal_pause_threshold")
+        assert hasattr(EDGE_PROFILE, "analysis_thermal_resume_threshold")
+        assert hasattr(FULL_PROFILE, "analysis_thermal_pause_threshold")
+        assert hasattr(FULL_PROFILE, "analysis_thermal_resume_threshold")

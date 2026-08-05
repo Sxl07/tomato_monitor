@@ -17,10 +17,22 @@
 
 ## Testing
 
-- Smoke tests por componente van en `scripts/`
-- Scripts de benchmark van en `scripts/benchmarks/` (crear si no existe)
-- No hay suite de tests automatizados aún; al agregar una, usar `pytest`
-- Toda prueba de rendimiento en RPi debe registrar temperatura, CPU y RAM
+- El proyecto tiene suite pytest automatizada (~806 tests al momento de este documento).
+- Las pruebas unitarias deben correr en PC sin hardware (sin cámara, sin GPIO, sin RPi).
+- Pruebas que requieren Raspberry Pi o hardware se marcan con `@pytest.mark.raspberry` o `@pytest.mark.hardware`.
+- Smoke tests por componente van en `scripts/`.
+- Scripts de benchmark van en `scripts/benchmarks/`.
+- No ejecutar benchmarks pesados desde hooks.
+- Toda prueba de rendimiento en RPi debe registrar temperatura, CPU y RAM.
+- Tests de boundaries arquitectónicas verifican que capas no importen módulos prohibidos.
+- Ejecutar suite completa: `python -m pytest -q`
+- Ejecutar solo unitarios: `python -m pytest tests/unit -q`
+
+## Hardware
+
+- No implementar hardware real (GPIO, motores, batería) sin spec aprobada.
+- Todo adapter de hardware debe tener un adapter simulado (NoOp o Simulated) implementado y testado ANTES del adapter real.
+- No integrar gpiozero, gpiod, RPi.GPIO ni drivers de motor sin spec de hardware.
 
 ## Documentación
 

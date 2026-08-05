@@ -26,6 +26,50 @@ frame → ¿Scene Gate activo?
 → anotación → artefactos (opcional)
 ```
 
+**Nota:** Este flujo por frame se usa internamente por `SnapshotAnalysisService` durante la fase de análisis diferido. NO se ejecuta en tiempo real durante la captura.
+
+## Flujo de producción actual (capture-first)
+
+El flujo de producción separa captura e inferencia en dos fases secuenciales:
+
+### Fase 1: Captura rápida (`CaptureWorker`)
+
+```
+cámara → read frame → cooldown/timeout → Scene Gate → save raw JPEG → persist metadata
+```
+
+- `CaptureWorker` (`src/application/services/capture_worker.py`) abre la cámara y es el **owner exclusivo** durante la sesión.
+- Aplica Scene Gate con umbrales time-based (configurable por perfil edge/full).
+- Guarda snapshots crudos en `outputs/monitorings/{id}/snapshots/raw/`.
+- **NO ejecuta inferencia** — ni detección, ni salud, ni madurez.
+- Objetivo: iteración rápida (~200ms/ciclo) para no perder cambios de escena.
+
+### Fase 2: Análisis diferido (`SnapshotAnalysisService`)
+
+```
+snapshots guardados → load models once → per-snapshot: detect → track → dedup → health → maturity
+→ persist InspectionResults → generate annotated snapshots → generate reports
+```
+
+- `SnapshotAnalysisService` (`src/application/services/snapshot_analysis_service.py`) procesa snapshots ya guardados.
+- Carga modelos una sola vez vía factory (lazy import, sin Detectron2 a nivel de módulo).
+- Mantiene un SimpleTracker across all snapshots para deduplicación por track.
+- Genera: snapshots anotados, crops, CSVs de detección, `pipeline_metrics.json`.
+- Incluye protección térmica (pause/resume cooperativo).
+- Se ejecuta en un daemon thread separado después de finalizar la captura.
+
+### Regla de cámara para navegación visual
+
+Ningún servicio de navegación visual debe abrir la cámara si `CaptureWorker` está activo. Si se requiere información visual para navegación, debe consumir frames o snapshots ya capturados por el owner.
+
+## Flujo legacy/video (solo benchmarking)
+
+El pipeline original basado en video (`VideoInspectionRunner`) procesa archivos de video frame a frame con inferencia en cada frame donde el Scene Gate activa. Se conserva únicamente para:
+
+- Benchmarking de rendimiento del pipeline (Spec 001).
+- Desarrollo y debugging en PC sin cámara.
+- Referencia histórica.
+
 ## Políticas operacionales
 
 - `RUN_MATURITY_ONLY_FOR_HEALTHY = True` por defecto — la madurez solo se ejecuta para frutos clasificados como `healthy`

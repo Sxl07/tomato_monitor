@@ -30,6 +30,34 @@ from src.domain.exceptions import InvalidTransitionError, ParentNotFoundError
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_nonneg_int(value, default=0) -> int:
+    """Safely convert value to non-negative int, returning default on failure."""
+    try:
+        v = int(value)
+        return v if v >= 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_nonneg_float(value, default=0.0) -> float:
+    """Safely convert value to non-negative float, returning default on failure."""
+    try:
+        v = float(value)
+        return v if v >= 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_temperature(value) -> float | None:
+    """Safely convert value to a non-negative temperature, or None."""
+    try:
+        v = float(value)
+        return v if v >= 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 router = APIRouter(prefix="/monitoring", tags=["monitoring"])
 
 
@@ -216,6 +244,11 @@ async def get_monitoring_status(
     # Read analysis progress from runtime registry (best-effort)
     analysis_processed = 0
     analysis_total = 0
+    thermal_paused = False
+    thermal_current_temperature_c = None
+    thermal_peak_temperature_c = 0.0
+    thermal_pause_count = 0
+    thermal_pause_duration_seconds = 0.0
 
     try:
         registry = getattr(request.app.state, "monitoring_runtime_registry", None)
@@ -224,11 +257,26 @@ async def get_monitoring_status(
             if runtime is not None:
                 progress = getattr(runtime, "progress", None)
                 if progress is not None:
-                    analysis_processed = int(
+                    analysis_processed = _safe_nonneg_int(
                         getattr(progress, "processed_snapshots", 0) or 0
                     )
-                    analysis_total = int(
+                    analysis_total = _safe_nonneg_int(
                         getattr(progress, "total_snapshots", 0) or 0
+                    )
+                    thermal_paused = bool(
+                        getattr(progress, "thermal_paused", False)
+                    )
+                    thermal_current_temperature_c = _safe_temperature(
+                        getattr(progress, "thermal_current_temperature_c", None)
+                    )
+                    thermal_peak_temperature_c = _safe_nonneg_float(
+                        getattr(progress, "thermal_peak_temperature_c", 0.0) or 0.0
+                    )
+                    thermal_pause_count = _safe_nonneg_int(
+                        getattr(progress, "thermal_pause_count", 0) or 0
+                    )
+                    thermal_pause_duration_seconds = _safe_nonneg_float(
+                        getattr(progress, "thermal_pause_duration_seconds", 0.0) or 0.0
                     )
     except Exception as e:
         logger.warning(
@@ -236,14 +284,32 @@ async def get_monitoring_status(
         )
         analysis_processed = 0
         analysis_total = 0
+        thermal_paused = False
+        thermal_current_temperature_c = None
+        thermal_peak_temperature_c = 0.0
+        thermal_pause_count = 0
+        thermal_pause_duration_seconds = 0.0
 
-    analysis_processed = max(0, analysis_processed)
-    analysis_total = max(0, analysis_total)
+    # Determine pause_reason and temperature for response
+    pause_reason = None
+    temperature = None
+    if thermal_paused:
+        pause_reason = "Pausado por temperatura. Esperando que la Raspberry Pi se enfríe para continuar el análisis."
+    if thermal_current_temperature_c is not None:
+        temperature = thermal_current_temperature_c
+    elif thermal_peak_temperature_c > 0:
+        temperature = thermal_peak_temperature_c
 
     response = MonitoringStatusResponse.model_validate(monitoring)
     return response.model_copy(
         update={
             "analysis_processed": analysis_processed,
             "analysis_total": analysis_total,
+            "temperature": temperature,
+            "pause_reason": pause_reason,
+            "analysis_thermal_paused": thermal_paused,
+            "analysis_peak_temperature_c": thermal_peak_temperature_c,
+            "analysis_thermal_pause_count": thermal_pause_count,
+            "analysis_thermal_pause_duration_seconds": thermal_pause_duration_seconds,
         }
     )

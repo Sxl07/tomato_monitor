@@ -1,8 +1,10 @@
 # 🍅 Tomato Monitor
 
-**Sistema de visión por computador para detección, tracking, evaluación de sanidad y estimación de madurez de tomates cherry en video.**
+**Sistema de visión por computador para detección, tracking, evaluación de sanidad y estimación de madurez de tomates cherry, desplegado en Raspberry Pi 5.**
 
-Tomato Monitor es una aplicación construida con **Python**, **FastAPI**, **PyTorch** y **OpenCV** que procesa videos de cultivos de tomate cherry para detectar frutos individuales, rastrearlos entre frames, clasificar su estado sanitario (sano / enfermo) y estimar su grado de madurez según la escala USDA.
+> **Flujo principal actual (capture-first):** Greenhouse → Module → Monitoring → live preview → capture (CaptureWorker) → finalize-capture → analyzing (SnapshotAnalysisService) → report. Validado en Raspberry Pi 5 con cámara live, protección térmica y segundo monitoreo sin reiniciar.
+
+Tomato Monitor es una aplicación construida con **Python**, **FastAPI**, **PyTorch**, **OpenCV** y **SQLAlchemy** que monitorea cultivos de tomate cherry en invernaderos. Captura snapshots inteligentes vía Scene Gate, ejecuta inferencia diferida (detección, sanidad, madurez USDA) y genera reportes agrícolas para el agricultor.
 
 ---
 
@@ -848,6 +850,37 @@ En el directorio `scripts/` se encuentran smoke tests para validar componentes i
 | `smoke_test_maturity.py` | Prueba del estimador de madurez |
 | `smoke_test_capture.py` | Prueba del Scene Gate (ORB + histograma) |
 | `compare_video_strategies.py` | Comparación de diferentes estrategias de procesamiento |
+
+---
+
+## Ejecutar pruebas
+
+```bash
+# Suite completa (no requiere hardware)
+python -m pytest -q
+
+# Solo tests unitarios
+python -m pytest tests/unit -q
+
+# Tests de boundaries arquitectónicas
+python -m pytest tests/unit/test_architecture_boundaries.py -q
+```
+
+---
+
+## Perfil de ejecución
+
+El sistema soporta dos perfiles de ejecución seleccionables via variable de entorno:
+
+```bash
+# Raspberry Pi 5 (conservador, default)
+TOMATO_MONITOR_PROFILE=edge
+
+# PC de desarrollo (más agresivo)
+TOMATO_MONITOR_PROFILE=full
+```
+
+Ver `.env.example` para todas las variables de entorno disponibles.
 
 ---
 

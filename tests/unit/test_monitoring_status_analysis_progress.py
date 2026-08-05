@@ -311,6 +311,31 @@ class TestBackwardCompatibility:
         assert data["analysis_processed"] == 0
         assert data["analysis_total"] == 0
 
+    def test_thermal_fields_present_with_defaults(self, app, client, mock_service):
+        """New thermal fields present in response with default values."""
+        mock_service.get_status.return_value = _make_monitoring(status="running")
+
+        if hasattr(app.state, "monitoring_runtime_registry"):
+            delattr(app.state, "monitoring_runtime_registry")
+
+        response = client.get("/monitoring/1/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "temperature" in data
+        assert "pause_reason" in data
+        assert "analysis_thermal_paused" in data
+        assert "analysis_peak_temperature_c" in data
+        assert "analysis_thermal_pause_count" in data
+        assert "analysis_thermal_pause_duration_seconds" in data
+        # Defaults
+        assert data["temperature"] is None
+        assert data["pause_reason"] is None
+        assert data["analysis_thermal_paused"] is False
+        assert data["analysis_peak_temperature_c"] == 0.0
+        assert data["analysis_thermal_pause_count"] == 0
+        assert data["analysis_thermal_pause_duration_seconds"] == 0.0
+
 
 # ---------------------------------------------------------------------------
 # 10. Only get_worker is called, not get_thread or other methods
