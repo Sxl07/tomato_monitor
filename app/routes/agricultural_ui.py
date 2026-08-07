@@ -38,6 +38,7 @@ from app.dependencies import (
     get_monitoring_service,
     get_activity_type_repository,
     get_activity_log_repository,
+    get_export_package_repository,
     require_current_user_html,
 )
 from src.application.services.model_service import ModelService
@@ -78,8 +79,67 @@ def _parse_monitoring_frequency(value: str) -> int | None:
 
 @router.get("/", response_class=RedirectResponse)
 async def home(request: Request, user=Depends(require_current_user_html)):
-    """Redirect home to the greenhouse list screen (or login if not auth)."""
-    return RedirectResponse(url="/invernaderos", status_code=302)
+    """Redirect home to the dashboard (or login if not auth)."""
+    return RedirectResponse(url="/dashboard", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request, user=Depends(require_current_user_html)):
+    """Dashboard: contextual overview of the system state."""
+    from src.application.services.dashboard_service import DashboardService
+
+    gh_repo = get_greenhouse_repository(request)
+    module_repo = get_module_repository(request)
+    monitoring_repo = get_monitoring_repository(request)
+    activity_log_repo = get_activity_log_repository(request)
+    activity_type_repo = get_activity_type_repository(request)
+    export_repo = get_export_package_repository(request)
+
+    greenhouses = gh_repo.get_all()
+    modules = []
+    monitorings_by_module: dict[int, list] = {}
+    for gh in greenhouses:
+        gh_modules = module_repo.get_by_greenhouse(gh.id)
+        modules.extend(gh_modules)
+        for m in gh_modules:
+            monitorings_by_module[m.id] = monitoring_repo.get_by_module(m.id)
+
+    # Recent activities (enriched with type names)
+    recent_logs = activity_log_repo.list_recent(limit=5)
+    all_types = {t.id: t for t in activity_type_repo.list_all()}
+    recent_activities = []
+    for log in recent_logs:
+        at = all_types.get(log.activity_type_id)
+        recent_activities.append({
+            "activity_type_name": at.name if at else "Desconocido",
+            "category": at.category if at else "",
+            "occurred_at": log.occurred_at,
+            "module_id": log.module_id,
+        })
+
+    # Export packages
+    export_packages = export_repo.list_pending()
+
+    # Build context
+    dashboard_service = DashboardService()
+    context = dashboard_service.build_context(
+        greenhouses=greenhouses,
+        modules=modules,
+        monitorings_by_module=monitorings_by_module,
+        recent_activities=recent_activities,
+        export_packages=export_packages,
+    )
+
+    return templates.TemplateResponse(request, "agricultural/dashboard.html", {
+        "title": "Dashboard",
+        "show_back": False,
+        **context,
+    })
 
 
 # ---------------------------------------------------------------------------

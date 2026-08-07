@@ -71,17 +71,17 @@ El operario usa una Raspberry Pi 5 con pantalla táctil como dispositivo portát
   - [x] 5.7 Add activity_service.py for creation and listing logic
   - [x] 5.8 Add unit tests for activity creation, validation, and listing
   - [x] 5.9 Run full test suite
-- [ ] 6. Build contextual dashboard
-  - [ ] 6.1 Add dashboard route (GET /dashboard)
-  - [ ] 6.2 Add dashboard context builder (app/context_builders.py or new service)
-  - [ ] 6.3 Add dashboard template (app/templates/agricultural/dashboard.html)
-  - [ ] 6.4 Implement indicators: greenhouse/module counts, pending/overdue modules
-  - [ ] 6.5 Implement indicators: last monitoring, monitorings this week, snapshots, detections
-  - [ ] 6.6 Implement indicators: recent activities, pending exports
-  - [ ] 6.7 Redirect home (/) to dashboard when authenticated
-  - [ ] 6.8 Ensure no unsupported agronomic metrics are shown
-  - [ ] 6.9 Add unit tests for dashboard context building
-  - [ ] 6.10 Run full test suite
+- [x] 6. Build contextual dashboard
+  - [x] 6.1 Add dashboard route (GET /dashboard)
+  - [x] 6.2 Add dashboard context builder (app/context_builders.py or new service)
+  - [x] 6.3 Add dashboard template (app/templates/agricultural/dashboard.html)
+  - [x] 6.4 Implement indicators: greenhouse/module counts, pending/overdue modules
+  - [x] 6.5 Implement indicators: last monitoring, monitorings this week, snapshots, detections
+  - [x] 6.6 Implement indicators: recent activities, pending exports
+  - [x] 6.7 Redirect home (/) to dashboard when authenticated
+  - [x] 6.8 Ensure no unsupported agronomic metrics are shown
+  - [x] 6.9 Add unit tests for dashboard context building
+  - [x] 6.10 Run full test suite
 - [ ] 7. Add combined history and report access
   - [ ] 7.1 Build combined timeline query (monitorings + activities by module, ordered by date)
   - [ ] 7.2 Add history section to module_detail.html template

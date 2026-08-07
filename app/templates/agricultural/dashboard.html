@@ -1,0 +1,130 @@
+{% extends "base_agricultural.html" %}
+
+{% block header_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+
+    <p class="text-secondary">Resumen operativo del cultivo</p>
+
+    <!-- Metric cards -->
+    <section class="dashboard-metrics">
+        <div class="metric-card">
+            <span class="metric-value">{{ greenhouse_count }}</span>
+            <span class="metric-label">Invernaderos</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-value">{{ module_count }}</span>
+            <span class="metric-label">Módulos</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-value">{{ pending_modules_count }}</span>
+            <span class="metric-label">Módulos pendientes</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-value">{{ overdue_modules_count }}</span>
+            <span class="metric-label">Módulos vencidos</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-value">{{ monitorings_this_week }}</span>
+            <span class="metric-label">Monitoreos esta semana</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-value">{{ total_snapshots }}</span>
+            <span class="metric-label">Snapshots</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-value">{{ total_detections }}</span>
+            <span class="metric-label">Tomates detectados</span>
+        </div>
+        <div class="metric-card">
+            <span class="metric-value">{{ pending_exports_count }}</span>
+            <span class="metric-label">Exportaciones pendientes</span>
+        </div>
+    </section>
+
+    <!-- Status indicators -->
+    <section class="dashboard-status">
+        {% if overdue_modules_count > 0 %}
+        <div class="status-badge status-critical">
+            {{ overdue_modules_count }} módulo(s) con monitoreo vencido
+        </div>
+        {% endif %}
+        {% if pending_modules_count > 0 %}
+        <div class="status-badge status-warning">
+            {{ pending_modules_count }} módulo(s) pendiente(s) de monitoreo
+        </div>
+        {% endif %}
+        {% if pending_exports_count > 0 %}
+        <div class="status-badge status-info">
+            {{ pending_exports_count }} exportación(es) pendiente(s)
+        </div>
+        {% endif %}
+    </section>
+
+    <!-- Last monitoring -->
+    <section class="dashboard-section">
+        <h2 class="section-header">Último monitoreo</h2>
+        {% if last_monitoring %}
+        <div class="card">
+            <div class="card-body">
+                <p><strong>Fecha:</strong> {{ last_monitoring.started_at.strftime('%d/%m/%Y %H:%M') }}</p>
+                <p><strong>Snapshots:</strong> {{ last_monitoring.total_snapshots }}</p>
+                <p><strong>Detecciones:</strong> {{ last_monitoring.total_detections }}</p>
+                <p><strong>Estado:</strong> {{ last_monitoring.status }}</p>
+                {% if last_monitoring.status == 'completed' %}
+                <a href="/monitoreos/{{ last_monitoring.id }}/reporte" class="btn btn-primary" style="margin-top: 8px;">Ver reporte</a>
+                {% elif last_monitoring.status in ('running', 'paused', 'finishing', 'analyzing', 'initializing') %}
+                <a href="/monitoreos/{{ last_monitoring.id }}/ejecucion" class="btn btn-primary" style="margin-top: 8px;">Ver ejecución</a>
+                {% endif %}
+            </div>
+        </div>
+        {% else %}
+        <p class="empty-text">No hay monitoreos registrados aún.</p>
+        {% endif %}
+    </section>
+
+    <!-- Alerts -->
+    <section class="dashboard-section">
+        <h2 class="section-header">⚠️ Alertas operativas</h2>
+        {% if alerts %}
+        {% for alert in alerts %}
+        <div class="alert {% if alert.severity == 'critical' %}alert-error{% elif alert.severity == 'warning' %}alert-warning{% else %}alert-info{% endif %}" role="alert">
+            <strong>{{ alert.title }}</strong>: {{ alert.message }}
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="empty-text">No hay alertas operativas pendientes.</p>
+        {% endif %}
+    </section>
+
+    <!-- Recent activities -->
+    <section class="dashboard-section">
+        <h2 class="section-header">Actividades recientes</h2>
+        {% if recent_activities %}
+        <div class="card-list">
+            {% for activity in recent_activities %}
+            <div class="card">
+                <div class="card-body">
+                    <p class="card-title">{{ activity.activity_type_name }}</p>
+                    <p class="card-meta">{{ activity.occurred_at.strftime('%d/%m/%Y %H:%M') }} — {{ activity.category }}</p>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-text">No hay actividades recientes.</p>
+        {% endif %}
+    </section>
+
+    <!-- Quick links -->
+    <section class="dashboard-section">
+        <h2 class="section-header">Acceso rápido</h2>
+        <div class="quick-links">
+            <a href="/invernaderos" class="btn btn-primary">Ver invernaderos</a>
+            <a href="/invernaderos" class="btn btn-secondary" style="margin-top: 8px;">Iniciar monitoreo</a>
+        </div>
+    </section>
+
+</div>
+{% endblock %}
