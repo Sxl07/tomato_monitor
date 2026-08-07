@@ -467,9 +467,17 @@ class TestModuleDetailActivityLinks:
         mock_metrics_repo = MagicMock()
         mock_metrics_repo.get_by_monitoring.return_value = None
 
+        mock_activity_log_repo = MagicMock()
+        mock_activity_log_repo.list_by_module.return_value = []
+
+        mock_activity_type_repo = MagicMock()
+        mock_activity_type_repo.list_all.return_value = []
+
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=mock_monitoring_repo), \
-             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=mock_metrics_repo):
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=mock_metrics_repo), \
+             patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=mock_activity_log_repo), \
+             patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=mock_activity_type_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/modulos/1")
 

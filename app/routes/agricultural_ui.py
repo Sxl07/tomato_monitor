@@ -477,6 +477,22 @@ async def module_detail(request: Request, id: int, user=Depends(require_current_
     history = build_monitoring_history(monitorings, metrics_by_monitoring)
     active_monitoring = build_active_monitoring_context(monitorings)
 
+    # Combined history (monitorings + activities)
+    from src.application.services.history_service import HistoryService
+
+    activity_log_repo = get_activity_log_repository(request)
+    activity_type_repo = get_activity_type_repository(request)
+    activity_logs = activity_log_repo.list_by_module(id)
+    activity_types = activity_type_repo.list_all()
+
+    history_service = HistoryService()
+    combined_history = history_service.build_combined_history(
+        monitorings=monitorings,
+        metrics_by_monitoring=metrics_by_monitoring,
+        activity_logs=activity_logs,
+        activity_types=activity_types,
+    )
+
     # Format dimensions for info panel
     if module.width_m is not None and module.length_m is not None:
         dimensions_display = f"{module.width_m} × {module.length_m} m"
@@ -509,6 +525,7 @@ async def module_detail(request: Request, id: int, user=Depends(require_current_
         "module": module,
         "dimensions_display": dimensions_display,
         "history": history,
+        "combined_history": combined_history,
         "active_monitoring": active_monitoring,
         "monitoring_due_status": monitoring_due_status,
         "show_back": True,

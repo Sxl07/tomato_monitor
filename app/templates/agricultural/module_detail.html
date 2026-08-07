@@ -58,29 +58,33 @@
 <p class="text-secondary" style="margin-bottom: 16px;">Ya existe un monitoreo activo para este módulo.</p>
 {% endif %}
 
-<h2 class="section-header">Historial de Monitoreos</h2>
+<h2 class="section-header">Historial del módulo</h2>
 
-{% if history %}
+{% if combined_history %}
 <div class="card-list">
-    {% for item in history %}
-    <a href="/monitoreos/{{ item.id }}/reporte" class="card card-link">
+    {% for item in combined_history %}
+    <div class="card">
         <div class="card-body">
-            <h3 class="card-title">{{ item.date }} — {{ item.time }}</h3>
-            <p class="card-subtitle">{{ item.total_tomatoes }} tomates detectados — {{ item.pct_healthy | round(0) | int }}% sanos</p>
-            {% if item.status == "completed" %}
-            <span class="badge badge-success">Completado</span>
-            {% elif item.status == "aborted" %}
-            <span class="badge badge-warning">Cancelado</span>
-            {% elif item.status == "error" %}
-            <span class="badge badge-danger">Error</span>
-            {% endif %}
+            <div style="display: flex; align-items: flex-start; gap: 12px;">
+                <span style="font-size: 24px;">{{ item.icon }}</span>
+                <div style="flex: 1;">
+                    <h3 class="card-title">{{ item.title }}</h3>
+                    <p class="card-meta">{{ item.date_display }} — {{ item.time_display }}</p>
+                    <p class="card-subtitle">{{ item.subtitle }}</p>
+                    <span class="badge {{ item.badge_class }}">{{ item.badge_label }}</span>
+                    {% if item.url %}
+                    <a href="{{ item.url }}" class="btn btn-secondary" style="margin-top: 8px; display: inline-block;">{{ item.action_label }}</a>
+                    {% endif %}
+                </div>
+            </div>
         </div>
-    </a>
+    </div>
     {% endfor %}
 </div>
 {% else %}
-{% set empty_message = "No hay monitoreos registrados. Inicia el primero." %}
-{% include "agricultural/partials/empty_state.html" %}
+<div class="empty-state">
+    <p>No hay registros históricos para este módulo.</p>
+</div>
 {% endif %}
 
 {% set dialog_message = "¿Seguro que deseas eliminar este módulo? Se eliminarán todos sus monitoreos." %}
