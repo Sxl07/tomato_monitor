@@ -118,30 +118,30 @@ El operario usa una Raspberry Pi 5 con pantalla táctil como dispositivo portát
   - [x] 10.7 Test login, dashboard, activity form, and monitoring flow in 480×800 viewport
   - [x] 10.8 Add CSS regression tests or visual verification notes
   - [x] 10.9 Run full test suite
-- [ ] 11. Final validation and documentation alignment
-  - [ ] 11.1 Run targeted monitoring tests (capture_worker, snapshot_analysis, finalize route)
-  - [ ] 11.2 Run auth, activity, dashboard, export, and alert tests
-  - [ ] 11.3 Run architecture boundary tests
-  - [ ] 11.4 Run full test suite (all 826+ tests must pass)
-  - [ ] 11.5 Confirm no robot/chassis/motor/autonomous navigation implementation is active
-  - [ ] 11.6 Verify steering files reflect portable scope
-  - [ ] 11.7 Update thesis-context.md with new phase description
-  - [ ] 11.8 Document scope adjustment rationale for thesis
+- [x] 11. Final validation and documentation alignment
+  - [x] 11.1 Run targeted monitoring tests (capture_worker, snapshot_analysis, finalize route)
+  - [x] 11.2 Run auth, activity, dashboard, export, and alert tests
+  - [x] 11.3 Run architecture boundary tests
+  - [x] 11.4 Run full test suite (all 826+ tests must pass)
+  - [x] 11.5 Confirm no robot/chassis/motor/autonomous navigation implementation is active
+  - [x] 11.6 Verify steering files reflect portable scope
+  - [x] 11.7 Update thesis-context.md with new phase description
+  - [x] 11.8 Document scope adjustment rationale for thesis
 
 ## Definition of Done
 
-- [ ] Active scope describes a portable embedded crop monitoring and traceability platform.
-- [ ] Capture-first monitoring pipeline remains fully functional.
-- [ ] Local offline login works for registered users.
-- [ ] Module monitoring frequency supports operational alerts.
-- [ ] Agricultural activity log exists with backend-defined catalog.
-- [ ] Dashboard shows contextual, supported metrics (no invented indicators).
-- [ ] Combined history links monitorings and activities per module.
-- [ ] ZIP export exists for structured data and images.
-- [ ] Manual sync foundation is provider-agnostic (local ZIP as first mechanism).
-- [ ] UI is usable on Raspberry Pi vertical orientation (480×800).
-- [ ] No active robot/chassis/motor/autonomous navigation implementation exists.
-- [ ] All targeted and full tests pass.
+- [x] Active scope describes a portable embedded crop monitoring and traceability platform.
+- [x] Capture-first monitoring pipeline remains fully functional.
+- [x] Local offline login works for registered users.
+- [x] Module monitoring frequency supports operational alerts.
+- [x] Agricultural activity log exists with backend-defined catalog.
+- [x] Dashboard shows contextual, supported metrics (no invented indicators).
+- [x] Combined history links monitorings and activities per module.
+- [x] ZIP export exists for structured data and images.
+- [x] Manual sync foundation is provider-agnostic (local ZIP as first mechanism).
+- [x] UI is usable on Raspberry Pi vertical orientation (480×800).
+- [x] No active robot/chassis/motor/autonomous navigation implementation exists.
+- [x] All targeted and full tests pass.
 
 ## Explicitly Out of Scope
 

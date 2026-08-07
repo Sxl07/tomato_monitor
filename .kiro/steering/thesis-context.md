@@ -20,7 +20,7 @@ Los objetivos de tesis se alinean con: dispositivo portátil embebido, visión p
 
 ## Fase actual del proyecto
 
-Pipeline capture-first completamente validado en Raspberry Pi 5. El flujo Greenhouse → Module → Monitoring → preview → capture → finalize-capture → analyzing → report funciona end-to-end. El siguiente hito es Spec 015 — Portable Monitoring and Crop Traceability.
+Plataforma portátil de monitoreo visual y trazabilidad agrícola consolidada. Spec 015 completada (Tasks 1-11). Pipeline capture-first validado end-to-end. Autenticación local, bitácora agrícola, dashboard contextual, exportación ZIP, sincronización manual y UI portrait implementados y verificados con 1172 tests automatizados. Fase: consolidación — plataforma portátil validada via tests automatizados, pendiente verificación física en dispositivo y benchmark formal (Spec 001).
 
 ## Specs en curso
 
@@ -39,7 +39,7 @@ Estado basado en `tasks.md` y validación manual reportada.
 | 008 — Hybrid monitoring pipeline | `.kiro/specs/008-lightweight-hybrid-monitoring-pipeline/` | **Completada** + validada en RPi |
 | 009 — Capture-first final analysis | `.kiro/specs/009-capture-first-final-analysis-pipeline/` | **Completada** + validada en RPi (20 snapshots, analyzing OK, reporte OK, ~75.7°C) |
 | 010 — Monitoring UX enhancement | `.kiro/specs/010-monitoring-ux-enhancement/` | Core completado (tests opcionales pendientes) |
-| 015 — Portable monitoring and crop traceability | `.kiro/specs/015-portable-monitoring-and-crop-traceability/` | **En curso** — alcance portátil + trazabilidad |
+| 015 — Portable monitoring and crop traceability | `.kiro/specs/015-portable-monitoring-and-crop-traceability/` | **Completada** — plataforma portátil + trazabilidad (Tasks 1-11) |
 | camera-live-fix | `.kiro/specs/camera-live-fix/` | Bugfix completado |
 | monitoring-session-flow-fix | `.kiro/specs/monitoring-session-flow-fix/` | Bugfix completado |
 
