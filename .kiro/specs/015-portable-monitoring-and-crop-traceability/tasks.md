@@ -12,16 +12,16 @@ El operario usa una Raspberry Pi 5 con pantalla táctil como dispositivo portát
 
 ## Tasks
 
-- [ ] 1. Audit and align scope language
-  - [ ] 1.1 Search active specs, steering, templates and docs for robot/autonomous/chassis/motor references
-  - [ ] 1.2 Classify references as historical (acceptable), active (requires update), or removable
-  - [ ] 1.3 Update steering/product.md to describe portable monitoring platform
-  - [ ] 1.4 Update steering/architecture.md to remove RobotOrchestrator and motor adapter sections
-  - [ ] 1.5 Update steering/thesis-context.md to reflect portable scope and current phase
-  - [ ] 1.6 Update steering/ux-design.md to add portrait mode and remove robot traversal language
-  - [ ] 1.7 Update steering/data-model.md to add new entities (User, ActivityType, ActivityLog, ExportPackage)
-  - [ ] 1.8 Audit legacy robot/movement-related domain interfaces and produce a removal plan only if they are confirmed unused by tests and current pipeline
-  - [ ] 1.9 Run architecture boundary tests to confirm nothing breaks
+- [x] 1. Audit and align scope language
+  - [x] 1.1 Search active specs, steering, templates and docs for robot/autonomous/chassis/motor references
+  - [x] 1.2 Classify references as historical (acceptable), active (requires update), or removable
+  - [x] 1.3 Update steering/product.md to describe portable monitoring platform
+  - [x] 1.4 Update steering/architecture.md to remove RobotOrchestrator and motor adapter sections
+  - [x] 1.5 Update steering/thesis-context.md to reflect portable scope and current phase
+  - [x] 1.6 Update steering/ux-design.md to add portrait mode and remove robot traversal language
+  - [x] 1.7 Update steering/data-model.md to add new entities (User, ActivityType, ActivityLog, ExportPackage)
+  - [x] 1.8 Audit legacy robot/movement-related domain interfaces and produce a removal plan only if they are confirmed unused by tests and current pipeline
+  - [x] 1.9 Run architecture boundary tests to confirm nothing breaks
 - [ ] 2. Define data model foundation
   - [ ] 2.1 Add User domain entity (src/domain/entities/user.py)
   - [ ] 2.2 Add ActivityType domain entity (src/domain/entities/activity_type.py)

@@ -2,15 +2,25 @@
 
 ## Naturaleza del proyecto
 
-Proyecto de grado orientado al despliegue de visión por computador en hardware edge. Las decisiones técnicas deben poder justificarse en documentación académica con evidencia reproducible.
+Proyecto de grado orientado al despliegue de visión por computador en hardware edge y trazabilidad agrícola. Las decisiones técnicas deben poder justificarse en documentación académica con evidencia reproducible.
 
 ## Objetivo de la tesis
 
-Desarrollar y evaluar un sistema de monitoreo visual de tomates cherry ejecutable en Raspberry Pi 5, que detecte frutos, clasifique su sanidad visual y estime su grado de madurez.
+Desarrollar y evaluar un sistema portátil embebido de monitoreo visual y trazabilidad agrícola para tomates cherry en invernadero, ejecutable en Raspberry Pi 5, que detecte frutos, clasifique su sanidad visual, estime su grado de madurez y permita registrar, exportar y sincronizar evidencia agrícola.
+
+## Ajuste de alcance
+
+El proyecto pasó de un enfoque robótico/autónomo (robot con chasis, motores y navegación automática) a una plataforma portátil operada manualmente. Este cambio es una **decisión deliberada de producto**, no un fallo de implementación. La ausencia de locomoción autónoma se documenta como ajuste de alcance justificado por:
+
+- Complejidad mecánica fuera del foco de la tesis (visión por computador)
+- Tiempo disponible para el proyecto de grado
+- Valor demostrable con monitoreo manual + procesamiento local + trazabilidad
+
+Los objetivos de tesis se alinean con: dispositivo portátil embebido, visión por computador, trazabilidad agrícola, procesamiento local y exportación/sincronización de datos.
 
 ## Fase actual del proyecto
 
-Pipeline capture-first completamente validado en Raspberry Pi 5. El flujo Greenhouse → Module → Monitoring → preview → capture → finalize-capture → analyzing → report funciona end-to-end. El siguiente hito es la spec 013 — Robot Orchestrator Foundation.
+Pipeline capture-first completamente validado en Raspberry Pi 5. El flujo Greenhouse → Module → Monitoring → preview → capture → finalize-capture → analyzing → report funciona end-to-end. El siguiente hito es Spec 015 — Portable Monitoring and Crop Traceability.
 
 ## Specs en curso
 
@@ -29,6 +39,7 @@ Estado basado en `tasks.md` y validación manual reportada.
 | 008 — Hybrid monitoring pipeline | `.kiro/specs/008-lightweight-hybrid-monitoring-pipeline/` | **Completada** + validada en RPi |
 | 009 — Capture-first final analysis | `.kiro/specs/009-capture-first-final-analysis-pipeline/` | **Completada** + validada en RPi (20 snapshots, analyzing OK, reporte OK, ~75.7°C) |
 | 010 — Monitoring UX enhancement | `.kiro/specs/010-monitoring-ux-enhancement/` | Core completado (tests opcionales pendientes) |
+| 015 — Portable monitoring and crop traceability | `.kiro/specs/015-portable-monitoring-and-crop-traceability/` | **En curso** — alcance portátil + trazabilidad |
 | camera-live-fix | `.kiro/specs/camera-live-fix/` | Bugfix completado |
 | monitoring-session-flow-fix | `.kiro/specs/monitoring-session-flow-fix/` | Bugfix completado |
 
@@ -39,6 +50,7 @@ Estado basado en `tasks.md` y validación manual reportada.
 - **Comparación de alternativas:** cuando se toma una decisión técnica relevante, documentar las alternativas descartadas y la razón (formato ADR en `docs/decisions/`)
 - **Reconocimiento de limitaciones:** documentar explícitamente las limitaciones del sistema y sus causas
 - **Trazabilidad:** cada decisión técnica debe tener su ADR; cada resultado experimental debe tener su benchmark
+- **Ajuste de alcance:** documentar cambios de alcance como decisiones justificadas, no como fallos
 
 ## Documentación académica existente
 
@@ -61,3 +73,5 @@ Estado basado en `tasks.md` y validación manual reportada.
 - No usar afirmaciones sin respaldo cuantitativo
 - Indicar siempre la fuente o evidencia de una conclusión
 - Distinguir entre observaciones informales ("se observó") y mediciones formales ("se midió con X herramienta")
+- Describir el sistema como plataforma portátil embebida de monitoreo visual y trazabilidad agrícola
+- Documentar la ausencia de locomoción autónoma como ajuste deliberado de alcance

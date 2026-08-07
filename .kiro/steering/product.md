@@ -2,38 +2,47 @@
 
 ## What it is
 
-Agricultural visual monitoring system for cherry tomatoes deployed on Raspberry Pi 5. The robot traverses greenhouse modules using a live camera, captures snapshots when relevant changes are detected, runs inference on those images (detection, health classification, maturity estimation), and produces agricultural metric reports organized by greenhouse, module, and monitoring session.
+Portable agricultural visual monitoring and crop traceability system for cherry tomatoes in greenhouses, deployed on Raspberry Pi 5. The authenticated operator physically carries the device through greenhouse modules, captures snapshots using the live camera, runs deferred local inference (detection, health classification, maturity estimation), registers agricultural activities, and produces traceable monitoring reports organized by greenhouse, module, and session.
+
+## Scope adjustment (Spec 015)
+
+The system scope was deliberately adjusted from a robot-oriented approach to a portable embedded platform. There is no autonomous robot, chassis, motors, BTS7960, GPIO movement, or autonomous navigation. The operator manually transports the Raspberry Pi device through the greenhouse. This is a deliberate product decision, not a failed implementation.
 
 ## Purpose
 
 - Provide farmers with actionable data: tomato count, maturity distribution (USDA scale), and health status per monitoring session
-- Evaluate the technical feasibility of real-time computer vision inference on edge hardware
+- Enable agricultural traceability: user + timestamp + module + activity/monitoring
+- Evaluate the technical feasibility of embedded computer vision inference on edge hardware
 - Generate reproducible experimental evidence for a thesis project
 - Deliver a functional precision agriculture tool for controlled greenhouse environments
+- Support data export and future remote synchronization
 
 ## Users
 
 | User | Context |
 |---|---|
-| Farmer (primary) | Operates the touchscreen interface on the Raspberry Pi 5 DSI 7" display inside the greenhouse |
+| Operator (primary) | Authenticated farmer who carries the Raspberry Pi 5 through the greenhouse, using the DSI 7" touchscreen |
 | Thesis team | Develops, tests, benchmarks, and documents the system |
 | Academic evaluators | Review architecture, results, methodology, and documentation |
 | Precision agriculture researchers | Reference the system as a technical case study |
 
 ## Data hierarchy
 
-The farmer organizes crops using a three-level hierarchy:
+The operator organizes crops using a three-level hierarchy with traceability:
 
 ```
 Greenhouse (Invernadero)
   └── Module (Módulo)
-        └── Monitoring (Monitoreo)
-              └── Snapshots + Inference Results + Aggregated Metrics
+        ├── Monitoring (Monitoreo visual)
+        │     └── Snapshots + Inference Results + Aggregated Metrics
+        └── Activity Log (Bitácora agrícola)
+              └── Activity Type + User + Timestamp + Notes
 ```
 
 - **Greenhouse:** Physical infrastructure container (e.g., "Invernadero Experimental 1")
 - **Module:** Rectangular, delimited area within a greenhouse with a specific crop (e.g., "Módulo 1 — Tomate Cherry, 5×2 m")
-- **Monitoring:** A single robot traversal session with date, time, captured snapshots, inference results, and aggregated agricultural metrics
+- **Monitoring:** A single portable monitoring session where the operator manually traverses the module, capturing snapshots for deferred inference
+- **Activity Log:** Record of agricultural activities (irrigation, pruning, harvesting, etc.) performed on a module, with user and timestamp traceability
 
 ## Current capabilities (validated)
 
@@ -55,13 +64,18 @@ Greenhouse (Invernadero)
 - Raspberry Pi AI Camera connected and validated at hardware level
 - Execution profiles (edge/full) selectable via environment variable
 
-## Target capabilities (next phases)
+## Target capabilities (Spec 015)
 
-- Robot traversal integration with configurable module dimensions
-- RobotOrchestrator coordinating movement + capture + analysis
-- Preflight checks (camera, models, motors, battery, storage, temperature)
-- Simulated motor adapters for development without hardware
-- Touchscreen-optimized UI refinements based on field testing
+- Local offline authentication for registered operators
+- Contextual dashboard with real system data indicators
+- Module-level monitoring frequency with overdue alerts
+- Operational alerts (pending monitoring, pending exports, analysis errors)
+- Agricultural activity log with backend-defined catalog
+- Combined history (monitorings + activities) per module
+- ZIP export for data and images
+- Manual provider-agnostic synchronization foundation
+- Responsive UI for Raspberry Pi in vertical (portrait) orientation
+- Traceability: user + timestamp + module + activity/monitoring
 
 ## Primary output
 
@@ -72,16 +86,23 @@ The primary output is **NOT** an annotated video. The primary output is:
   - Percentage distribution by USDA maturity stage (green, breaker, turning, pink, light_red, red)
   - Percentage of healthy vs. unhealthy tomatoes
   - Associated snapshots with detection overlays
-  - Timestamp and module metadata for traceability
+  - Timestamp, operator, and module metadata for traceability
+
+- **A traceable activity log** with:
+  - Agricultural activities registered by the operator
+  - User, module, activity type, timestamp, and optional product/quantity
 
 ## Priorities
 
-1. Functional real-time monitoring on Raspberry Pi 5 with live camera
-2. Agricultural metrics useful for the farmer (count, maturity %, health %)
-3. Stable data persistence with historical consultation
-4. Reproducible evidence for thesis (benchmarks, ADRs, documented decisions)
-5. Clean architecture and traceability of changes
-6. Optimization based on measurement, not assumption
+1. Functional portable monitoring on Raspberry Pi 5 with live camera (capture-first)
+2. Agricultural traceability (user + activity + timestamp + module)
+3. Agricultural metrics useful for the operator (count, maturity %, health %)
+4. Stable data persistence with historical consultation
+5. Contextual dashboard with real data indicators
+6. Data export and synchronization readiness
+7. Reproducible evidence for thesis (benchmarks, ADRs, documented decisions)
+8. Clean architecture and traceability of changes
+9. Optimization based on measurement, not assumption
 
 ## Non-goals (current phase)
 
@@ -89,11 +110,14 @@ The primary output is **NOT** an annotated video. The primary output is:
 - Not processing video files as the primary workflow (video mode retained only for benchmarking/testing)
 - Not replacing Detectron2 without measured evidence justifying the change
 - Not using AI Camera NPU for inference until explicitly validated
-- Not implementing cloud persistence, remote sync, or multi-user authentication
-- Not controlling robot motors directly from the application (hardware orchestration will be a separate, simulation-first phase)
 - Not generating annotated video as the primary output
-- Not implementing autonomous navigation without an approved spec
-- Not integrating real GPIO/motor hardware without simulated adapter validation first
+- Not implementing autonomous navigation, robot chassis, motors, or GPIO movement
+- Not implementing a RobotOrchestrator or any autonomous traversal logic
+- Not implementing BTS7960 motor drivers or any motor control hardware
+- Not implementing advanced agronomic recommendations (irrigation, pest management) without model evidence
+- Not implementing mandatory work-shift/jornada management
+- Not hardcoding a specific remote sync provider (Drive, S3, Supabase)
+- Not editing the activity type catalog from the UI in this version
 
 ## Relationship with legacy video pipeline
 
@@ -103,4 +127,4 @@ The original video processing pipeline (VideoInspectionRunner, annotated video g
 - Historical reference for the evolution of the system
 - Fallback mode for development and debugging on PC without camera
 
-The production workflow uses live camera + snapshot capture + per-snapshot inference + aggregated report.
+The production workflow uses live camera + snapshot capture + per-snapshot deferred inference + aggregated report.

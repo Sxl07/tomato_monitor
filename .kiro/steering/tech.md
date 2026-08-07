@@ -51,8 +51,11 @@
 - PyTorch 2.10.0 es reciente; los wheels para ARM64 pueden no existir en PyPI; puede requerir compilación o wheel de terceros
 - `pandas 3.0.1` tiene cambios semánticos respecto a 2.x; no usar `.applymap()` ni otras APIs deprecadas
 
-## Restricciones para hardware robótico (futuro)
+## Hardware robótico — fuera de alcance activo
 
-- No agregar `gpiozero`, `gpiod`, `RPi.GPIO` ni drivers de motor hasta que exista una spec aprobada de hardware.
-- El hardware real de motores (BTS7960) aún NO está implementado en software.
-- Toda librería de hardware debe validarse en ARM64 antes de agregarla a requirements.
+El alcance robótico (motores, chasis, navegación automática) fue descartado en Spec 015. Las siguientes restricciones se mantienen como protección:
+
+- No agregar `gpiozero`, `gpiod`, `RPi.GPIO` ni drivers de motor — están fuera del alcance actual.
+- No implementar BTS7960, motor adapters, ni GPIO movement scripts.
+- No crear `src/infrastructure/robot/` ni `scripts/hardware/`.
+- Toda librería de hardware de movimiento queda fuera de alcance.

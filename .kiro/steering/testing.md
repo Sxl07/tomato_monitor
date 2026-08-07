@@ -37,7 +37,7 @@ El proyecto debe incorporar pruebas y validaciones progresivas sin bloquear el d
 - Las pruebas de endpoints no deben cargar Detectron2 si no es necesario.
 - Los benchmarks deben registrar commit, fecha, dispositivo y configuración.
 - Las pruebas que requieren Raspberry Pi se marcan con `@pytest.mark.raspberry`.
-- Las pruebas que requieren hardware (motores, GPIO) se marcan con `@pytest.mark.hardware`.
+- Las pruebas que requieren hardware específico (cámara, GPIO) se marcan con `@pytest.mark.hardware`.
 - La suite completa (`python -m pytest`) no debe requerir cámara, GPIO ni hardware especial.
 - Tests de boundaries verifican estáticamente (lectura de archivos) que las reglas de arquitectura se cumplen.
 

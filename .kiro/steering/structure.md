@@ -12,7 +12,7 @@ tomato_monitor/
 ├── src/
 │   ├── domain/                 # Entidades, value objects, políticas, interfaces de repos
 │   │   ├── entities/           # monitoring.py, snapshot.py, greenhouse.py, module.py, etc.
-│   │   ├── interfaces/         # frame_source.py, robot_movement_service.py, decision_service.py
+│   │   ├── interfaces/         # frame_source.py (+ legacy: robot_movement_service.py, decision_service.py — pending removal)
 │   │   ├── repositories/       # ABCs: monitoring, snapshot, inspection_result, metrics, module, greenhouse
 │   │   └── value_objects/      # monitoring_status.py (state machine con ANALYZING)
 │   ├── application/            # DTOs, servicios de app, casos de uso
@@ -56,11 +56,13 @@ tomato_monitor/
     └── specs/                  # 001..010 + bugfix specs
 ```
 
-### Ubicación futura propuesta (no creada aún)
+### Fuera del alcance activo (no crear)
+
+Los siguientes directorios fueron propuestos para un enfoque robótico anterior y no forman parte de la arquitectura activa. No crear estos directorios.
 
 ```
-src/infrastructure/robot/       # Adapters de hardware: NoOp, Simulated, BTS7960, etc.
-scripts/hardware/               # Scripts aislados para validar GPIO/motores sin sistema completo
+src/infrastructure/robot/       # No implementar — alcance robótico descartado
+scripts/hardware/               # No implementar — no hay hardware de movimiento
 ```
 
 ## Reglas de organización
