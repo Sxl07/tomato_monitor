@@ -8,12 +8,16 @@ from fastapi.templating import Jinja2Templates as _Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 import logging as _logging
 
+from fastapi.responses import RedirectResponse as _RedirectResponse
+
+from app.routes.auth import router as auth_router
 from app.routes.ui import router as ui_router
 from app.routes.pipeline import router as pipeline_router
 from app.routes.sessions import router as sessions_router
 from app.routes.monitoring import router as monitoring_router
 from app.routes.agricultural_ui import router as agricultural_router
 from app.routes.monitoring_api import router as monitoring_api_router
+from app.dependencies import _AuthRedirectException
 from src.application.services.log_service import LogService
 from src.infrastructure.config.logging_config import configure_logging
 from src.infrastructure.persistence.database import DatabaseManager
@@ -33,6 +37,20 @@ async def lifespan(app: FastAPI):
 
     from src.application.services.monitoring_runtime_registry import MonitoringRuntimeRegistry
     app.state.monitoring_runtime_registry = MonitoringRuntimeRegistry()
+
+    # Bootstrap admin user from environment (idempotent)
+    from src.application.services.auth_service import maybe_bootstrap_admin
+    from src.infrastructure.persistence.repositories.sql_user_repository import SqlUserRepository
+    bootstrap_session = db_manager.get_session()
+    try:
+        maybe_bootstrap_admin(SqlUserRepository(session=bootstrap_session))
+        bootstrap_session.commit()
+    except Exception as e:
+        bootstrap_session.rollback()
+        _bootstrap_logger = _logging.getLogger("app.bootstrap")
+        _bootstrap_logger.warning(f"Bootstrap admin failed: {e}")
+    finally:
+        bootstrap_session.close()
 
     yield
     # No persistent camera to release — preview uses single-frame capture
@@ -105,9 +123,16 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+@app.exception_handler(_AuthRedirectException)
+async def auth_redirect_handler(request: Request, exc: _AuthRedirectException):
+    """Redirect unauthenticated HTML requests to the login page."""
+    return _RedirectResponse(url=f"/login?next={exc.next_path}", status_code=302)
+
+
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.mount("/snapshots", StaticFiles(directory="outputs/monitorings", check_dir=False), name="snapshots")
 
+app.include_router(auth_router)
 app.include_router(ui_router)
 app.include_router(pipeline_router, prefix="/pipeline", tags=["pipeline"])
 app.include_router(sessions_router, prefix="/sessions", tags=["sessions"])

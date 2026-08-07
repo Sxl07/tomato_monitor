@@ -73,8 +73,14 @@ def valid_dimension_pairs(draw):
 @pytest.fixture
 def test_client():
     """Create a FastAPI TestClient with the agricultural router."""
+    from types import SimpleNamespace
+    from app.dependencies import require_current_user_html
+
     test_app = FastAPI()
     test_app.include_router(router)
+    test_app.dependency_overrides[require_current_user_html] = lambda: SimpleNamespace(
+        id=1, full_name="Test", email="test@test.com", role="operator"
+    )
 
     # Set up minimal app state
     mock_db_manager = MagicMock()

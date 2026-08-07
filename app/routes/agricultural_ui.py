@@ -5,7 +5,7 @@ optimized for the Raspberry Pi DSI 7" touchscreen (800×480).
 Screens are rendered server-side with Jinja2 templates.
 """
 
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Depends, Request, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.exc import IntegrityError
@@ -34,6 +34,7 @@ from app.dependencies import (
     get_snapshot_repository,
     get_monitoring_metrics_repository,
     get_monitoring_service,
+    require_current_user_html,
 )
 from src.application.services.model_service import ModelService
 from src.infrastructure.config.settings import DETECTION_MODEL_PATH
@@ -55,8 +56,8 @@ _logger = _logging.getLogger(__name__)
 
 
 @router.get("/", response_class=RedirectResponse)
-def home():
-    """Redirect home to the greenhouse list screen."""
+async def home(request: Request, user=Depends(require_current_user_html)):
+    """Redirect home to the greenhouse list screen (or login if not auth)."""
     return RedirectResponse(url="/invernaderos", status_code=302)
 
 
@@ -66,8 +67,9 @@ def home():
 
 
 @router.get("/invernaderos", response_class=HTMLResponse)
-def greenhouse_list(request: Request):
+async def greenhouse_list(request: Request, user=Depends(require_current_user_html)):
     """Screen 1: Greenhouse List Screen."""
+
     repo = get_greenhouse_repository(request)
     module_repo = get_module_repository(request)
     monitoring_repo = get_monitoring_repository(request)
@@ -97,7 +99,7 @@ def greenhouse_list(request: Request):
 
 
 @router.get("/invernaderos/crear", response_class=HTMLResponse)
-def greenhouse_create_form(request: Request):
+def greenhouse_create_form(request: Request, user=Depends(require_current_user_html)):
     """Greenhouse creation form."""
     return templates.TemplateResponse(request, "agricultural/greenhouse_form.html", {
         "title": "Crear Invernadero",
@@ -111,7 +113,7 @@ def greenhouse_create_form(request: Request):
 
 
 @router.post("/invernaderos/crear", response_class=HTMLResponse)
-def greenhouse_create(request: Request, name: str = Form(...), location: str = Form("")):
+def greenhouse_create(request: Request, name: str = Form(...), location: str = Form(""), user=Depends(require_current_user_html)):
     """Process greenhouse creation."""
     errors = []
     try:
@@ -147,8 +149,9 @@ def greenhouse_create(request: Request, name: str = Form(...), location: str = F
 
 
 @router.get("/invernaderos/{id}", response_class=HTMLResponse)
-def greenhouse_detail(request: Request, id: int):
+async def greenhouse_detail(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 2: Greenhouse Detail Screen."""
+
     repo = get_greenhouse_repository(request)
     greenhouse = repo.get_by_id(id)
     if greenhouse is None:
@@ -174,7 +177,7 @@ def greenhouse_detail(request: Request, id: int):
 
 
 @router.get("/invernaderos/{id}/editar", response_class=HTMLResponse)
-def greenhouse_edit_form(request: Request, id: int):
+def greenhouse_edit_form(request: Request, id: int, user=Depends(require_current_user_html)):
     """Greenhouse edit form."""
     repo = get_greenhouse_repository(request)
     greenhouse = repo.get_by_id(id)
@@ -194,7 +197,7 @@ def greenhouse_edit_form(request: Request, id: int):
 
 
 @router.post("/invernaderos/{id}/editar", response_class=HTMLResponse)
-def greenhouse_edit(request: Request, id: int, name: str = Form(...), location: str = Form("")):
+def greenhouse_edit(request: Request, id: int, name: str = Form(...), location: str = Form(""), user=Depends(require_current_user_html)):
     """Process greenhouse edit."""
     errors = []
     try:
@@ -236,7 +239,7 @@ def greenhouse_edit(request: Request, id: int, name: str = Form(...), location: 
 
 
 @router.post("/invernaderos/{id}/eliminar")
-def greenhouse_delete(request: Request, id: int):
+def greenhouse_delete(request: Request, id: int, user=Depends(require_current_user_html)):
     """Delete greenhouse (with confirmation handled client-side)."""
     repo = get_greenhouse_repository(request)
     greenhouse = repo.get_by_id(id)
@@ -252,7 +255,7 @@ def greenhouse_delete(request: Request, id: int):
 
 
 @router.get("/invernaderos/{gh_id}/modulos/crear", response_class=HTMLResponse)
-def module_create_form(request: Request, gh_id: int):
+def module_create_form(request: Request, gh_id: int, user=Depends(require_current_user_html)):
     """Module creation form."""
     gh_repo = get_greenhouse_repository(request)
     greenhouse = gh_repo.get_by_id(gh_id)
@@ -281,6 +284,7 @@ def module_create(
     crop_type: str = Form("Tomate Cherry"),
     width_m: str = Form(""),
     length_m: str = Form(""),
+    user=Depends(require_current_user_html),
 ):
     """Process module creation."""
     errors: list[str] = []
@@ -350,8 +354,9 @@ def module_create(
 
 
 @router.get("/modulos/{id}", response_class=HTMLResponse)
-def module_detail(request: Request, id: int):
+async def module_detail(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 3: Module Detail Screen."""
+
     repo = get_module_repository(request)
     module = repo.get_by_id(id)
     if module is None:
@@ -388,7 +393,7 @@ def module_detail(request: Request, id: int):
 
 
 @router.get("/modulos/{id}/editar", response_class=HTMLResponse)
-def module_edit_form(request: Request, id: int):
+def module_edit_form(request: Request, id: int, user=Depends(require_current_user_html)):
     """Module edit form."""
     repo = get_module_repository(request)
     module = repo.get_by_id(id)
@@ -418,6 +423,7 @@ def module_edit(
     crop_type: str = Form("Tomate Cherry"),
     width_m: str = Form(""),
     length_m: str = Form(""),
+    user=Depends(require_current_user_html),
 ):
     """Process module edit."""
     errors: list[str] = []
@@ -491,7 +497,7 @@ def module_edit(
 
 
 @router.post("/modulos/{id}/eliminar")
-def module_delete(request: Request, id: int):
+def module_delete(request: Request, id: int, user=Depends(require_current_user_html)):
     """Delete module (with confirmation handled client-side)."""
     repo = get_module_repository(request)
     module = repo.get_by_id(id)
@@ -509,8 +515,9 @@ def module_delete(request: Request, id: int):
 
 
 @router.get("/modulos/{id}/monitoreo/nuevo", response_class=HTMLResponse)
-def monitoring_setup(request: Request, id: int):
+async def monitoring_setup(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 4: Monitoring Setup Screen."""
+
     repo = get_module_repository(request)
     module = repo.get_by_id(id)
     if module is None:
@@ -540,6 +547,7 @@ def monitoring_start(
     width_m: str = Form(...),
     length_m: str = Form(...),
     notes: str = Form(""),
+    user=Depends(require_current_user_html),
 ):
     """Start a monitoring session for the given module.
 
@@ -684,8 +692,9 @@ def monitoring_start(
 
 
 @router.get("/monitoreos/{id}/ejecucion", response_class=HTMLResponse)
-def monitoring_execution(request: Request, id: int):
+async def monitoring_execution(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 5: Monitoring Execution Screen."""
+
     monitoring_repo = get_monitoring_repository(request)
     monitoring = monitoring_repo.get_by_id(id)
     if monitoring is None:
@@ -704,8 +713,9 @@ def monitoring_execution(request: Request, id: int):
 
 
 @router.get("/monitoreos/{id}/reporte", response_class=HTMLResponse)
-def monitoring_report(request: Request, id: int):
+async def monitoring_report(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 6: Monitoring Report Screen."""
+
     monitoring_repo = get_monitoring_repository(request)
     monitoring = monitoring_repo.get_by_id(id)
     if monitoring is None:
@@ -742,7 +752,7 @@ def monitoring_report(request: Request, id: int):
 
 
 @router.post("/monitoreos/{id}/abortar")
-def monitoring_abort(request: Request, id: int):
+def monitoring_abort(request: Request, id: int, user=Depends(require_current_user_html)):
     """Abort an active monitoring session (redirects to module detail).
 
     Delegates to MonitoringService.abort_session() which:
@@ -779,7 +789,7 @@ def monitoring_abort(request: Request, id: int):
 
 
 @router.post("/monitoreos/{id}/finalizar-captura")
-def monitoring_finalize_capture(request: Request, id: int):
+def monitoring_finalize_capture(request: Request, id: int, user=Depends(require_current_user_html)):
     """Finalize the capture phase and start deferred analysis.
 
     Delegates exclusively to MonitoringService.finalize_capture() which:

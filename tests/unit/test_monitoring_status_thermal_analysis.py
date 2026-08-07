@@ -55,9 +55,14 @@ def mock_service():
 
 @pytest.fixture
 def app(mock_service):
+    from app.dependencies import require_current_user_api
+
     application = FastAPI()
     application.include_router(router)
     application.dependency_overrides[get_monitoring_service] = lambda: mock_service
+    application.dependency_overrides[require_current_user_api] = lambda: SimpleNamespace(
+        id=1, full_name="Test", email="test@test.com", role="operator"
+    )
     return application
 
 

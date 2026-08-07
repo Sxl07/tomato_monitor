@@ -3,9 +3,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 
+from app.dependencies import require_current_user_api
 from src.application.services.camera_service import CameraService, CameraStatus
 from src.application.services.log_service import LogService
 from src.infrastructure.persistence.database import DatabaseManager
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/api", tags=["monitoring-api"])
 
 
 @router.get("/camera/preview")
-async def camera_preview(request: Request):
+async def camera_preview(request: Request, user=Depends(require_current_user_api)):
     """Return a single JPEG frame from the camera.
 
     Uses capture_preview_frame() which does a single open-capture-close cycle.
@@ -32,7 +33,7 @@ async def camera_preview(request: Request):
 
 
 @router.get("/camera/status")
-async def camera_status(request: Request):
+async def camera_status(request: Request, user=Depends(require_current_user_api)):
     """Return camera availability status as JSON.
 
     Lightweight check — uses is_available() which only instantiates
@@ -48,6 +49,7 @@ async def monitoring_log(
     monitoring_id: int,
     request: Request,
     since: Optional[str] = Query(None),
+    user=Depends(require_current_user_api),
 ):
     """Return log entries for a monitoring session as a JSON array.
 
@@ -80,6 +82,7 @@ async def monitoring_log(
 async def last_snapshot(
     monitoring_id: int,
     request: Request,
+    user=Depends(require_current_user_api),
 ):
     """Return the most recent snapshot image as JPEG.
 

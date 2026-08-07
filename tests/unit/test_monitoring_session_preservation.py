@@ -42,6 +42,32 @@ from hypothesis import strategies as st
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.dependencies import require_current_user_html, require_current_user_api
+from types import SimpleNamespace as _SimpleNamespace
+
+# Override auth dependencies for all tests in this module
+_fake_user = _SimpleNamespace(id=1, full_name="Test", email="test@test.com", role="operator")
+
+
+async def _override_html(request=None):
+    return _fake_user
+
+
+async def _override_api(request=None):
+    return _fake_user
+
+
+@pytest.fixture(autouse=True)
+def _ensure_auth_override():
+    """Ensure auth overrides are active for all tests in this module, with proper cleanup."""
+    previous_overrides = dict(app.dependency_overrides)
+    app.dependency_overrides[require_current_user_html] = _override_html
+    app.dependency_overrides[require_current_user_api] = _override_api
+    try:
+        yield
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous_overrides)
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +228,9 @@ def _create_test_client_with_mocks(
     # Create a fresh app state
     app.state.db_manager = mock_db_manager
     app.state.log_service = MagicMock()
+
+    # Ensure auth overrides are active
+    app.dependency_overrides[require_current_user_html] = _override_html
 
     client = TestClient(app, raise_server_exceptions=False)
 
@@ -394,6 +423,8 @@ class TestNonExistentModulePreservation:
         app.state.db_manager = mock_db_manager
         app.state.log_service = MagicMock()
 
+        app.dependency_overrides[require_current_user_html] = _override_html
+
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
              patch("app.routes.agricultural_ui.get_monitoring_service", return_value=mock_monitoring_service):
 
@@ -459,6 +490,8 @@ class TestNonExistentMonitoringAbortPreservation:
 
         app.state.db_manager = mock_db_manager
         app.state.log_service = MagicMock()
+
+        app.dependency_overrides[require_current_user_html] = _override_html
 
         with patch("app.routes.agricultural_ui.get_monitoring_service", return_value=mock_monitoring_service):
 

@@ -41,17 +41,17 @@ El operario usa una Raspberry Pi 5 con pantalla táctil como dispositivo portát
   - [x] 2.16 Seed initial activity type catalog in database initialization
   - [x] 2.17 Add unit tests for new entities and repositories
   - [x] 2.18 Run full test suite to confirm no regressions
-- [ ] 3. Implement local offline authentication foundation
-  - [ ] 3.1 Add password hashing service (src/application/services/auth_service.py)
-  - [ ] 3.2 Add login/logout routes (app/routes/auth.py)
-  - [ ] 3.3 Add login template (app/templates/auth/login.html)
-  - [ ] 3.4 Add secure local session/cookie handling after dependency compatibility review
-  - [ ] 3.5 Add current_user dependency for route injection
-  - [ ] 3.6 Protect operational routes (dashboard, monitoring, activities, export) with auth dependency
-  - [ ] 3.7 Add test fixtures for authenticated requests (conftest.py override)
-  - [ ] 3.8 Validate offline login with existing local users
-  - [ ] 3.9 Add seed script or init_db hook for initial admin user
-  - [ ] 3.10 Run full test suite to confirm existing tests still pass
+- [x] 3. Implement local offline authentication foundation
+  - [x] 3.1 Add password hashing service (src/application/services/auth_service.py)
+  - [x] 3.2 Add login/logout routes (app/routes/auth.py)
+  - [x] 3.3 Add login template (app/templates/auth/login.html)
+  - [x] 3.4 Add secure local session/cookie handling after dependency compatibility review
+  - [x] 3.5 Add current_user dependency for route injection
+  - [x] 3.6 Protect operational routes (dashboard, monitoring, activities, export) with auth dependency
+  - [x] 3.7 Add test fixtures for authenticated requests (conftest.py override)
+  - [x] 3.8 Validate offline login with existing local users
+  - [x] 3.9 Add seed script or init_db hook for initial admin user
+  - [x] 3.10 Run full test suite to confirm existing tests still pass
 - [ ] 4. Add module monitoring frequency and operational alerts
   - [ ] 4.1 Add monitoring_frequency_days to module create/edit forms
   - [ ] 4.2 Implement next_monitoring_due calculation based on frequency and last monitoring date

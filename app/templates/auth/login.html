@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar sesión — Tomato Monitor</title>
+    <link rel="stylesheet" href="/static/css/agricultural.css">
+</head>
+<body style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--bg-color, #F5F5F5);">
+    <div style="width: 100%; max-width: 400px; padding: 24px;">
+        <h1 style="text-align: center; margin-bottom: 24px;">🍅 Tomato Monitor</h1>
+        <h2 style="text-align: center; margin-bottom: 16px;">Iniciar sesión</h2>
+        {% if error %}
+        <div class="alert alert--warning" style="margin-bottom: 16px;">
+            <span>{{ error }}</span>
+        </div>
+        {% endif %}
+        <form method="post" action="/login">
+            <input type="hidden" name="next" value="{{ next_url or '' }}">
+            <div class="form-group">
+                <label for="email">Correo electrónico</label>
+                <input type="email" id="email" name="email" required autocomplete="email" class="form-input" style="width: 100%;">
+            </div>
+            <div class="form-group" style="margin-top: 12px;">
+                <label for="password">Contraseña</label>
+                <input type="password" id="password" name="password" required autocomplete="current-password" class="form-input" style="width: 100%;">
+            </div>
+            <button type="submit" class="btn btn-primary btn-full" style="margin-top: 16px; width: 100%;">Iniciar sesión</button>
+        </form>
+    </div>
+</body>
+</html>
