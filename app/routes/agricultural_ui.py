@@ -5,6 +5,8 @@ optimized for the Raspberry Pi DSI 7" touchscreen (800×480).
 Screens are rendered server-side with Jinja2 templates.
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Request, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -34,6 +36,8 @@ from app.dependencies import (
     get_snapshot_repository,
     get_monitoring_metrics_repository,
     get_monitoring_service,
+    get_activity_type_repository,
+    get_activity_log_repository,
     require_current_user_html,
 )
 from src.application.services.model_service import ModelService
@@ -915,3 +919,179 @@ def monitoring_finalize_capture(request: Request, id: int, user=Depends(require_
             url=f"/monitoreos/{id}/ejecucion", status_code=303
         )
 
+
+
+# ---------------------------------------------------------------------------
+# Activity Log endpoints (Bitácora agrícola)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/modulos/{id}/actividades", response_class=HTMLResponse)
+async def activity_list(request: Request, id: int, user=Depends(require_current_user_html)):
+    """Activity log list for a module."""
+    from src.application.services.activity_service import ActivityService
+
+    module_repo = get_module_repository(request)
+    module = module_repo.get_by_id(id)
+    if module is None:
+        return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
+
+    activity_type_repo = get_activity_type_repository(request)
+    activity_log_repo = get_activity_log_repository(request)
+
+    service = ActivityService()
+    activities = service.list_activities_by_module(id, activity_log_repo, activity_type_repo)
+
+    return templates.TemplateResponse(request, "agricultural/activity_list.html", {
+        "title": f"Bitácora — {module.name}",
+        "module": module,
+        "activities": activities,
+        "show_back": True,
+        "back_url": f"/modulos/{id}",
+    })
+
+
+@router.get("/modulos/{id}/actividades/registrar", response_class=HTMLResponse)
+async def activity_create_form(request: Request, id: int, user=Depends(require_current_user_html)):
+    """Show form to register a new agricultural activity."""
+    from src.application.services.activity_service import ActivityService
+
+    module_repo = get_module_repository(request)
+    module = module_repo.get_by_id(id)
+    if module is None:
+        return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
+
+    activity_type_repo = get_activity_type_repository(request)
+    service = ActivityService()
+    activity_types = service.list_activity_types(activity_type_repo)
+
+    return templates.TemplateResponse(request, "agricultural/activity_form.html", {
+        "title": f"Registrar Actividad — {module.name}",
+        "module": module,
+        "activity_types": activity_types,
+        "errors": [],
+        "form_data": {},
+        "show_back": True,
+        "back_url": f"/modulos/{id}",
+    })
+
+
+@router.post("/modulos/{id}/actividades/registrar", response_class=HTMLResponse)
+def activity_create(
+    request: Request,
+    id: int,
+    activity_type_id: str = Form(...),
+    occurred_at_date: str = Form(""),
+    occurred_at_time: str = Form(""),
+    product_name: str = Form(""),
+    quantity: str = Form(""),
+    unit: str = Form(""),
+    notes: str = Form(""),
+    user=Depends(require_current_user_html),
+):
+    """Process activity registration form."""
+    from src.application.services.activity_service import (
+        ActivityService,
+        ActivityValidationError,
+        ActivityTypeNotFoundError,
+    )
+
+    module_repo = get_module_repository(request)
+    module = module_repo.get_by_id(id)
+    if module is None:
+        return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
+
+    activity_type_repo = get_activity_type_repository(request)
+    activity_log_repo = get_activity_log_repository(request)
+    service = ActivityService()
+
+    # Preserve form data for re-rendering on error
+    form_data = {
+        "activity_type_id": activity_type_id,
+        "occurred_at_date": occurred_at_date,
+        "occurred_at_time": occurred_at_time,
+        "product_name": product_name,
+        "quantity": quantity,
+        "unit": unit,
+        "notes": notes,
+    }
+
+    errors: list[str] = []
+
+    # Parse activity_type_id
+    parsed_type_id = 0
+    try:
+        parsed_type_id = int(activity_type_id)
+    except (ValueError, TypeError):
+        errors.append("Selecciona un tipo de actividad válido.")
+
+    # Parse occurred_at from date + time
+    occurred_at = None
+    if occurred_at_date.strip():
+        try:
+            date_str = occurred_at_date.strip()
+            time_str = occurred_at_time.strip() if occurred_at_time.strip() else "00:00"
+            occurred_at = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            errors.append("Formato de fecha/hora inválido.")
+
+    # Parse quantity
+    parsed_quantity = None
+    if quantity.strip():
+        try:
+            parsed_quantity = float(quantity.strip())
+        except ValueError:
+            errors.append("La cantidad debe ser un número válido.")
+
+    if errors:
+        activity_types = service.list_activity_types(activity_type_repo)
+        return templates.TemplateResponse(request, "agricultural/activity_form.html", {
+            "title": f"Registrar Actividad — {module.name}",
+            "module": module,
+            "activity_types": activity_types,
+            "errors": errors,
+            "form_data": form_data,
+            "show_back": True,
+            "back_url": f"/modulos/{id}",
+        })
+
+    # Call service
+    try:
+        service.create_activity(
+            module_id=id,
+            activity_type_id=parsed_type_id,
+            user_id=user.id,
+            product_name=product_name.strip() or None,
+            quantity=parsed_quantity,
+            unit=unit.strip() or None,
+            notes=notes.strip() or None,
+            occurred_at=occurred_at,
+            activity_type_repo=activity_type_repo,
+            activity_log_repo=activity_log_repo,
+        )
+    except ActivityValidationError as e:
+        errors.append(e.message)
+        activity_types = service.list_activity_types(activity_type_repo)
+        return templates.TemplateResponse(request, "agricultural/activity_form.html", {
+            "title": f"Registrar Actividad — {module.name}",
+            "module": module,
+            "activity_types": activity_types,
+            "errors": errors,
+            "form_data": form_data,
+            "show_back": True,
+            "back_url": f"/modulos/{id}",
+        })
+    except ActivityTypeNotFoundError as e:
+        errors.append(e.message)
+        activity_types = service.list_activity_types(activity_type_repo)
+        return templates.TemplateResponse(request, "agricultural/activity_form.html", {
+            "title": f"Registrar Actividad — {module.name}",
+            "module": module,
+            "activity_types": activity_types,
+            "errors": errors,
+            "form_data": form_data,
+            "show_back": True,
+            "back_url": f"/modulos/{id}",
+        })
+
+    return RedirectResponse(url=f"/modulos/{id}/actividades", status_code=303)

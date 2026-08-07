@@ -61,16 +61,16 @@ El operario usa una Raspberry Pi 5 con pantalla táctil como dispositivo portát
   - [x] 4.6 Add alerts section to dashboard and/or standalone alerts page
   - [x] 4.7 Add unit tests for frequency calculation and alert computation
   - [x] 4.8 Run full test suite
-- [ ] 5. Implement agricultural activity log
-  - [ ] 5.1 Add activity creation route (POST /modulos/{id}/actividades/registrar)
-  - [ ] 5.2 Add activity form template (app/templates/agricultural/activity_form.html)
-  - [ ] 5.3 Add activity list route and template by module
-  - [ ] 5.4 Implement form logic: dynamic fields based on activity type (requires_product, allows_quantity)
-  - [ ] 5.5 Record user_id and occurred_at on every activity
-  - [ ] 5.6 Add validation rules (required fields, positive quantity, valid type)
-  - [ ] 5.7 Add activity_service.py for creation and listing logic
-  - [ ] 5.8 Add unit tests for activity creation, validation, and listing
-  - [ ] 5.9 Run full test suite
+- [x] 5. Implement agricultural activity log
+  - [x] 5.1 Add activity creation route (POST /modulos/{id}/actividades/registrar)
+  - [x] 5.2 Add activity form template (app/templates/agricultural/activity_form.html)
+  - [x] 5.3 Add activity list route and template by module
+  - [x] 5.4 Implement form logic: dynamic fields based on activity type (requires_product, allows_quantity)
+  - [x] 5.5 Record user_id and occurred_at on every activity
+  - [x] 5.6 Add validation rules (required fields, positive quantity, valid type)
+  - [x] 5.7 Add activity_service.py for creation and listing logic
+  - [x] 5.8 Add unit tests for activity creation, validation, and listing
+  - [x] 5.9 Run full test suite
 - [ ] 6. Build contextual dashboard
   - [ ] 6.1 Add dashboard route (GET /dashboard)
   - [ ] 6.2 Add dashboard context builder (app/context_builders.py or new service)

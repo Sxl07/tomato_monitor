@@ -41,6 +41,11 @@
 
 <a href="/modulos/{{ module.id }}/monitoreo/nuevo" class="btn btn-primary btn-large btn-full-width">Iniciar Nuevo Monitoreo</a>
 
+<div class="btn-group" style="margin-top: 12px; margin-bottom: 16px;">
+    <a href="/modulos/{{ module.id }}/actividades/registrar" class="btn btn-secondary">Registrar actividad</a>
+    <a href="/modulos/{{ module.id }}/actividades" class="btn btn-secondary">Ver bitácora</a>
+</div>
+
 {% if active_monitoring %}
 <div class="card" style="margin-top: 16px; margin-bottom: 16px;">
     <div class="card-body">
