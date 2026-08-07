@@ -103,7 +103,7 @@ class SqlModuleRepository(ModuleRepository):
         """
         model = self._session.query(ModuleModel).filter(ModuleModel.id == id).one()
 
-        allowed_fields = {"name", "crop_type", "width_m", "length_m"}
+        allowed_fields = {"name", "crop_type", "width_m", "length_m", "monitoring_frequency_days"}
         for key, value in fields.items():
             if key in allowed_fields:
                 setattr(model, key, value)
@@ -147,6 +147,7 @@ class SqlModuleRepository(ModuleRepository):
             crop_type=model.crop_type,
             width_m=model.width_m,
             length_m=model.length_m,
+            monitoring_frequency_days=model.monitoring_frequency_days,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -167,4 +168,5 @@ class SqlModuleRepository(ModuleRepository):
             crop_type=entity.crop_type,
             width_m=entity.width_m,
             length_m=entity.length_m,
+            monitoring_frequency_days=entity.monitoring_frequency_days,
         )

@@ -47,6 +47,8 @@ class SqlMonitoringRepository(MonitoringRepository):
             notes=monitoring.notes,
             total_snapshots=0,
             total_detections=0,
+            created_by_user_id=monitoring.created_by_user_id,
+            sync_status=monitoring.sync_status,
         )
         self._session.add(model)
         self._session.flush()
@@ -139,4 +141,6 @@ class SqlMonitoringRepository(MonitoringRepository):
             notes=model.notes,
             total_snapshots=model.total_snapshots,
             total_detections=model.total_detections,
+            created_by_user_id=model.created_by_user_id,
+            sync_status=model.sync_status,
         )

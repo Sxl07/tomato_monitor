@@ -22,25 +22,25 @@ El operario usa una Raspberry Pi 5 con pantalla táctil como dispositivo portát
   - [x] 1.7 Update steering/data-model.md to add new entities (User, ActivityType, ActivityLog, ExportPackage)
   - [x] 1.8 Audit legacy robot/movement-related domain interfaces and produce a removal plan only if they are confirmed unused by tests and current pipeline
   - [x] 1.9 Run architecture boundary tests to confirm nothing breaks
-- [ ] 2. Define data model foundation
-  - [ ] 2.1 Add User domain entity (src/domain/entities/user.py)
-  - [ ] 2.2 Add ActivityType domain entity (src/domain/entities/activity_type.py)
-  - [ ] 2.3 Add ActivityLog domain entity (src/domain/entities/activity_log.py)
-  - [ ] 2.4 Add ExportPackage domain entity (src/domain/entities/export_package.py)
-  - [ ] 2.5 Add monitoring_frequency_days field to Module entity
-  - [ ] 2.6 Add created_by_user_id and sync_status fields to Monitoring entity
-  - [ ] 2.7 Add SyncStatus value object or enum (src/domain/value_objects/sync_status.py)
-  - [ ] 2.8 Add UserModel persistence model (src/infrastructure/persistence/models/user_model.py)
-  - [ ] 2.9 Add ActivityTypeModel persistence model
-  - [ ] 2.10 Add ActivityLogModel persistence model
-  - [ ] 2.11 Add ExportPackageModel persistence model
-  - [ ] 2.12 Extend ModuleModel with monitoring_frequency_days column
-  - [ ] 2.13 Extend MonitoringModel with created_by_user_id and sync_status columns
-  - [ ] 2.14 Add repository interfaces (user, activity_type, activity_log, export_package)
-  - [ ] 2.15 Add SQL repository implementations
-  - [ ] 2.16 Seed initial activity type catalog in database initialization
-  - [ ] 2.17 Add unit tests for new entities and repositories
-  - [ ] 2.18 Run full test suite to confirm no regressions
+- [x] 2. Define data model foundation
+  - [x] 2.1 Add User domain entity (src/domain/entities/user.py)
+  - [x] 2.2 Add ActivityType domain entity (src/domain/entities/activity_type.py)
+  - [x] 2.3 Add ActivityLog domain entity (src/domain/entities/activity_log.py)
+  - [x] 2.4 Add ExportPackage domain entity (src/domain/entities/export_package.py)
+  - [x] 2.5 Add monitoring_frequency_days field to Module entity
+  - [x] 2.6 Add created_by_user_id and sync_status fields to Monitoring entity
+  - [x] 2.7 Add SyncStatus value object or enum (src/domain/value_objects/sync_status.py)
+  - [x] 2.8 Add UserModel persistence model (src/infrastructure/persistence/models/user_model.py)
+  - [x] 2.9 Add ActivityTypeModel persistence model
+  - [x] 2.10 Add ActivityLogModel persistence model
+  - [x] 2.11 Add ExportPackageModel persistence model
+  - [x] 2.12 Extend ModuleModel with monitoring_frequency_days column
+  - [x] 2.13 Extend MonitoringModel with created_by_user_id and sync_status columns
+  - [x] 2.14 Add repository interfaces (user, activity_type, activity_log, export_package)
+  - [x] 2.15 Add SQL repository implementations
+  - [x] 2.16 Seed initial activity type catalog in database initialization
+  - [x] 2.17 Add unit tests for new entities and repositories
+  - [x] 2.18 Run full test suite to confirm no regressions
 - [ ] 3. Implement local offline authentication foundation
   - [ ] 3.1 Add password hashing service (src/application/services/auth_service.py)
   - [ ] 3.2 Add login/logout routes (app/routes/auth.py)

@@ -23,6 +23,10 @@ from src.infrastructure.persistence.repositories import (
     SqlSnapshotRepository,
     SqlInspectionResultRepository,
     SqlMonitoringMetricsRepository,
+    SqlUserRepository,
+    SqlActivityTypeRepository,
+    SqlActivityLogRepository,
+    SqlExportPackageRepository,
 )
 
 
@@ -123,6 +127,26 @@ def get_inspection_result_repository(request: Request) -> SqlInspectionResultRep
 def get_monitoring_metrics_repository(request: Request) -> SqlMonitoringMetricsRepository:
     """Provide a SqlMonitoringMetricsRepository using the request-scoped session."""
     return SqlMonitoringMetricsRepository(session=_get_request_session(request))
+
+
+def get_user_repository(request: Request) -> SqlUserRepository:
+    """Provide a SqlUserRepository using the request-scoped session."""
+    return SqlUserRepository(session=_get_request_session(request))
+
+
+def get_activity_type_repository(request: Request) -> SqlActivityTypeRepository:
+    """Provide a SqlActivityTypeRepository using the request-scoped session."""
+    return SqlActivityTypeRepository(session=_get_request_session(request))
+
+
+def get_activity_log_repository(request: Request) -> SqlActivityLogRepository:
+    """Provide a SqlActivityLogRepository using the request-scoped session."""
+    return SqlActivityLogRepository(session=_get_request_session(request))
+
+
+def get_export_package_repository(request: Request) -> SqlExportPackageRepository:
+    """Provide a SqlExportPackageRepository using the request-scoped session."""
+    return SqlExportPackageRepository(session=_get_request_session(request))
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,12 @@ from src.domain.entities.monitoring import Monitoring
 from src.domain.entities.monitoring_metrics import MonitoringMetrics
 from src.domain.entities.snapshot import Snapshot
 
+# Traceability and operations entities (Spec 015)
+from src.domain.entities.user import User
+from src.domain.entities.activity_type import ActivityType
+from src.domain.entities.activity_log import ActivityLog
+from src.domain.entities.export_package import ExportPackage
+
 __all__ = [
     # Legacy vision pipeline entities
     "FruitDetection",
@@ -34,4 +40,9 @@ __all__ = [
     "Monitoring",
     "MonitoringMetrics",
     "Snapshot",
+    # Traceability and operations entities
+    "User",
+    "ActivityType",
+    "ActivityLog",
+    "ExportPackage",
 ]

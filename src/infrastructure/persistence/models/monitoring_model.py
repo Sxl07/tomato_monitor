@@ -34,6 +34,12 @@ class MonitoringModel(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     total_snapshots: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_detections: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True
+    )
+    sync_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )
 
     # Relationships
     module = relationship("ModuleModel", back_populates="monitorings")

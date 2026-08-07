@@ -20,5 +20,10 @@ class Module:
     crop_type: str = field(default="Tomate Cherry")
     width_m: Optional[float] = None
     length_m: Optional[float] = None
+    monitoring_frequency_days: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+    def __post_init__(self) -> None:
+        if self.monitoring_frequency_days is not None and self.monitoring_frequency_days <= 0:
+            raise ValueError("monitoring_frequency_days must be positive")

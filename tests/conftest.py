@@ -19,6 +19,10 @@ from src.infrastructure.persistence.models import (  # noqa: F401
     SnapshotModel,
     InspectionResultModel,
     MonitoringMetricsModel,
+    UserModel,
+    ActivityTypeModel,
+    ActivityLogModel,
+    ExportPackageModel,
 )
 
 
