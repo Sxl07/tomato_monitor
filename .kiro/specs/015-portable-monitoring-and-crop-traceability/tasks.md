@@ -108,16 +108,16 @@ El operario usa una Raspberry Pi 5 con pantalla táctil como dispositivo portát
   - [x] 9.6 Keep remote provider adapters as stubs (not implemented)
   - [x] 9.7 Add tests for sync status transitions and pending calculations
   - [x] 9.8 Run full test suite
-- [ ] 10. Adapt UI for Raspberry vertical usage
-  - [ ] 10.1 Add @media queries for portrait orientation (max-width: 600px or orientation: portrait)
-  - [ ] 10.2 Make dashboard cards stack in single column for portrait
-  - [ ] 10.3 Add compact bottom navigation for portrait screens
-  - [ ] 10.4 Ensure forms use full width and accommodate virtual keyboard
-  - [ ] 10.5 Ensure monitoring execution flow remains usable in portrait
-  - [ ] 10.6 Ensure touch targets remain ≥44×44px in portrait
-  - [ ] 10.7 Test login, dashboard, activity form, and monitoring flow in 480×800 viewport
-  - [ ] 10.8 Add CSS regression tests or visual verification notes
-  - [ ] 10.9 Run full test suite
+- [x] 10. Adapt UI for Raspberry vertical usage
+  - [x] 10.1 Add @media queries for portrait orientation (max-width: 600px or orientation: portrait)
+  - [x] 10.2 Make dashboard cards stack in single column for portrait
+  - [x] 10.3 Add compact bottom navigation for portrait screens
+  - [x] 10.4 Ensure forms use full width and accommodate virtual keyboard
+  - [x] 10.5 Ensure monitoring execution flow remains usable in portrait
+  - [x] 10.6 Ensure touch targets remain ≥44×44px in portrait
+  - [x] 10.7 Test login, dashboard, activity form, and monitoring flow in 480×800 viewport
+  - [x] 10.8 Add CSS regression tests or visual verification notes
+  - [x] 10.9 Run full test suite
 - [ ] 11. Final validation and documentation alignment
   - [ ] 11.1 Run targeted monitoring tests (capture_worker, snapshot_analysis, finalize route)
   - [ ] 11.2 Run auth, activity, dashboard, export, and alert tests

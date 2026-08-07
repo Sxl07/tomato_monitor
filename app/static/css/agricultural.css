@@ -1116,3 +1116,177 @@ a + a,
 .log-entry--error .log-entry-level {
     background-color: #F44336;
 }
+
+/* ==========================================================================
+   Portrait Responsive Layout (Raspberry Pi vertical: ~480×800)
+   ========================================================================== */
+
+/* Bottom navigation — hidden by default (landscape) */
+.bottom-nav {
+    display: none;
+}
+
+@media (max-width: 600px), (orientation: portrait) {
+    /* Show bottom nav in portrait */
+    .bottom-nav {
+        display: flex;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: var(--color-surface);
+        border-top: 1px solid var(--color-border);
+        justify-content: space-around;
+        align-items: center;
+        padding: 4px 0;
+        z-index: 1000;
+    }
+
+    .bottom-nav__item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: var(--touch-min);
+        min-width: var(--touch-min);
+        padding: 4px 8px;
+        text-decoration: none;
+        color: var(--color-text-secondary);
+        font-size: 12px;
+        gap: 2px;
+    }
+
+    .bottom-nav__item:active {
+        color: var(--color-primary);
+    }
+
+    /* Add padding to main content so bottom nav doesn't cover it */
+    .main-content {
+        padding-bottom: 72px;
+    }
+
+    /* Stack metric cards in single column */
+    .metric-grid,
+    .dashboard-metrics {
+        display: flex;
+        flex-direction: column;
+        gap: var(--touch-spacing);
+    }
+
+    .metric-card {
+        width: 100%;
+    }
+
+    /* Stack quick links vertically */
+    .quick-links {
+        display: flex;
+        flex-direction: column;
+        gap: var(--touch-spacing);
+    }
+
+    .quick-links .btn {
+        width: 100%;
+    }
+
+    /* Full-width forms */
+    .form-input,
+    .form-control,
+    select,
+    textarea,
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    input[type="number"],
+    input[type="date"],
+    input[type="time"] {
+        width: 100%;
+        min-height: var(--touch-min);
+        box-sizing: border-box;
+    }
+
+    /* Form row stack vertically */
+    .form-row {
+        flex-direction: column;
+    }
+
+    /* Buttons full width in portrait */
+    .btn-full-width,
+    .form-actions .btn {
+        width: 100%;
+        display: block;
+    }
+
+    .form-actions {
+        flex-direction: column;
+    }
+
+    /* Ensure all interactive elements meet touch target */
+    button,
+    .btn,
+    [role="button"],
+    a.btn,
+    input[type="submit"] {
+        min-height: var(--touch-min);
+        min-width: var(--touch-min);
+    }
+
+    /* Card list single column */
+    .card-list {
+        display: flex;
+        flex-direction: column;
+        gap: var(--touch-spacing);
+    }
+
+    /* Reduce header padding */
+    .app-header {
+        padding: 8px var(--safe-margin);
+    }
+
+    /* Snapshot gallery single column */
+    .snapshot-gallery {
+        grid-template-columns: 1fr;
+    }
+
+    /* Content max width full */
+    .main-content {
+        max-width: 100%;
+        padding-left: var(--safe-margin);
+        padding-right: var(--safe-margin);
+    }
+
+    /* Status badges compact */
+    .dashboard-status {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    /* Info panel compact */
+    .info-panel {
+        padding: 8px;
+    }
+
+    /* Execution screen buttons stacked */
+    .execution-actions {
+        display: flex;
+        flex-direction: column;
+        gap: var(--touch-spacing);
+    }
+
+    .execution-actions .btn {
+        width: 100%;
+    }
+
+    /* Reset margin-left on stacked buttons in portrait */
+    .quick-links .btn + .btn,
+    .form-actions .btn + .btn,
+    .execution-actions .btn + .btn,
+    .bottom-nav__item + .bottom-nav__item,
+    .btn-group .btn + .btn {
+        margin-left: 0;
+    }
+
+    .btn-group {
+        flex-direction: column;
+    }
+}
