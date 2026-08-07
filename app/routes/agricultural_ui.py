@@ -5,7 +5,9 @@ optimized for the Raspberry Pi DSI 7" touchscreen (800×480).
 Screens are rendered server-side with Jinja2 templates.
 """
 
+import json
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
@@ -1172,3 +1174,178 @@ def activity_create(
         })
 
     return RedirectResponse(url=f"/modulos/{id}/actividades", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Export endpoints (Exportación ZIP)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/exportar", response_class=HTMLResponse)
+async def export_list(request: Request, user=Depends(require_current_user_html)):
+    """List export packages and show generate button."""
+    export_repo = get_export_package_repository(request)
+    packages = export_repo.list_by_user(user.id)
+
+    return templates.TemplateResponse(request, "agricultural/export_list.html", {
+        "title": "Exportación de datos",
+        "packages": packages,
+        "show_back": True,
+        "back_url": "/dashboard",
+    })
+
+
+@router.post("/exportar")
+def export_create(request: Request, user=Depends(require_current_user_html)):
+    """Generate a new ZIP export package."""
+    from src.application.services.export_service import ExportService
+    from src.domain.entities.export_package import ExportPackage
+
+    export_repo = get_export_package_repository(request)
+    gh_repo = get_greenhouse_repository(request)
+    module_repo = get_module_repository(request)
+    monitoring_repo = get_monitoring_repository(request)
+    metrics_repo = get_monitoring_metrics_repository(request)
+    snapshot_repo = get_snapshot_repository(request)
+    activity_type_repo = get_activity_type_repository(request)
+    activity_log_repo = get_activity_log_repository(request)
+
+    # Create export package record with status "generating"
+    package = ExportPackage(
+        created_by_user_id=user.id,
+        scope="full",
+        status="generating",
+    )
+    package = export_repo.create(package)
+
+    try:
+        # Fetch all data
+        greenhouses = gh_repo.get_all()
+        modules = []
+        for gh in greenhouses:
+            modules.extend(module_repo.get_by_greenhouse(gh.id))
+
+        monitorings = []
+        for mod in modules:
+            monitorings.extend(monitoring_repo.get_by_module(mod.id))
+
+        metrics_by_monitoring = {}
+        snapshots_by_monitoring = {}
+        for mon in monitorings:
+            met = metrics_repo.get_by_monitoring(mon.id)
+            if met:
+                metrics_by_monitoring[mon.id] = met
+            snapshots_by_monitoring[mon.id] = snapshot_repo.get_by_monitoring(mon.id)
+
+        activity_types = activity_type_repo.list_all()
+        activity_logs = activity_log_repo.list_recent(limit=10000)
+
+        # Generate ZIP
+        service = ExportService()
+        result = service.generate_export(
+            greenhouses=greenhouses,
+            modules=modules,
+            monitorings=monitorings,
+            metrics_by_monitoring=metrics_by_monitoring,
+            snapshots_by_monitoring=snapshots_by_monitoring,
+            activity_types=activity_types,
+            activity_logs=activity_logs,
+            export_package=package,
+        )
+
+        # Update package status
+        now = datetime.now()
+        if result.status == "completed":
+            export_repo.update(package.id, {
+                "status": "completed",
+                "file_path": result.file_path,
+                "file_size_bytes": result.file_size_bytes,
+                "records_count": result.records_count,
+                "images_count": result.images_count,
+                "completed_at": now,
+                "manifest_json": json.dumps(result.manifest, ensure_ascii=False),
+            })
+        else:
+            export_repo.update(package.id, {
+                "status": "error",
+                "error_message": result.error_message or "Error desconocido",
+                "completed_at": now,
+            })
+
+    except Exception as e:
+        export_repo.update(package.id, {
+            "status": "error",
+            "error_message": str(e),
+            "completed_at": datetime.now(),
+        })
+
+    return RedirectResponse(url=f"/exportar/{package.id}", status_code=303)
+
+
+@router.get("/exportar/{id}", response_class=HTMLResponse)
+async def export_detail(request: Request, id: int, user=Depends(require_current_user_html)):
+    """Show export package details."""
+    export_repo = get_export_package_repository(request)
+    package = export_repo.get_by_id(id)
+    if package is None:
+        return RedirectResponse(url="/exportar?error=Exportación+no+encontrada", status_code=303)
+
+    # Parse manifest for display
+    manifest = None
+    if package.manifest_json:
+        try:
+            manifest = json.loads(package.manifest_json)
+        except (json.JSONDecodeError, TypeError):
+            manifest = None
+
+    return templates.TemplateResponse(request, "agricultural/export_detail.html", {
+        "title": f"Exportación #{package.id}",
+        "package": package,
+        "manifest": manifest,
+        "show_back": True,
+        "back_url": "/exportar",
+    })
+
+
+def _is_safe_export_path(file_path: str) -> bool:
+    """Verify file_path is inside outputs/exports and is a .zip file."""
+    if not file_path:
+        return False
+    try:
+        resolved = Path(file_path).resolve()
+        exports_dir = Path("outputs/exports").resolve()
+        try:
+            resolved.relative_to(exports_dir)
+        except ValueError:
+            return False
+        if resolved.suffix.lower() != ".zip":
+            return False
+        if not resolved.is_file():
+            return False
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+@router.get("/exportar/{id}/descargar")
+async def export_download(request: Request, id: int, user=Depends(require_current_user_html)):
+    """Download the ZIP file for a completed export."""
+    from fastapi.responses import FileResponse
+
+    export_repo = get_export_package_repository(request)
+    package = export_repo.get_by_id(id)
+    if package is None:
+        return RedirectResponse(url="/exportar?error=Exportación+no+encontrada", status_code=303)
+
+    if package.status != "completed":
+        return RedirectResponse(url=f"/exportar/{id}?error=No+disponible", status_code=303)
+
+    if not package.file_path or not _is_safe_export_path(package.file_path):
+        return RedirectResponse(url=f"/exportar/{id}?error=Archivo+no+disponible", status_code=303)
+
+    file_path = Path(package.file_path)
+    return FileResponse(
+        path=str(file_path),
+        media_type="application/zip",
+        filename=file_path.name,
+    )

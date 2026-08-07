@@ -1,0 +1,58 @@
+{% extends "base_agricultural.html" %}
+
+{% block header_title %}Exportación de datos{% endblock %}
+
+{% block content %}
+<div class="export-page">
+
+    <p class="text-secondary">Genera paquetes ZIP con datos e imágenes para respaldo o análisis externo.</p>
+
+    <form method="post" action="/exportar" style="margin-bottom: 24px;">
+        <button type="submit" class="btn btn-primary btn-full-width">Generar exportación ZIP</button>
+    </form>
+
+    <section class="dashboard-section">
+        <h2 class="section-header">Exportaciones anteriores</h2>
+
+        {% if packages %}
+        <div class="card-list">
+            {% for pkg in packages %}
+            <div class="card">
+                <div class="card-body">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <p class="card-title">Exportación #{{ pkg.id }}</p>
+                            <p class="card-meta">
+                                {% if pkg.created_at %}{{ pkg.created_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}
+                                — {{ pkg.records_count }} registros, {{ pkg.images_count }} imágenes
+                            </p>
+                        </div>
+                        <div>
+                            {% if pkg.status == 'completed' %}
+                            <span class="status-badge status-success">Completada</span>
+                            {% elif pkg.status == 'generating' %}
+                            <span class="status-badge status-info">Generando...</span>
+                            {% elif pkg.status == 'error' %}
+                            <span class="status-badge status-critical">Error</span>
+                            {% else %}
+                            <span class="status-badge status-warning">Pendiente</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div style="margin-top: 8px;">
+                        <a href="/exportar/{{ pkg.id }}" class="btn btn-secondary">Ver detalle</a>
+                        {% if pkg.status == 'completed' %}
+                        <a href="/exportar/{{ pkg.id }}/descargar" class="btn btn-primary" style="margin-left: 8px;">Descargar</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-text">No hay exportaciones registradas.</p>
+        {% endif %}
+    </section>
+
+</div>
+{% endblock %}

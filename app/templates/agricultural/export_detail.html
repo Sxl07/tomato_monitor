@@ -1,0 +1,76 @@
+{% extends "base_agricultural.html" %}
+
+{% block header_title %}Exportación #{{ package.id }}{% endblock %}
+
+{% block content %}
+<div class="export-detail-page">
+
+    <!-- Status -->
+    <div style="margin-bottom: 16px;">
+        {% if package.status == 'completed' %}
+        <span class="status-badge status-success">Completada</span>
+        {% elif package.status == 'generating' %}
+        <span class="status-badge status-info">Generando...</span>
+        {% elif package.status == 'error' %}
+        <span class="status-badge status-critical">Error</span>
+        {% else %}
+        <span class="status-badge status-warning">Pendiente</span>
+        {% endif %}
+    </div>
+
+    <!-- Error message -->
+    {% if package.status == 'error' and package.error_message %}
+    <div class="alert alert-error" role="alert">
+        <strong>Error:</strong> {{ package.error_message }}
+    </div>
+    {% endif %}
+
+    <!-- Info card -->
+    <div class="card" style="margin-bottom: 16px;">
+        <div class="card-body">
+            <p><strong>Alcance:</strong> {{ package.scope }}</p>
+            <p><strong>Creada:</strong> {% if package.created_at %}{{ package.created_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</p>
+            {% if package.completed_at %}
+            <p><strong>Completada:</strong> {{ package.completed_at.strftime('%d/%m/%Y %H:%M') }}</p>
+            {% endif %}
+            <p><strong>Registros:</strong> {{ package.records_count }}</p>
+            <p><strong>Imágenes:</strong> {{ package.images_count }}</p>
+            {% if package.file_size_bytes %}
+            <p><strong>Tamaño:</strong> {{ "%.1f"|format(package.file_size_bytes / 1048576) }} MB</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Manifest details -->
+    {% if manifest %}
+    <div class="card" style="margin-bottom: 16px;">
+        <div class="card-body">
+            <p class="card-title">Contenido del paquete</p>
+            <p>Invernaderos: {{ manifest.counts.greenhouses }}</p>
+            <p>Módulos: {{ manifest.counts.modules }}</p>
+            <p>Monitoreos: {{ manifest.counts.monitorings }}</p>
+            <p>Snapshots: {{ manifest.counts.snapshots }}</p>
+            <p>Tipos de actividad: {{ manifest.counts.activity_types }}</p>
+            <p>Registros de actividad: {{ manifest.counts.activity_logs }}</p>
+            <p>Archivos incluidos: {{ manifest.counts.files_included }}</p>
+            {% if manifest.warnings %}
+            <div style="margin-top: 8px;">
+                <p class="text-secondary"><strong>Avisos:</strong></p>
+                {% for warning in manifest.warnings %}
+                <p class="text-secondary">⚠️ {{ warning }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Download button -->
+    {% if package.status == 'completed' %}
+    <a href="/exportar/{{ package.id }}/descargar" class="btn btn-primary btn-full-width">Descargar ZIP</a>
+    {% endif %}
+
+    <a href="/exportar" class="btn btn-secondary btn-full-width" style="margin-top: 8px;">Volver a exportaciones</a>
+
+</div>
+{% endblock %}
