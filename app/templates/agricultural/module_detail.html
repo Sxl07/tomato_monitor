@@ -17,6 +17,26 @@
         <span class="info-label">Dimensiones</span>
         <span class="info-value">{{ dimensions_display }}</span>
     </div>
+    <div class="info-row">
+        <span class="info-label">Frecuencia de monitoreo</span>
+        <span class="info-value">Cada {{ module.monitoring_frequency_days or 7 }} días</span>
+    </div>
+    {% if monitoring_due_status %}
+    <div class="info-row">
+        <span class="info-label">Estado</span>
+        <span class="info-value">
+            {% if monitoring_due_status == 'overdue' %}
+            <span class="badge badge-danger">Vencido</span>
+            {% elif monitoring_due_status == 'due_today' %}
+            <span class="badge badge-warning">Programado hoy</span>
+            {% elif monitoring_due_status == 'up_to_date' %}
+            <span class="badge badge-success">Al día</span>
+            {% elif monitoring_due_status == 'pending' %}
+            <span class="badge badge-warning">Sin monitoreos</span>
+            {% endif %}
+        </span>
+    </div>
+    {% endif %}
 </div>
 
 <a href="/modulos/{{ module.id }}/monitoreo/nuevo" class="btn btn-primary btn-large btn-full-width">Iniciar Nuevo Monitoreo</a>

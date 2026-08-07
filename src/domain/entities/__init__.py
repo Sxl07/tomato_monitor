@@ -25,6 +25,7 @@ from src.domain.entities.user import User
 from src.domain.entities.activity_type import ActivityType
 from src.domain.entities.activity_log import ActivityLog
 from src.domain.entities.export_package import ExportPackage
+from src.domain.entities.operational_alert import OperationalAlert
 
 __all__ = [
     # Legacy vision pipeline entities
@@ -45,4 +46,5 @@ __all__ = [
     "ActivityType",
     "ActivityLog",
     "ExportPackage",
+    "OperationalAlert",
 ]

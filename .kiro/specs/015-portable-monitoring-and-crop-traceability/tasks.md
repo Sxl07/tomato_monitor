@@ -52,15 +52,15 @@ El operario usa una Raspberry Pi 5 con pantalla táctil como dispositivo portát
   - [x] 3.8 Validate offline login with existing local users
   - [x] 3.9 Add seed script or init_db hook for initial admin user
   - [x] 3.10 Run full test suite to confirm existing tests still pass
-- [ ] 4. Add module monitoring frequency and operational alerts
-  - [ ] 4.1 Add monitoring_frequency_days to module create/edit forms
-  - [ ] 4.2 Implement next_monitoring_due calculation based on frequency and last monitoring date
-  - [ ] 4.3 Add AlertService (src/application/services/alert_service.py) with compute_alerts()
-  - [ ] 4.4 Implement alert types: monitoring_overdue, monitoring_pending, export_pending, analysis_error
-  - [ ] 4.5 Add OperationalAlert dataclass (src/domain/entities/operational_alert.py)
-  - [ ] 4.6 Add alerts section to dashboard and/or standalone alerts page
-  - [ ] 4.7 Add unit tests for frequency calculation and alert computation
-  - [ ] 4.8 Run full test suite
+- [x] 4. Add module monitoring frequency and operational alerts
+  - [x] 4.1 Add monitoring_frequency_days to module create/edit forms
+  - [x] 4.2 Implement next_monitoring_due calculation based on frequency and last monitoring date
+  - [x] 4.3 Add AlertService (src/application/services/alert_service.py) with compute_alerts()
+  - [x] 4.4 Implement alert types: monitoring_overdue, monitoring_pending, export_pending, analysis_error
+  - [x] 4.5 Add OperationalAlert dataclass (src/domain/entities/operational_alert.py)
+  - [x] 4.6 Add alerts section to dashboard and/or standalone alerts page
+  - [x] 4.7 Add unit tests for frequency calculation and alert computation
+  - [x] 4.8 Run full test suite
 - [ ] 5. Implement agricultural activity log
   - [ ] 5.1 Add activity creation route (POST /modulos/{id}/actividades/registrar)
   - [ ] 5.2 Add activity form template (app/templates/agricultural/activity_form.html)

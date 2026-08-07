@@ -50,6 +50,23 @@ import logging as _logging
 _logger = _logging.getLogger(__name__)
 
 
+def _parse_monitoring_frequency(value: str) -> int | None:
+    """Parse monitoring frequency from form input.
+
+    Returns a positive integer or None. Returns 7 (default) when input is empty.
+    Returns None for invalid input (zero, negative, non-numeric).
+    """
+    if not value or not value.strip():
+        return 7  # Default for tomato cherry
+    try:
+        freq = int(value.strip())
+        if freq <= 0:
+            return None  # Validation error
+        return freq
+    except ValueError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Home
 # ---------------------------------------------------------------------------
@@ -79,13 +96,23 @@ async def greenhouse_list(request: Request, user=Depends(require_current_user_ht
     # Build lookup dicts for context builder
     modules_by_gh: dict[int, list] = {}
     monitorings_by_module: dict[int, list] = {}
+    all_modules: list = []
     for gh in greenhouses:
         modules = module_repo.get_by_greenhouse(gh.id)
         modules_by_gh[gh.id] = modules
+        all_modules.extend(modules)
         for m in modules:
             monitorings_by_module[m.id] = monitoring_repo.get_by_module(m.id)
 
     cards = build_greenhouse_cards(greenhouses, modules_by_gh, monitorings_by_module)
+
+    # Compute operational alerts
+    from src.application.services.alert_service import AlertService
+    alert_service = AlertService()
+    alerts = alert_service.compute_alerts(
+        modules=all_modules,
+        monitorings_by_module=monitorings_by_module,
+    )
 
     # Support error query param for flash-style messages
     error = request.query_params.get("error")
@@ -93,6 +120,7 @@ async def greenhouse_list(request: Request, user=Depends(require_current_user_ht
     return templates.TemplateResponse(request, "agricultural/greenhouse_list.html", {
         "title": "Mis Invernaderos",
         "greenhouses": cards,
+        "alerts": alerts,
         "show_back": False,
         "error": error,
     })
@@ -272,6 +300,7 @@ def module_create_form(request: Request, gh_id: int, user=Depends(require_curren
         "crop_type": "Tomate Cherry",
         "width_m": "",
         "length_m": "",
+        "monitoring_frequency_days": "7",
         "errors": [],
     })
 
@@ -284,6 +313,7 @@ def module_create(
     crop_type: str = Form("Tomate Cherry"),
     width_m: str = Form(""),
     length_m: str = Form(""),
+    monitoring_frequency_days: str = Form(""),
     user=Depends(require_current_user_html),
 ):
     """Process module creation."""
@@ -311,6 +341,11 @@ def module_create(
         parsed_width = None
         parsed_length = None
 
+    # Parse monitoring frequency
+    parsed_frequency = _parse_monitoring_frequency(monitoring_frequency_days)
+    if monitoring_frequency_days.strip() and parsed_frequency is None:
+        errors.append("La frecuencia de monitoreo debe ser un número entero positivo.")
+
     if errors:
         return templates.TemplateResponse(request, "agricultural/module_form.html", {
             "title": "Crear Módulo",
@@ -322,6 +357,7 @@ def module_create(
             "crop_type": crop_type,
             "width_m": width_m,
             "length_m": length_m,
+            "monitoring_frequency_days": monitoring_frequency_days,
             "errors": errors,
         })
 
@@ -332,6 +368,7 @@ def module_create(
         crop_type=crop_type.strip() or "Tomate Cherry",
         width_m=parsed_width,
         length_m=parsed_length,
+        monitoring_frequency_days=parsed_frequency,
     )
     try:
         created = repo.create(gh_id, module)
@@ -347,6 +384,7 @@ def module_create(
             "crop_type": crop_type,
             "width_m": width_m,
             "length_m": length_m,
+            "monitoring_frequency_days": monitoring_frequency_days,
             "errors": errors,
         })
 
@@ -381,12 +419,34 @@ async def module_detail(request: Request, id: int, user=Depends(require_current_
     else:
         dimensions_display = "No configuradas"
 
+    # Compute monitoring due status
+    from src.application.services.alert_service import AlertService
+    from datetime import date
+    alert_service = AlertService()
+    monitoring_due_status = None
+    frequency = alert_service.get_effective_frequency(module)
+    if frequency is not None:
+        next_due = alert_service.calculate_next_monitoring_due(module, monitorings)
+        if next_due is None:
+            # No valid monitorings → pending
+            monitoring_due_status = "pending"
+        else:
+            today = date.today()
+            days_overdue = (today - next_due).days
+            if days_overdue > 0:
+                monitoring_due_status = "overdue"
+            elif days_overdue == 0:
+                monitoring_due_status = "due_today"
+            else:
+                monitoring_due_status = "up_to_date"
+
     return templates.TemplateResponse(request, "agricultural/module_detail.html", {
         "title": module.name,
         "module": module,
         "dimensions_display": dimensions_display,
         "history": history,
         "active_monitoring": active_monitoring,
+        "monitoring_due_status": monitoring_due_status,
         "show_back": True,
         "back_url": f"/invernaderos/{module.greenhouse_id}",
     })
@@ -411,6 +471,7 @@ def module_edit_form(request: Request, id: int, user=Depends(require_current_use
         "crop_type": module.crop_type,
         "width_m": module.width_m if module.width_m is not None else "",
         "length_m": module.length_m if module.length_m is not None else "",
+        "monitoring_frequency_days": module.monitoring_frequency_days if module.monitoring_frequency_days is not None else "7",
         "errors": [],
     })
 
@@ -423,6 +484,7 @@ def module_edit(
     crop_type: str = Form("Tomate Cherry"),
     width_m: str = Form(""),
     length_m: str = Form(""),
+    monitoring_frequency_days: str = Form(""),
     user=Depends(require_current_user_html),
 ):
     """Process module edit."""
@@ -450,6 +512,11 @@ def module_edit(
         parsed_width = None
         parsed_length = None
 
+    # Parse monitoring frequency
+    parsed_frequency = _parse_monitoring_frequency(monitoring_frequency_days)
+    if monitoring_frequency_days.strip() and parsed_frequency is None:
+        errors.append("La frecuencia de monitoreo debe ser un número entero positivo.")
+
     repo = get_module_repository(request)
     module = repo.get_by_id(id)
     if module is None:
@@ -467,6 +534,7 @@ def module_edit(
             "crop_type": crop_type,
             "width_m": width_m,
             "length_m": length_m,
+            "monitoring_frequency_days": monitoring_frequency_days,
             "errors": errors,
         })
 
@@ -476,6 +544,7 @@ def module_edit(
             "crop_type": crop_type.strip() or "Tomate Cherry",
             "width_m": parsed_width,
             "length_m": parsed_length,
+            "monitoring_frequency_days": parsed_frequency,
         })
     except DuplicateModuleError:
         errors.append("Ya existe un módulo con ese nombre en este invernadero.")
@@ -490,6 +559,7 @@ def module_edit(
             "crop_type": crop_type,
             "width_m": width_m,
             "length_m": length_m,
+            "monitoring_frequency_days": monitoring_frequency_days,
             "errors": errors,
         })
 

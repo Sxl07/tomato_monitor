@@ -73,6 +73,22 @@
         </div>
     </div>
 
+    <div class="form-field">
+        <label for="monitoring_frequency_days" class="form-label">Frecuencia de monitoreo (días)</label>
+        <input
+            type="number"
+            id="monitoring_frequency_days"
+            name="monitoring_frequency_days"
+            class="form-input"
+            value="{{ monitoring_frequency_days or '7' }}"
+            placeholder="7"
+            step="1"
+            min="1"
+            autocomplete="off"
+        >
+        <span class="form-help">Cada cuántos días se espera monitorear este módulo.</span>
+    </div>
+
     <div class="form-actions">
         <button type="submit" class="btn btn-primary">
             {% if mode == "edit" %}Guardar Cambios{% else %}Crear Módulo{% endif %}
