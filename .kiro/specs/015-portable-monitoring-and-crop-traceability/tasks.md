@@ -82,32 +82,32 @@ El operario usa una Raspberry Pi 5 con pantalla táctil como dispositivo portát
   - [x] 6.8 Ensure no unsupported agronomic metrics are shown
   - [x] 6.9 Add unit tests for dashboard context building
   - [x] 6.10 Run full test suite
-- [ ] 7. Add combined history and report access
-  - [ ] 7.1 Build combined timeline query (monitorings + activities by module, ordered by date)
-  - [ ] 7.2 Add history section to module_detail.html template
-  - [ ] 7.3 Add timeline item rendering (icons, colors, links to reports)
-  - [ ] 7.4 Ensure monitoring reports remain accessible via existing routes
-  - [ ] 7.5 Add unit tests for timeline ordering and content
-  - [ ] 7.6 Run full test suite
-- [ ] 8. Implement ZIP export package
-  - [ ] 8.1 Add ExportService (src/application/services/export_service.py)
-  - [ ] 8.2 Implement metadata and manifest JSON generation
-  - [ ] 8.3 Implement incremental snapshot copying (raw + annotated) without full RAM load
-  - [ ] 8.4 Implement monitoring reports and pipeline metrics inclusion
-  - [ ] 8.5 Add export route (POST /exportar, GET /exportar/{id}/descargar)
-  - [ ] 8.6 Add export UI (trigger button, progress/status, download link)
-  - [ ] 8.7 Track ExportPackage status in database (pending → generating → completed/error)
-  - [ ] 8.8 Add unit tests with temporary files and small fixture data
-  - [ ] 8.9 Run full test suite
-- [ ] 9. Prepare provider-agnostic manual sync foundation
-  - [ ] 9.1 Define RemoteSyncAdapter abstract interface
-  - [ ] 9.2 Add SyncService (src/application/services/sync_service.py) with manual trigger
-  - [ ] 9.3 Add sync_status tracking on Monitoring and ActivityLog records
-  - [ ] 9.4 Add sync status UI (pending/exported/synced counts, manual trigger)
-  - [ ] 9.5 Implement LocalZipExport as the initial concrete "sync" mechanism
-  - [ ] 9.6 Keep remote provider adapters as stubs (not implemented)
-  - [ ] 9.7 Add tests for sync status transitions and pending calculations
-  - [ ] 9.8 Run full test suite
+- [x] 7. Add combined history and report access
+  - [x] 7.1 Build combined timeline query (monitorings + activities by module, ordered by date)
+  - [x] 7.2 Add history section to module_detail.html template
+  - [x] 7.3 Add timeline item rendering (icons, colors, links to reports)
+  - [x] 7.4 Ensure monitoring reports remain accessible via existing routes
+  - [x] 7.5 Add unit tests for timeline ordering and content
+  - [x] 7.6 Run full test suite
+- [x] 8. Implement ZIP export package
+  - [x] 8.1 Add ExportService (src/application/services/export_service.py)
+  - [x] 8.2 Implement metadata and manifest JSON generation
+  - [x] 8.3 Implement incremental snapshot copying (raw + annotated) without full RAM load
+  - [x] 8.4 Implement monitoring reports and pipeline metrics inclusion
+  - [x] 8.5 Add export route (POST /exportar, GET /exportar/{id}/descargar)
+  - [x] 8.6 Add export UI (trigger button, progress/status, download link)
+  - [x] 8.7 Track ExportPackage status in database (pending → generating → completed/error)
+  - [x] 8.8 Add unit tests with temporary files and small fixture data
+  - [x] 8.9 Run full test suite
+- [x] 9. Prepare provider-agnostic manual sync foundation
+  - [x] 9.1 Define RemoteSyncAdapter abstract interface
+  - [x] 9.2 Add SyncService (src/application/services/sync_service.py) with manual trigger
+  - [x] 9.3 Add sync_status tracking on Monitoring and ActivityLog records
+  - [x] 9.4 Add sync status UI (pending/exported/synced counts, manual trigger)
+  - [x] 9.5 Implement LocalZipExport as the initial concrete "sync" mechanism
+  - [x] 9.6 Keep remote provider adapters as stubs (not implemented)
+  - [x] 9.7 Add tests for sync status transitions and pending calculations
+  - [x] 9.8 Run full test suite
 - [ ] 10. Adapt UI for Raspberry vertical usage
   - [ ] 10.1 Add @media queries for portrait orientation (max-width: 600px or orientation: portrait)
   - [ ] 10.2 Make dashboard cards stack in single column for portrait

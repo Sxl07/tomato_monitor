@@ -1349,3 +1349,148 @@ async def export_download(request: Request, id: int, user=Depends(require_curren
         media_type="application/zip",
         filename=file_path.name,
     )
+
+
+# ---------------------------------------------------------------------------
+# Sync routes
+# ---------------------------------------------------------------------------
+
+
+@router.get("/sincronizacion", response_class=HTMLResponse)
+async def sync_status_page(request: Request, user=Depends(require_current_user_html)):
+    """Show sync status and manual sync trigger."""
+    monitoring_repo = get_monitoring_repository(request)
+    activity_log_repo = get_activity_log_repository(request)
+    export_repo = get_export_package_repository(request)
+
+    from src.application.services.sync_service import SyncService
+
+    monitorings = monitoring_repo.list_all()
+    activity_logs = activity_log_repo.list_all()
+
+    sync_service = SyncService()
+    sync_status = sync_service.compute_sync_status(monitorings, activity_logs)
+
+    # Get last export for display
+    user_exports = export_repo.list_by_user(user.id)
+    last_export = user_exports[0] if user_exports else None
+
+    error = request.query_params.get("error")
+    success_message = request.query_params.get("success")
+
+    return templates.TemplateResponse(request, "agricultural/sync_status.html", {
+        "title": "Sincronización",
+        "sync_status": sync_status,
+        "last_export": last_export,
+        "error": error,
+        "success_message": success_message,
+        "show_back": True,
+        "back_url": "/dashboard",
+    })
+
+
+@router.post("/sincronizacion/local")
+async def sync_local_trigger(request: Request, user=Depends(require_current_user_html)):
+    """Trigger a manual local sync (ZIP export + mark records as exported)."""
+    monitoring_repo = get_monitoring_repository(request)
+    activity_log_repo = get_activity_log_repository(request)
+    export_repo = get_export_package_repository(request)
+
+    from src.application.services.sync_service import SyncService
+    from src.application.services.export_service import ExportService
+    from src.domain.entities.export_package import ExportPackage
+
+    monitorings = monitoring_repo.list_all()
+    activity_logs = activity_log_repo.list_all()
+
+    # Check there are pending records
+    sync_service = SyncService()
+    status_info = sync_service.compute_sync_status(monitorings, activity_logs)
+    if status_info["total_pending"] == 0:
+        return RedirectResponse(
+            url="/sincronizacion?error=No+hay+registros+pendientes",
+            status_code=303,
+        )
+
+    # Create export package record
+    package = ExportPackage(
+        created_by_user_id=user.id,
+        scope="full",
+        status="pending",
+    )
+    package = export_repo.create(package)
+
+    # Generate the export (reuses existing ExportService)
+    from app.dependencies import (
+        get_greenhouse_repository,
+        get_module_repository,
+        get_snapshot_repository,
+        get_monitoring_metrics_repository,
+        get_activity_type_repository,
+    )
+
+    greenhouse_repo = get_greenhouse_repository(request)
+    module_repo = get_module_repository(request)
+    snapshot_repo = get_snapshot_repository(request)
+    metrics_repo = get_monitoring_metrics_repository(request)
+    activity_type_repo = get_activity_type_repository(request)
+
+    greenhouses = greenhouse_repo.get_all()
+    modules = []
+    for gh in greenhouses:
+        modules.extend(module_repo.get_by_greenhouse(gh.id))
+
+    all_activity_types = activity_type_repo.list_active()
+
+    metrics_by_monitoring = {}
+    snapshots_by_monitoring = {}
+    for m in monitorings:
+        metrics_by_monitoring[m.id] = metrics_repo.get_by_monitoring(m.id)
+        snapshots_by_monitoring[m.id] = snapshot_repo.get_by_monitoring(m.id)
+
+    export_service = ExportService()
+    export_result = export_service.generate_export(
+        greenhouses=greenhouses,
+        modules=modules,
+        monitorings=monitorings,
+        metrics_by_monitoring=metrics_by_monitoring,
+        snapshots_by_monitoring=snapshots_by_monitoring,
+        activity_types=all_activity_types,
+        activity_logs=activity_logs,
+        export_package=package,
+    )
+
+    # Update export package status
+    from datetime import datetime, timezone
+
+    if export_result.status == "completed":
+        export_repo.update(package.id, {
+            "status": "completed",
+            "file_path": export_result.file_path,
+            "file_size_bytes": export_result.file_size_bytes,
+            "records_count": export_result.records_count,
+            "images_count": export_result.images_count,
+            "completed_at": datetime.now(timezone.utc),
+            "manifest_json": json.dumps(export_result.manifest, ensure_ascii=False),
+        })
+    else:
+        export_repo.update(package.id, {
+            "status": "error",
+            "error_message": export_result.error_message or "Error desconocido",
+        })
+        return RedirectResponse(
+            url="/sincronizacion?error=La+exportación+local+falló",
+            status_code=303,
+        )
+
+    # Mark pending records as exported
+    result = sync_service.manual_local_sync(
+        export_result=export_result,
+        monitoring_repo=monitoring_repo,
+        activity_log_repo=activity_log_repo,
+        monitorings=monitorings,
+        activity_logs=activity_logs,
+    )
+
+    msg = f"Exportación+completada.+{result['updated_monitorings']}+monitoreos+y+{result['updated_activities']}+actividades+marcados+como+exportados"
+    return RedirectResponse(url=f"/sincronizacion?success={msg}", status_code=303)

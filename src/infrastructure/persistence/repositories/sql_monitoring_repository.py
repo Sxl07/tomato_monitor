@@ -128,6 +128,25 @@ class SqlMonitoringRepository(MonitoringRepository):
             self._session.delete(model)
             self._session.flush()
 
+    def list_all(self) -> list[Monitoring]:
+        """Return all monitorings, ordered by started_at descending."""
+        models = (
+            self._session.query(MonitoringModel)
+            .order_by(MonitoringModel.started_at.desc())
+            .all()
+        )
+        return [self._to_entity(m) for m in models]
+
+    def update_sync_status(self, ids: list[int], status: str) -> None:
+        """Update sync_status for the given monitoring ids."""
+        if not ids:
+            return
+        self._session.query(MonitoringModel).filter(
+            MonitoringModel.id.in_(ids)
+        ).update({"sync_status": status}, synchronize_session="fetch")
+        self._session.flush()
+        self._session.commit()
+
     def _to_entity(self, model: MonitoringModel) -> Monitoring:
         """Convert an ORM model instance to a domain entity."""
         return Monitoring(

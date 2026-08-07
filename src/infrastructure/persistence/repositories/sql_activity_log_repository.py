@@ -65,6 +65,25 @@ class SqlActivityLogRepository(ActivityLogRepository):
         )
         return [self._to_entity(m) for m in models]
 
+    def list_all(self) -> list[ActivityLog]:
+        """Return all activity logs, ordered by occurred_at descending."""
+        models = (
+            self._session.query(ActivityLogModel)
+            .order_by(ActivityLogModel.occurred_at.desc())
+            .all()
+        )
+        return [self._to_entity(m) for m in models]
+
+    def update_sync_status(self, ids: list[int], status: str) -> None:
+        """Update sync_status for the given activity log ids."""
+        if not ids:
+            return
+        self._session.query(ActivityLogModel).filter(
+            ActivityLogModel.id.in_(ids)
+        ).update({"sync_status": status}, synchronize_session="fetch")
+        self._session.flush()
+        self._session.commit()
+
     def _to_entity(self, model: ActivityLogModel) -> ActivityLog:
         return ActivityLog(
             id=model.id,

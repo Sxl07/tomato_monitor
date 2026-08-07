@@ -37,3 +37,13 @@ class ActivityLogRepository(ABC):
     def list_by_user(self, user_id: int) -> list[ActivityLog]:
         """Return all activity logs for the given user, newest first."""
         ...
+
+    @abstractmethod
+    def list_all(self) -> list[ActivityLog]:
+        """Return all activity logs, ordered by occurred_at descending."""
+        ...
+
+    @abstractmethod
+    def update_sync_status(self, ids: list[int], status: str) -> None:
+        """Update sync_status for the given activity log ids."""
+        ...
