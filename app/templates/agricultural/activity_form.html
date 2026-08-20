@@ -1,0 +1,128 @@
+{% extends "base_agricultural.html" %}
+
+{% block header_title %}Registrar Actividad{% endblock %}
+
+{% block content %}
+<div class="info-panel">
+    <div class="info-row">
+        <span class="info-label">Módulo</span>
+        <span class="info-value">{{ module.name }}</span>
+    </div>
+</div>
+
+{% if errors %}
+<div class="alert alert-danger" role="alert">
+    {% for error in errors %}
+    <p>{{ error }}</p>
+    {% endfor %}
+</div>
+{% endif %}
+
+<p class="text-secondary" style="margin-bottom: 12px;">Los campos de producto y cantidad se usan solo cuando aplican al tipo de actividad.</p>
+
+<form method="post" action="/modulos/{{ module.id }}/actividades/registrar" class="form">
+    <div class="form-group">
+        <label for="activity_type_id" class="form-label">Tipo de actividad</label>
+        <select id="activity_type_id" name="activity_type_id" class="form-control" required>
+            <option value="">— Seleccionar —</option>
+            {% for at in activity_types %}
+            <option value="{{ at.id }}"
+                {% if form_data.get('activity_type_id') == at.id|string %}selected{% endif %}
+                data-requires-product="{{ at.requires_product|lower }}"
+                data-allows-quantity="{{ at.allows_quantity|lower }}"
+                data-default-unit="{{ at.default_unit or '' }}">
+                {{ at.name }} ({{ at.category }})
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="occurred_at_date" class="form-label">Fecha (opcional, se usa hoy si se deja vacío)</label>
+        <input type="date" id="occurred_at_date" name="occurred_at_date"
+               class="form-control"
+               value="{{ form_data.get('occurred_at_date', '') }}">
+    </div>
+
+    <div class="form-group">
+        <label for="occurred_at_time" class="form-label">Hora (opcional)</label>
+        <input type="time" id="occurred_at_time" name="occurred_at_time"
+               class="form-control"
+               value="{{ form_data.get('occurred_at_time', '') }}">
+    </div>
+
+    <div id="product-field" class="form-group">
+        <label for="product_name" class="form-label">Producto (nombre del insumo aplicado)</label>
+        <input type="text" id="product_name" name="product_name"
+               class="form-control"
+               placeholder="Ej: Fertilizante NPK, Fungicida X"
+               value="{{ form_data.get('product_name', '') }}">
+    </div>
+
+    <div id="quantity-field" class="form-group">
+        <label for="quantity" class="form-label">Cantidad</label>
+        <input type="number" id="quantity" name="quantity"
+               class="form-control"
+               step="any" min="0"
+               placeholder="Ej: 2.5"
+               value="{{ form_data.get('quantity', '') }}">
+    </div>
+
+    <div id="unit-field" class="form-group">
+        <label for="unit" class="form-label">Unidad</label>
+        <input type="text" id="unit" name="unit"
+               class="form-control"
+               placeholder="Ej: L, kg, mL, unidades"
+               value="{{ form_data.get('unit', '') }}">
+    </div>
+
+    <div class="form-group">
+        <label for="notes" class="form-label">Notas (observaciones opcionales)</label>
+        <textarea id="notes" name="notes" class="form-control"
+                  rows="3" placeholder="Observaciones adicionales...">{{ form_data.get('notes', '') }}</textarea>
+    </div>
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary btn-large btn-full-width">Guardar actividad</button>
+        <a href="/modulos/{{ module.id }}" class="btn btn-secondary btn-full-width" style="margin-top: 8px;">Cancelar</a>
+    </div>
+</form>
+
+<script>
+(function() {
+    var typeSelect = document.getElementById("activity_type_id");
+    var productField = document.getElementById("product-field");
+    var quantityField = document.getElementById("quantity-field");
+    var unitField = document.getElementById("unit-field");
+    var unitInput = document.getElementById("unit");
+
+    function updateFields() {
+        var option = typeSelect.options[typeSelect.selectedIndex];
+        if (!option || !option.value) {
+            productField.style.display = "";
+            quantityField.style.display = "";
+            unitField.style.display = "";
+            return;
+        }
+        var requiresProduct = option.getAttribute("data-requires-product") === "true";
+        var allowsQuantity = option.getAttribute("data-allows-quantity") === "true";
+        var defaultUnit = option.getAttribute("data-default-unit") || "";
+
+        productField.style.display = requiresProduct ? "" : "none";
+        quantityField.style.display = allowsQuantity ? "" : "none";
+        unitField.style.display = allowsQuantity ? "" : "none";
+
+        if (allowsQuantity && !unitInput.value && defaultUnit) {
+            unitInput.value = defaultUnit;
+        }
+        if (!allowsQuantity) {
+            document.getElementById("quantity").value = "";
+            unitInput.value = "";
+        }
+    }
+
+    typeSelect.addEventListener("change", updateFields);
+    updateFields();
+})();
+</script>
+{% endblock %}

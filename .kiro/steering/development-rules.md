@@ -28,11 +28,12 @@
 - Ejecutar suite completa: `python -m pytest -q`
 - Ejecutar solo unitarios: `python -m pytest tests/unit -q`
 
-## Hardware
+## Hardware de movimiento — fuera de alcance
 
-- No implementar hardware real (GPIO, motores, batería) sin spec aprobada.
-- Todo adapter de hardware debe tener un adapter simulado (NoOp o Simulated) implementado y testado ANTES del adapter real.
-- No integrar gpiozero, gpiod, RPi.GPIO ni drivers de motor sin spec de hardware.
+- Hardware de movimiento (GPIO, motores, BTS7960, batería) está fuera del alcance activo del proyecto (Spec 015).
+- No implementar drivers de motor, robot adapters, ni scripts de hardware de movimiento.
+- No integrar gpiozero, gpiod, RPi.GPIO ni drivers de motor.
+- No crear `src/infrastructure/robot/` ni `scripts/hardware/`.
 
 ## Documentación
 

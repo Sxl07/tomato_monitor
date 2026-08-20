@@ -5,7 +5,11 @@ optimized for the Raspberry Pi DSI 7" touchscreen (800×480).
 Screens are rendered server-side with Jinja2 templates.
 """
 
-from fastapi import APIRouter, Request, Form
+import json
+from datetime import datetime
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, Request, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.exc import IntegrityError
@@ -34,6 +38,10 @@ from app.dependencies import (
     get_snapshot_repository,
     get_monitoring_metrics_repository,
     get_monitoring_service,
+    get_activity_type_repository,
+    get_activity_log_repository,
+    get_export_package_repository,
+    require_current_user_html,
 )
 from src.application.services.model_service import ModelService
 from src.infrastructure.config.settings import DETECTION_MODEL_PATH
@@ -49,15 +57,91 @@ import logging as _logging
 _logger = _logging.getLogger(__name__)
 
 
+def _parse_monitoring_frequency(value: str) -> int | None:
+    """Parse monitoring frequency from form input.
+
+    Returns a positive integer or None. Returns 7 (default) when input is empty.
+    Returns None for invalid input (zero, negative, non-numeric).
+    """
+    if not value or not value.strip():
+        return 7  # Default for tomato cherry
+    try:
+        freq = int(value.strip())
+        if freq <= 0:
+            return None  # Validation error
+        return freq
+    except ValueError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Home
 # ---------------------------------------------------------------------------
 
 
 @router.get("/", response_class=RedirectResponse)
-def home():
-    """Redirect home to the greenhouse list screen."""
-    return RedirectResponse(url="/invernaderos", status_code=302)
+async def home(request: Request, user=Depends(require_current_user_html)):
+    """Redirect home to the dashboard (or login if not auth)."""
+    return RedirectResponse(url="/dashboard", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request, user=Depends(require_current_user_html)):
+    """Dashboard: contextual overview of the system state."""
+    from src.application.services.dashboard_service import DashboardService
+
+    gh_repo = get_greenhouse_repository(request)
+    module_repo = get_module_repository(request)
+    monitoring_repo = get_monitoring_repository(request)
+    activity_log_repo = get_activity_log_repository(request)
+    activity_type_repo = get_activity_type_repository(request)
+    export_repo = get_export_package_repository(request)
+
+    greenhouses = gh_repo.get_all()
+    modules = []
+    monitorings_by_module: dict[int, list] = {}
+    for gh in greenhouses:
+        gh_modules = module_repo.get_by_greenhouse(gh.id)
+        modules.extend(gh_modules)
+        for m in gh_modules:
+            monitorings_by_module[m.id] = monitoring_repo.get_by_module(m.id)
+
+    # Recent activities (enriched with type names)
+    recent_logs = activity_log_repo.list_recent(limit=5)
+    all_types = {t.id: t for t in activity_type_repo.list_all()}
+    recent_activities = []
+    for log in recent_logs:
+        at = all_types.get(log.activity_type_id)
+        recent_activities.append({
+            "activity_type_name": at.name if at else "Desconocido",
+            "category": at.category if at else "",
+            "occurred_at": log.occurred_at,
+            "module_id": log.module_id,
+        })
+
+    # Export packages
+    export_packages = export_repo.list_pending()
+
+    # Build context
+    dashboard_service = DashboardService()
+    context = dashboard_service.build_context(
+        greenhouses=greenhouses,
+        modules=modules,
+        monitorings_by_module=monitorings_by_module,
+        recent_activities=recent_activities,
+        export_packages=export_packages,
+    )
+
+    return templates.TemplateResponse(request, "agricultural/dashboard.html", {
+        "title": "Dashboard",
+        "show_back": False,
+        **context,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -66,8 +150,9 @@ def home():
 
 
 @router.get("/invernaderos", response_class=HTMLResponse)
-def greenhouse_list(request: Request):
+async def greenhouse_list(request: Request, user=Depends(require_current_user_html)):
     """Screen 1: Greenhouse List Screen."""
+
     repo = get_greenhouse_repository(request)
     module_repo = get_module_repository(request)
     monitoring_repo = get_monitoring_repository(request)
@@ -77,13 +162,23 @@ def greenhouse_list(request: Request):
     # Build lookup dicts for context builder
     modules_by_gh: dict[int, list] = {}
     monitorings_by_module: dict[int, list] = {}
+    all_modules: list = []
     for gh in greenhouses:
         modules = module_repo.get_by_greenhouse(gh.id)
         modules_by_gh[gh.id] = modules
+        all_modules.extend(modules)
         for m in modules:
             monitorings_by_module[m.id] = monitoring_repo.get_by_module(m.id)
 
     cards = build_greenhouse_cards(greenhouses, modules_by_gh, monitorings_by_module)
+
+    # Compute operational alerts
+    from src.application.services.alert_service import AlertService
+    alert_service = AlertService()
+    alerts = alert_service.compute_alerts(
+        modules=all_modules,
+        monitorings_by_module=monitorings_by_module,
+    )
 
     # Support error query param for flash-style messages
     error = request.query_params.get("error")
@@ -91,13 +186,14 @@ def greenhouse_list(request: Request):
     return templates.TemplateResponse(request, "agricultural/greenhouse_list.html", {
         "title": "Mis Invernaderos",
         "greenhouses": cards,
+        "alerts": alerts,
         "show_back": False,
         "error": error,
     })
 
 
 @router.get("/invernaderos/crear", response_class=HTMLResponse)
-def greenhouse_create_form(request: Request):
+def greenhouse_create_form(request: Request, user=Depends(require_current_user_html)):
     """Greenhouse creation form."""
     return templates.TemplateResponse(request, "agricultural/greenhouse_form.html", {
         "title": "Crear Invernadero",
@@ -111,7 +207,7 @@ def greenhouse_create_form(request: Request):
 
 
 @router.post("/invernaderos/crear", response_class=HTMLResponse)
-def greenhouse_create(request: Request, name: str = Form(...), location: str = Form("")):
+def greenhouse_create(request: Request, name: str = Form(...), location: str = Form(""), user=Depends(require_current_user_html)):
     """Process greenhouse creation."""
     errors = []
     try:
@@ -147,8 +243,9 @@ def greenhouse_create(request: Request, name: str = Form(...), location: str = F
 
 
 @router.get("/invernaderos/{id}", response_class=HTMLResponse)
-def greenhouse_detail(request: Request, id: int):
+async def greenhouse_detail(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 2: Greenhouse Detail Screen."""
+
     repo = get_greenhouse_repository(request)
     greenhouse = repo.get_by_id(id)
     if greenhouse is None:
@@ -174,7 +271,7 @@ def greenhouse_detail(request: Request, id: int):
 
 
 @router.get("/invernaderos/{id}/editar", response_class=HTMLResponse)
-def greenhouse_edit_form(request: Request, id: int):
+def greenhouse_edit_form(request: Request, id: int, user=Depends(require_current_user_html)):
     """Greenhouse edit form."""
     repo = get_greenhouse_repository(request)
     greenhouse = repo.get_by_id(id)
@@ -194,7 +291,7 @@ def greenhouse_edit_form(request: Request, id: int):
 
 
 @router.post("/invernaderos/{id}/editar", response_class=HTMLResponse)
-def greenhouse_edit(request: Request, id: int, name: str = Form(...), location: str = Form("")):
+def greenhouse_edit(request: Request, id: int, name: str = Form(...), location: str = Form(""), user=Depends(require_current_user_html)):
     """Process greenhouse edit."""
     errors = []
     try:
@@ -236,7 +333,7 @@ def greenhouse_edit(request: Request, id: int, name: str = Form(...), location: 
 
 
 @router.post("/invernaderos/{id}/eliminar")
-def greenhouse_delete(request: Request, id: int):
+def greenhouse_delete(request: Request, id: int, user=Depends(require_current_user_html)):
     """Delete greenhouse (with confirmation handled client-side)."""
     repo = get_greenhouse_repository(request)
     greenhouse = repo.get_by_id(id)
@@ -252,7 +349,7 @@ def greenhouse_delete(request: Request, id: int):
 
 
 @router.get("/invernaderos/{gh_id}/modulos/crear", response_class=HTMLResponse)
-def module_create_form(request: Request, gh_id: int):
+def module_create_form(request: Request, gh_id: int, user=Depends(require_current_user_html)):
     """Module creation form."""
     gh_repo = get_greenhouse_repository(request)
     greenhouse = gh_repo.get_by_id(gh_id)
@@ -269,6 +366,7 @@ def module_create_form(request: Request, gh_id: int):
         "crop_type": "Tomate Cherry",
         "width_m": "",
         "length_m": "",
+        "monitoring_frequency_days": "7",
         "errors": [],
     })
 
@@ -281,6 +379,8 @@ def module_create(
     crop_type: str = Form("Tomate Cherry"),
     width_m: str = Form(""),
     length_m: str = Form(""),
+    monitoring_frequency_days: str = Form(""),
+    user=Depends(require_current_user_html),
 ):
     """Process module creation."""
     errors: list[str] = []
@@ -307,6 +407,11 @@ def module_create(
         parsed_width = None
         parsed_length = None
 
+    # Parse monitoring frequency
+    parsed_frequency = _parse_monitoring_frequency(monitoring_frequency_days)
+    if monitoring_frequency_days.strip() and parsed_frequency is None:
+        errors.append("La frecuencia de monitoreo debe ser un número entero positivo.")
+
     if errors:
         return templates.TemplateResponse(request, "agricultural/module_form.html", {
             "title": "Crear Módulo",
@@ -318,6 +423,7 @@ def module_create(
             "crop_type": crop_type,
             "width_m": width_m,
             "length_m": length_m,
+            "monitoring_frequency_days": monitoring_frequency_days,
             "errors": errors,
         })
 
@@ -328,6 +434,7 @@ def module_create(
         crop_type=crop_type.strip() or "Tomate Cherry",
         width_m=parsed_width,
         length_m=parsed_length,
+        monitoring_frequency_days=parsed_frequency,
     )
     try:
         created = repo.create(gh_id, module)
@@ -343,6 +450,7 @@ def module_create(
             "crop_type": crop_type,
             "width_m": width_m,
             "length_m": length_m,
+            "monitoring_frequency_days": monitoring_frequency_days,
             "errors": errors,
         })
 
@@ -350,8 +458,9 @@ def module_create(
 
 
 @router.get("/modulos/{id}", response_class=HTMLResponse)
-def module_detail(request: Request, id: int):
+async def module_detail(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 3: Module Detail Screen."""
+
     repo = get_module_repository(request)
     module = repo.get_by_id(id)
     if module is None:
@@ -370,25 +479,64 @@ def module_detail(request: Request, id: int):
     history = build_monitoring_history(monitorings, metrics_by_monitoring)
     active_monitoring = build_active_monitoring_context(monitorings)
 
+    # Combined history (monitorings + activities)
+    from src.application.services.history_service import HistoryService
+
+    activity_log_repo = get_activity_log_repository(request)
+    activity_type_repo = get_activity_type_repository(request)
+    activity_logs = activity_log_repo.list_by_module(id)
+    activity_types = activity_type_repo.list_all()
+
+    history_service = HistoryService()
+    combined_history = history_service.build_combined_history(
+        monitorings=monitorings,
+        metrics_by_monitoring=metrics_by_monitoring,
+        activity_logs=activity_logs,
+        activity_types=activity_types,
+    )
+
     # Format dimensions for info panel
     if module.width_m is not None and module.length_m is not None:
         dimensions_display = f"{module.width_m} × {module.length_m} m"
     else:
         dimensions_display = "No configuradas"
 
+    # Compute monitoring due status
+    from src.application.services.alert_service import AlertService
+    from datetime import date
+    alert_service = AlertService()
+    monitoring_due_status = None
+    frequency = alert_service.get_effective_frequency(module)
+    if frequency is not None:
+        next_due = alert_service.calculate_next_monitoring_due(module, monitorings)
+        if next_due is None:
+            # No valid monitorings → pending
+            monitoring_due_status = "pending"
+        else:
+            today = date.today()
+            days_overdue = (today - next_due).days
+            if days_overdue > 0:
+                monitoring_due_status = "overdue"
+            elif days_overdue == 0:
+                monitoring_due_status = "due_today"
+            else:
+                monitoring_due_status = "up_to_date"
+
     return templates.TemplateResponse(request, "agricultural/module_detail.html", {
         "title": module.name,
         "module": module,
         "dimensions_display": dimensions_display,
         "history": history,
+        "combined_history": combined_history,
         "active_monitoring": active_monitoring,
+        "monitoring_due_status": monitoring_due_status,
         "show_back": True,
         "back_url": f"/invernaderos/{module.greenhouse_id}",
     })
 
 
 @router.get("/modulos/{id}/editar", response_class=HTMLResponse)
-def module_edit_form(request: Request, id: int):
+def module_edit_form(request: Request, id: int, user=Depends(require_current_user_html)):
     """Module edit form."""
     repo = get_module_repository(request)
     module = repo.get_by_id(id)
@@ -406,6 +554,7 @@ def module_edit_form(request: Request, id: int):
         "crop_type": module.crop_type,
         "width_m": module.width_m if module.width_m is not None else "",
         "length_m": module.length_m if module.length_m is not None else "",
+        "monitoring_frequency_days": module.monitoring_frequency_days if module.monitoring_frequency_days is not None else "7",
         "errors": [],
     })
 
@@ -418,6 +567,8 @@ def module_edit(
     crop_type: str = Form("Tomate Cherry"),
     width_m: str = Form(""),
     length_m: str = Form(""),
+    monitoring_frequency_days: str = Form(""),
+    user=Depends(require_current_user_html),
 ):
     """Process module edit."""
     errors: list[str] = []
@@ -444,6 +595,11 @@ def module_edit(
         parsed_width = None
         parsed_length = None
 
+    # Parse monitoring frequency
+    parsed_frequency = _parse_monitoring_frequency(monitoring_frequency_days)
+    if monitoring_frequency_days.strip() and parsed_frequency is None:
+        errors.append("La frecuencia de monitoreo debe ser un número entero positivo.")
+
     repo = get_module_repository(request)
     module = repo.get_by_id(id)
     if module is None:
@@ -461,6 +617,7 @@ def module_edit(
             "crop_type": crop_type,
             "width_m": width_m,
             "length_m": length_m,
+            "monitoring_frequency_days": monitoring_frequency_days,
             "errors": errors,
         })
 
@@ -470,6 +627,7 @@ def module_edit(
             "crop_type": crop_type.strip() or "Tomate Cherry",
             "width_m": parsed_width,
             "length_m": parsed_length,
+            "monitoring_frequency_days": parsed_frequency,
         })
     except DuplicateModuleError:
         errors.append("Ya existe un módulo con ese nombre en este invernadero.")
@@ -484,6 +642,7 @@ def module_edit(
             "crop_type": crop_type,
             "width_m": width_m,
             "length_m": length_m,
+            "monitoring_frequency_days": monitoring_frequency_days,
             "errors": errors,
         })
 
@@ -491,7 +650,7 @@ def module_edit(
 
 
 @router.post("/modulos/{id}/eliminar")
-def module_delete(request: Request, id: int):
+def module_delete(request: Request, id: int, user=Depends(require_current_user_html)):
     """Delete module (with confirmation handled client-side)."""
     repo = get_module_repository(request)
     module = repo.get_by_id(id)
@@ -509,8 +668,9 @@ def module_delete(request: Request, id: int):
 
 
 @router.get("/modulos/{id}/monitoreo/nuevo", response_class=HTMLResponse)
-def monitoring_setup(request: Request, id: int):
+async def monitoring_setup(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 4: Monitoring Setup Screen."""
+
     repo = get_module_repository(request)
     module = repo.get_by_id(id)
     if module is None:
@@ -540,6 +700,7 @@ def monitoring_start(
     width_m: str = Form(...),
     length_m: str = Form(...),
     notes: str = Form(""),
+    user=Depends(require_current_user_html),
 ):
     """Start a monitoring session for the given module.
 
@@ -684,8 +845,9 @@ def monitoring_start(
 
 
 @router.get("/monitoreos/{id}/ejecucion", response_class=HTMLResponse)
-def monitoring_execution(request: Request, id: int):
+async def monitoring_execution(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 5: Monitoring Execution Screen."""
+
     monitoring_repo = get_monitoring_repository(request)
     monitoring = monitoring_repo.get_by_id(id)
     if monitoring is None:
@@ -704,8 +866,9 @@ def monitoring_execution(request: Request, id: int):
 
 
 @router.get("/monitoreos/{id}/reporte", response_class=HTMLResponse)
-def monitoring_report(request: Request, id: int):
+async def monitoring_report(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 6: Monitoring Report Screen."""
+
     monitoring_repo = get_monitoring_repository(request)
     monitoring = monitoring_repo.get_by_id(id)
     if monitoring is None:
@@ -742,7 +905,7 @@ def monitoring_report(request: Request, id: int):
 
 
 @router.post("/monitoreos/{id}/abortar")
-def monitoring_abort(request: Request, id: int):
+def monitoring_abort(request: Request, id: int, user=Depends(require_current_user_html)):
     """Abort an active monitoring session (redirects to module detail).
 
     Delegates to MonitoringService.abort_session() which:
@@ -779,7 +942,7 @@ def monitoring_abort(request: Request, id: int):
 
 
 @router.post("/monitoreos/{id}/finalizar-captura")
-def monitoring_finalize_capture(request: Request, id: int):
+def monitoring_finalize_capture(request: Request, id: int, user=Depends(require_current_user_html)):
     """Finalize the capture phase and start deferred analysis.
 
     Delegates exclusively to MonitoringService.finalize_capture() which:
@@ -835,3 +998,499 @@ def monitoring_finalize_capture(request: Request, id: int):
             url=f"/monitoreos/{id}/ejecucion", status_code=303
         )
 
+
+
+# ---------------------------------------------------------------------------
+# Activity Log endpoints (Bitácora agrícola)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/modulos/{id}/actividades", response_class=HTMLResponse)
+async def activity_list(request: Request, id: int, user=Depends(require_current_user_html)):
+    """Activity log list for a module."""
+    from src.application.services.activity_service import ActivityService
+
+    module_repo = get_module_repository(request)
+    module = module_repo.get_by_id(id)
+    if module is None:
+        return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
+
+    activity_type_repo = get_activity_type_repository(request)
+    activity_log_repo = get_activity_log_repository(request)
+
+    service = ActivityService()
+    activities = service.list_activities_by_module(id, activity_log_repo, activity_type_repo)
+
+    return templates.TemplateResponse(request, "agricultural/activity_list.html", {
+        "title": f"Bitácora — {module.name}",
+        "module": module,
+        "activities": activities,
+        "show_back": True,
+        "back_url": f"/modulos/{id}",
+    })
+
+
+@router.get("/modulos/{id}/actividades/registrar", response_class=HTMLResponse)
+async def activity_create_form(request: Request, id: int, user=Depends(require_current_user_html)):
+    """Show form to register a new agricultural activity."""
+    from src.application.services.activity_service import ActivityService
+
+    module_repo = get_module_repository(request)
+    module = module_repo.get_by_id(id)
+    if module is None:
+        return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
+
+    activity_type_repo = get_activity_type_repository(request)
+    service = ActivityService()
+    activity_types = service.list_activity_types(activity_type_repo)
+
+    return templates.TemplateResponse(request, "agricultural/activity_form.html", {
+        "title": f"Registrar Actividad — {module.name}",
+        "module": module,
+        "activity_types": activity_types,
+        "errors": [],
+        "form_data": {},
+        "show_back": True,
+        "back_url": f"/modulos/{id}",
+    })
+
+
+@router.post("/modulos/{id}/actividades/registrar", response_class=HTMLResponse)
+def activity_create(
+    request: Request,
+    id: int,
+    activity_type_id: str = Form(...),
+    occurred_at_date: str = Form(""),
+    occurred_at_time: str = Form(""),
+    product_name: str = Form(""),
+    quantity: str = Form(""),
+    unit: str = Form(""),
+    notes: str = Form(""),
+    user=Depends(require_current_user_html),
+):
+    """Process activity registration form."""
+    from src.application.services.activity_service import (
+        ActivityService,
+        ActivityValidationError,
+        ActivityTypeNotFoundError,
+    )
+
+    module_repo = get_module_repository(request)
+    module = module_repo.get_by_id(id)
+    if module is None:
+        return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
+
+    activity_type_repo = get_activity_type_repository(request)
+    activity_log_repo = get_activity_log_repository(request)
+    service = ActivityService()
+
+    # Preserve form data for re-rendering on error
+    form_data = {
+        "activity_type_id": activity_type_id,
+        "occurred_at_date": occurred_at_date,
+        "occurred_at_time": occurred_at_time,
+        "product_name": product_name,
+        "quantity": quantity,
+        "unit": unit,
+        "notes": notes,
+    }
+
+    errors: list[str] = []
+
+    # Parse activity_type_id
+    parsed_type_id = 0
+    try:
+        parsed_type_id = int(activity_type_id)
+    except (ValueError, TypeError):
+        errors.append("Selecciona un tipo de actividad válido.")
+
+    # Parse occurred_at from date + time
+    occurred_at = None
+    if occurred_at_date.strip():
+        try:
+            date_str = occurred_at_date.strip()
+            time_str = occurred_at_time.strip() if occurred_at_time.strip() else "00:00"
+            occurred_at = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            errors.append("Formato de fecha/hora inválido.")
+
+    # Parse quantity
+    parsed_quantity = None
+    if quantity.strip():
+        try:
+            parsed_quantity = float(quantity.strip())
+        except ValueError:
+            errors.append("La cantidad debe ser un número válido.")
+
+    if errors:
+        activity_types = service.list_activity_types(activity_type_repo)
+        return templates.TemplateResponse(request, "agricultural/activity_form.html", {
+            "title": f"Registrar Actividad — {module.name}",
+            "module": module,
+            "activity_types": activity_types,
+            "errors": errors,
+            "form_data": form_data,
+            "show_back": True,
+            "back_url": f"/modulos/{id}",
+        })
+
+    # Call service
+    try:
+        service.create_activity(
+            module_id=id,
+            activity_type_id=parsed_type_id,
+            user_id=user.id,
+            product_name=product_name.strip() or None,
+            quantity=parsed_quantity,
+            unit=unit.strip() or None,
+            notes=notes.strip() or None,
+            occurred_at=occurred_at,
+            activity_type_repo=activity_type_repo,
+            activity_log_repo=activity_log_repo,
+        )
+    except ActivityValidationError as e:
+        errors.append(e.message)
+        activity_types = service.list_activity_types(activity_type_repo)
+        return templates.TemplateResponse(request, "agricultural/activity_form.html", {
+            "title": f"Registrar Actividad — {module.name}",
+            "module": module,
+            "activity_types": activity_types,
+            "errors": errors,
+            "form_data": form_data,
+            "show_back": True,
+            "back_url": f"/modulos/{id}",
+        })
+    except ActivityTypeNotFoundError as e:
+        errors.append(e.message)
+        activity_types = service.list_activity_types(activity_type_repo)
+        return templates.TemplateResponse(request, "agricultural/activity_form.html", {
+            "title": f"Registrar Actividad — {module.name}",
+            "module": module,
+            "activity_types": activity_types,
+            "errors": errors,
+            "form_data": form_data,
+            "show_back": True,
+            "back_url": f"/modulos/{id}",
+        })
+
+    return RedirectResponse(url=f"/modulos/{id}/actividades", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Export endpoints (Exportación ZIP)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/exportar", response_class=HTMLResponse)
+async def export_list(request: Request, user=Depends(require_current_user_html)):
+    """List export packages and show generate button."""
+    export_repo = get_export_package_repository(request)
+    packages = export_repo.list_by_user(user.id)
+
+    return templates.TemplateResponse(request, "agricultural/export_list.html", {
+        "title": "Exportación de datos",
+        "packages": packages,
+        "show_back": True,
+        "back_url": "/dashboard",
+    })
+
+
+@router.post("/exportar")
+def export_create(request: Request, user=Depends(require_current_user_html)):
+    """Generate a new ZIP export package."""
+    from src.application.services.export_service import ExportService
+    from src.domain.entities.export_package import ExportPackage
+
+    export_repo = get_export_package_repository(request)
+    gh_repo = get_greenhouse_repository(request)
+    module_repo = get_module_repository(request)
+    monitoring_repo = get_monitoring_repository(request)
+    metrics_repo = get_monitoring_metrics_repository(request)
+    snapshot_repo = get_snapshot_repository(request)
+    activity_type_repo = get_activity_type_repository(request)
+    activity_log_repo = get_activity_log_repository(request)
+
+    # Create export package record with status "generating"
+    package = ExportPackage(
+        created_by_user_id=user.id,
+        scope="full",
+        status="generating",
+    )
+    package = export_repo.create(package)
+
+    try:
+        # Fetch all data
+        greenhouses = gh_repo.get_all()
+        modules = []
+        for gh in greenhouses:
+            modules.extend(module_repo.get_by_greenhouse(gh.id))
+
+        monitorings = []
+        for mod in modules:
+            monitorings.extend(monitoring_repo.get_by_module(mod.id))
+
+        metrics_by_monitoring = {}
+        snapshots_by_monitoring = {}
+        for mon in monitorings:
+            met = metrics_repo.get_by_monitoring(mon.id)
+            if met:
+                metrics_by_monitoring[mon.id] = met
+            snapshots_by_monitoring[mon.id] = snapshot_repo.get_by_monitoring(mon.id)
+
+        activity_types = activity_type_repo.list_all()
+        activity_logs = activity_log_repo.list_recent(limit=10000)
+
+        # Generate ZIP
+        service = ExportService()
+        result = service.generate_export(
+            greenhouses=greenhouses,
+            modules=modules,
+            monitorings=monitorings,
+            metrics_by_monitoring=metrics_by_monitoring,
+            snapshots_by_monitoring=snapshots_by_monitoring,
+            activity_types=activity_types,
+            activity_logs=activity_logs,
+            export_package=package,
+        )
+
+        # Update package status
+        now = datetime.now()
+        if result.status == "completed":
+            export_repo.update(package.id, {
+                "status": "completed",
+                "file_path": result.file_path,
+                "file_size_bytes": result.file_size_bytes,
+                "records_count": result.records_count,
+                "images_count": result.images_count,
+                "completed_at": now,
+                "manifest_json": json.dumps(result.manifest, ensure_ascii=False),
+            })
+        else:
+            export_repo.update(package.id, {
+                "status": "error",
+                "error_message": result.error_message or "Error desconocido",
+                "completed_at": now,
+            })
+
+    except Exception as e:
+        export_repo.update(package.id, {
+            "status": "error",
+            "error_message": str(e),
+            "completed_at": datetime.now(),
+        })
+
+    return RedirectResponse(url=f"/exportar/{package.id}", status_code=303)
+
+
+@router.get("/exportar/{id}", response_class=HTMLResponse)
+async def export_detail(request: Request, id: int, user=Depends(require_current_user_html)):
+    """Show export package details."""
+    export_repo = get_export_package_repository(request)
+    package = export_repo.get_by_id(id)
+    if package is None:
+        return RedirectResponse(url="/exportar?error=Exportación+no+encontrada", status_code=303)
+
+    # Parse manifest for display
+    manifest = None
+    if package.manifest_json:
+        try:
+            manifest = json.loads(package.manifest_json)
+        except (json.JSONDecodeError, TypeError):
+            manifest = None
+
+    return templates.TemplateResponse(request, "agricultural/export_detail.html", {
+        "title": f"Exportación #{package.id}",
+        "package": package,
+        "manifest": manifest,
+        "show_back": True,
+        "back_url": "/exportar",
+    })
+
+
+def _is_safe_export_path(file_path: str) -> bool:
+    """Verify file_path is inside outputs/exports and is a .zip file."""
+    if not file_path:
+        return False
+    try:
+        resolved = Path(file_path).resolve()
+        exports_dir = Path("outputs/exports").resolve()
+        try:
+            resolved.relative_to(exports_dir)
+        except ValueError:
+            return False
+        if resolved.suffix.lower() != ".zip":
+            return False
+        if not resolved.is_file():
+            return False
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+@router.get("/exportar/{id}/descargar")
+async def export_download(request: Request, id: int, user=Depends(require_current_user_html)):
+    """Download the ZIP file for a completed export."""
+    from fastapi.responses import FileResponse
+
+    export_repo = get_export_package_repository(request)
+    package = export_repo.get_by_id(id)
+    if package is None:
+        return RedirectResponse(url="/exportar?error=Exportación+no+encontrada", status_code=303)
+
+    if package.status != "completed":
+        return RedirectResponse(url=f"/exportar/{id}?error=No+disponible", status_code=303)
+
+    if not package.file_path or not _is_safe_export_path(package.file_path):
+        return RedirectResponse(url=f"/exportar/{id}?error=Archivo+no+disponible", status_code=303)
+
+    file_path = Path(package.file_path)
+    return FileResponse(
+        path=str(file_path),
+        media_type="application/zip",
+        filename=file_path.name,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sync routes
+# ---------------------------------------------------------------------------
+
+
+@router.get("/sincronizacion", response_class=HTMLResponse)
+async def sync_status_page(request: Request, user=Depends(require_current_user_html)):
+    """Show sync status and manual sync trigger."""
+    monitoring_repo = get_monitoring_repository(request)
+    activity_log_repo = get_activity_log_repository(request)
+    export_repo = get_export_package_repository(request)
+
+    from src.application.services.sync_service import SyncService
+
+    monitorings = monitoring_repo.list_all()
+    activity_logs = activity_log_repo.list_all()
+
+    sync_service = SyncService()
+    sync_status = sync_service.compute_sync_status(monitorings, activity_logs)
+
+    # Get last export for display
+    user_exports = export_repo.list_by_user(user.id)
+    last_export = user_exports[0] if user_exports else None
+
+    error = request.query_params.get("error")
+    success_message = request.query_params.get("success")
+
+    return templates.TemplateResponse(request, "agricultural/sync_status.html", {
+        "title": "Sincronización",
+        "sync_status": sync_status,
+        "last_export": last_export,
+        "error": error,
+        "success_message": success_message,
+        "show_back": True,
+        "back_url": "/dashboard",
+    })
+
+
+@router.post("/sincronizacion/local")
+async def sync_local_trigger(request: Request, user=Depends(require_current_user_html)):
+    """Trigger a manual local sync (ZIP export + mark records as exported)."""
+    monitoring_repo = get_monitoring_repository(request)
+    activity_log_repo = get_activity_log_repository(request)
+    export_repo = get_export_package_repository(request)
+
+    from src.application.services.sync_service import SyncService
+    from src.application.services.export_service import ExportService
+    from src.domain.entities.export_package import ExportPackage
+
+    monitorings = monitoring_repo.list_all()
+    activity_logs = activity_log_repo.list_all()
+
+    # Check there are pending records
+    sync_service = SyncService()
+    status_info = sync_service.compute_sync_status(monitorings, activity_logs)
+    if status_info["total_pending"] == 0:
+        return RedirectResponse(
+            url="/sincronizacion?error=No+hay+registros+pendientes",
+            status_code=303,
+        )
+
+    # Create export package record
+    package = ExportPackage(
+        created_by_user_id=user.id,
+        scope="full",
+        status="pending",
+    )
+    package = export_repo.create(package)
+
+    # Generate the export (reuses existing ExportService)
+    from app.dependencies import (
+        get_greenhouse_repository,
+        get_module_repository,
+        get_snapshot_repository,
+        get_monitoring_metrics_repository,
+        get_activity_type_repository,
+    )
+
+    greenhouse_repo = get_greenhouse_repository(request)
+    module_repo = get_module_repository(request)
+    snapshot_repo = get_snapshot_repository(request)
+    metrics_repo = get_monitoring_metrics_repository(request)
+    activity_type_repo = get_activity_type_repository(request)
+
+    greenhouses = greenhouse_repo.get_all()
+    modules = []
+    for gh in greenhouses:
+        modules.extend(module_repo.get_by_greenhouse(gh.id))
+
+    all_activity_types = activity_type_repo.list_active()
+
+    metrics_by_monitoring = {}
+    snapshots_by_monitoring = {}
+    for m in monitorings:
+        metrics_by_monitoring[m.id] = metrics_repo.get_by_monitoring(m.id)
+        snapshots_by_monitoring[m.id] = snapshot_repo.get_by_monitoring(m.id)
+
+    export_service = ExportService()
+    export_result = export_service.generate_export(
+        greenhouses=greenhouses,
+        modules=modules,
+        monitorings=monitorings,
+        metrics_by_monitoring=metrics_by_monitoring,
+        snapshots_by_monitoring=snapshots_by_monitoring,
+        activity_types=all_activity_types,
+        activity_logs=activity_logs,
+        export_package=package,
+    )
+
+    # Update export package status
+    from datetime import datetime, timezone
+
+    if export_result.status == "completed":
+        export_repo.update(package.id, {
+            "status": "completed",
+            "file_path": export_result.file_path,
+            "file_size_bytes": export_result.file_size_bytes,
+            "records_count": export_result.records_count,
+            "images_count": export_result.images_count,
+            "completed_at": datetime.now(timezone.utc),
+            "manifest_json": json.dumps(export_result.manifest, ensure_ascii=False),
+        })
+    else:
+        export_repo.update(package.id, {
+            "status": "error",
+            "error_message": export_result.error_message or "Error desconocido",
+        })
+        return RedirectResponse(
+            url="/sincronizacion?error=La+exportación+local+falló",
+            status_code=303,
+        )
+
+    # Mark pending records as exported
+    result = sync_service.manual_local_sync(
+        export_result=export_result,
+        monitoring_repo=monitoring_repo,
+        activity_log_repo=activity_log_repo,
+        monitorings=monitorings,
+        activity_logs=activity_logs,
+    )
+
+    msg = f"Exportación+completada.+{result['updated_monitorings']}+monitoreos+y+{result['updated_activities']}+actividades+marcados+como+exportados"
+    return RedirectResponse(url=f"/sincronizacion?success={msg}", status_code=303)

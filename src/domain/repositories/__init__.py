@@ -21,6 +21,12 @@ from src.domain.repositories.monitoring_metrics_repository import (
     MonitoringMetricsRepository,
 )
 
+# Traceability and operations repositories (Spec 015)
+from src.domain.repositories.user_repository import UserRepository
+from src.domain.repositories.activity_type_repository import ActivityTypeRepository
+from src.domain.repositories.activity_log_repository import ActivityLogRepository
+from src.domain.repositories.export_package_repository import ExportPackageRepository
+
 __all__ = [
     # Legacy
     "ArtifactRepository",
@@ -33,4 +39,9 @@ __all__ = [
     "SnapshotRepository",
     "InspectionResultRepository",
     "MonitoringMetricsRepository",
+    # Traceability and operations
+    "UserRepository",
+    "ActivityTypeRepository",
+    "ActivityLogRepository",
+    "ExportPackageRepository",
 ]

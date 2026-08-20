@@ -20,7 +20,7 @@ from src.application.dtos.monitoring_dtos import (
     MonitoringStatusResponse,
     StartMonitoringRequest,
 )
-from app.dependencies import get_monitoring_service
+from app.dependencies import get_monitoring_service, require_current_user_api
 from src.application.services.monitoring_service import (
     ActiveSessionError,
     MonitoringNotFoundError,
@@ -65,6 +65,7 @@ router = APIRouter(prefix="/monitoring", tags=["monitoring"])
 async def start_monitoring(
     request: StartMonitoringRequest,
     service: MonitoringService = Depends(get_monitoring_service),
+    user=Depends(require_current_user_api),
 ) -> MonitoringResponse:
     """Start a new monitoring session for a module.
 
@@ -101,6 +102,7 @@ async def start_monitoring(
 async def pause_monitoring(
     monitoring_id: int,
     service: MonitoringService = Depends(get_monitoring_service),
+    user=Depends(require_current_user_api),
 ) -> MonitoringResponse:
     """Pause an active monitoring session.
 
@@ -131,6 +133,7 @@ async def pause_monitoring(
 async def resume_monitoring(
     monitoring_id: int,
     service: MonitoringService = Depends(get_monitoring_service),
+    user=Depends(require_current_user_api),
 ) -> MonitoringResponse:
     """Resume a paused monitoring session.
 
@@ -161,6 +164,7 @@ async def resume_monitoring(
 async def abort_monitoring(
     monitoring_id: int,
     service: MonitoringService = Depends(get_monitoring_service),
+    user=Depends(require_current_user_api),
 ) -> MonitoringResponse:
     """Abort a monitoring session and preserve partial results.
 
@@ -191,6 +195,7 @@ async def abort_monitoring(
 async def complete_monitoring(
     monitoring_id: int,
     service: MonitoringService = Depends(get_monitoring_service),
+    user=Depends(require_current_user_api),
 ) -> MonitoringResponse:
     """Signal monitoring traversal is complete and finalize the session.
 
@@ -223,6 +228,7 @@ async def get_monitoring_status(
     monitoring_id: int,
     request: Request,
     service: MonitoringService = Depends(get_monitoring_service),
+    user=Depends(require_current_user_api),
 ) -> MonitoringStatusResponse:
     """Get the current status, counters, and configuration of a monitoring session.
 

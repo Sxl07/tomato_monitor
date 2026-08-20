@@ -22,18 +22,34 @@ La capa de Dominio no depende de ninguna otra. La Infraestructura implementa las
 
 ## Componentes de infraestructura
 
-- `src/infrastructure/vision/` — motor de visión: detector, tracker, clasificador, madurez, scene gate, cropper, orchestrator, runner
-- `src/infrastructure/persistence/local/` — repositorios CSV + sistema de archivos
+- `src/infrastructure/vision/` — pipeline de visión por computador: detector, tracker, clasificador, madurez, scene gate, cropper, orchestrator, runner, annotation_renderer
+- `src/infrastructure/persistence/local/` — repositorios CSV + sistema de archivos (legacy benchmark mode)
+- `src/infrastructure/persistence/models/` — modelos SQLAlchemy ORM
+- `src/infrastructure/persistence/repositories/` — implementaciones SQL de repositorios
 - `src/infrastructure/persistence/cloud/` — stub preparado, no activo
 - `src/infrastructure/config/` — `settings.py` (rutas, device, modelos) y `thresholds.py` (umbrales operacionales)
+- `src/infrastructure/camera/` — frame sources: opencv, raspberry (Picamera2), video_file
+- `src/infrastructure/monitoring/` — thermal_monitor.py
 
 ## Entidades del dominio
 
+### Vision pipeline (existentes)
+
 `FruitDetection`, `HealthAssessment`, `MaturityAssessment`, `InspectionResult`, `InspectionSession`
+
+### Agricultural data model (existentes)
+
+`Greenhouse`, `Module`, `Monitoring`, `Snapshot`, `MonitoringMetrics`
+
+### Traceability and operations (Spec 015 — objetivo)
+
+`User`, `ActivityType`, `ActivityLog`, `ExportPackage`, `OperationalAlert` (calculada)
 
 ## Value objects (inmutables)
 
-`BoundingBox`, `FrameReference`, `ModelMetadata`
+`BoundingBox`, `FrameReference`, `ModelMetadata`, `MonitoringStatus` (FSM)
+
+Spec 015 objetivo: `SyncStatus`
 
 ## Políticas de dominio
 
@@ -42,7 +58,9 @@ La capa de Dominio no depende de ninguna otra. La Infraestructura implementa las
 
 ## Interfaces de repositorios (puertos)
 
-`SessionRepository`, `InspectionRepository`, `ArtifactRepository` — definidas en `src/domain/repositories/`
+Existentes: `SessionRepository`, `InspectionRepository`, `ArtifactRepository`, `GreenhouseRepository`, `ModuleRepository`, `MonitoringRepository`, `SnapshotRepository`, `InspectionResultRepository`, `MonitoringMetricsRepository`
+
+Spec 015 objetivo: `UserRepository`, `ActivityTypeRepository`, `ActivityLogRepository`, `ExportPackageRepository`
 
 ## Inyección de dependencias
 
@@ -56,40 +74,80 @@ Manual, en `app/dependencies.py`. Las instancias se crean por llamada. Sin conte
 - No mover lógica de dominio a la capa de presentación.
 - No usar `legacy/` como fuente de imports en código activo; es solo referencia.
 - Toda nueva capacidad de visión se integra en `src/infrastructure/vision/`, no en `legacy/`.
+- Rutas en `app/routes/` no contienen lógica de negocio; delegan a servicios en `src/application/`.
 
-## Reglas para hardware y orquestación robótica
+## Reglas para el pipeline de monitoreo portátil
 
 ### 1. Single Camera Owner
 
 - Solo un componente puede abrir físicamente la cámara durante una sesión de monitoreo.
 - `CaptureWorker` es el owner exclusivo durante la fase de captura.
-- Un servicio de navegación visual (`VisualNavigationService`) NO debe abrir la cámara directamente.
-- La navegación visual consume frames, snapshots o metadatos proporcionados por el owner de cámara (buffer compartido o snapshots guardados).
+- Ningún otro servicio debe abrir la cámara si CaptureWorker está activo.
 - Esta regla previene conflictos con Picamera2 que solo permite una apertura concurrente.
 
-### 2. RobotOrchestrator por encima de MonitoringService
+### 2. Capture-first pipeline (estable, no reescribir)
 
-- El futuro `RobotOrchestrator` coordina preflight, movimiento del robot y monitoreo.
-- No reemplaza `MonitoringService` — lo invoca.
-- No reemplaza `CaptureWorker` — MonitoringService sigue creándolo.
-- No reemplaza `SnapshotAnalysisService` — el flujo diferido permanece intacto.
-- No mezcla lógica GPIO/motores con lógica de negocio de monitoreo.
-- El orquestador tiene su propia máquina de estados, ortogonal a `MonitoringState`.
+El flujo de producción actual es:
 
-### 3. Hardware via ports/adapters
+```
+Operario recorre módulo con Raspberry → CaptureWorker captura snapshots (sin inferencia)
+  → Operario finaliza captura → cámara se libera
+    → SnapshotAnalysisService procesa snapshots diferidos (detection + health + maturity + tracking)
+      → Reporte con métricas y snapshots anotados
+```
 
-- Motores, batería, sensores de hardware y navegación deben tener interfaces abstractas (ABCs) en `src/domain/interfaces/` o `src/application/`.
-- Las implementaciones concretas viven en `src/infrastructure/robot/`.
-- Antes de implementar un adapter real (GPIO, BTS7960, etc.), debe existir un adapter `NoOp` o `Simulated` que permita desarrollo y testing sin hardware.
-- Los adapters NoOp logean llamadas sin efecto. Los Simulated mantienen estado virtual (posición, batería).
+Componentes estables:
+- `CaptureWorker` — loop de captura, Scene Gate, snapshot saving
+- `SnapshotAnalysisService` — análisis diferido, tracking cross-snapshot, thermal pause
+- `MonitoringService` — lifecycle orchestration (start, finalize_capture, run_analysis, complete)
+- `MonitoringRuntimeRegistry` — registry de workers/threads, finalization claims
+- `MonitoringState` FSM — INITIALIZING → RUNNING → ANALYZING → COMPLETED
 
-### 4. Integración progresiva de hardware
+### 3. Servicios de aplicación objetivo (Spec 015)
 
-El hardware se integra en fases estrictas:
+| Servicio | Responsabilidad |
+|---|---|
+| `AuthService` | Hashing, login, sesión local offline |
+| `AlertService` | Cálculo de alertas operativas a partir del estado del sistema |
+| `ActivityService` | Registro y consulta de actividades agrícolas |
+| `ExportService` | Generación de paquetes ZIP con datos e imágenes |
+| `SyncService` | Orquestación de sincronización manual provider-agnostic |
+| `DashboardContextBuilder` | Construcción de indicadores para el dashboard |
 
-1. **Simulación**: Adapters simulados, RobotOrchestrator funcional end-to-end sin hardware real. Tests automatizados.
-2. **Scripts aislados GPIO**: Validación de señales y motores en `scripts/hardware/`, sin el sistema completo.
-3. **Adapter concreto**: Implementación de `BTS7960MotorController` (u otro) implementando el ABC de dominio.
-4. **Integración**: Conexión del adapter real con el flujo de monitoreo completo.
+### 4. Autenticación (Spec 015)
 
-Cada fase requiere su propia validación antes de avanzar a la siguiente.
+- Implementada como dependency inyectable (`Depends()`), no como middleware global.
+- Rutas protegidas requieren usuario autenticado.
+- Rutas públicas: login, static, health.
+- Tests existentes no se rompen: fixture mock user en conftest.py.
+
+## Fuera de alcance activo
+
+Los siguientes componentes fueron planificados para un enfoque robótico anterior pero están **fuera del alcance activo** del proyecto:
+
+- `RobotOrchestrator` — no se implementará
+- Motor adapters (BTS7960, NoOp, Simulated) — no se implementarán
+- `src/infrastructure/robot/` — directorio no existe y no se creará
+- GPIO movement scripts — no se implementarán
+- Autonomous navigation — no se implementará
+- Battery monitor — no se implementará
+- Robot safety controller — no se implementará
+
+### Legacy domain interfaces (pendientes de auditoría)
+
+Los siguientes archivos existen en `src/domain/interfaces/` pero no son referenciados por código activo ni tests:
+
+- `robot_movement_service.py` — interfaz abstracta para movimiento de robot (no usada)
+- `decision_service.py` — interfaz abstracta para decisiones de movimiento (no usada)
+
+Estos archivos serán evaluados para remoción en una task futura, solo después de confirmar que no tienen dependencias activas.
+
+## Reglas para Kiro
+
+- Cuando se diseñen nuevas capacidades, respetar la separación de capas.
+- No introducir RobotOrchestrator, motor adapters, GPIO movement, ni autonomous navigation.
+- No tocar CaptureWorker, SnapshotAnalysisService, MonitoringService ni MonitoringState salvo bugs críticos.
+- Nuevos servicios de aplicación (auth, alerts, activities, export, sync) van en `src/application/services/`.
+- Nuevas entidades van en `src/domain/entities/`.
+- Nuevos modelos de persistencia van en `src/infrastructure/persistence/models/`.
+- Auth se implementa como Depends(), no middleware global, para proteger tests existentes.

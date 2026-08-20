@@ -31,6 +31,9 @@ class ModuleModel(Base):
     )
     width_m: Mapped[float | None] = mapped_column(Float, nullable=True)
     length_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    monitoring_frequency_days: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow
     )
@@ -42,4 +45,7 @@ class ModuleModel(Base):
     greenhouse = relationship("GreenhouseModel", back_populates="modules")
     monitorings = relationship(
         "MonitoringModel", back_populates="module", cascade="all, delete-orphan"
+    )
+    activity_logs = relationship(
+        "ActivityLogModel", back_populates="module", cascade="all, delete-orphan"
     )

@@ -18,6 +18,18 @@ from src.infrastructure.persistence.repositories.sql_monitoring_repository impor
 from src.infrastructure.persistence.repositories.sql_snapshot_repository import (
     SqlSnapshotRepository,
 )
+from src.infrastructure.persistence.repositories.sql_user_repository import (
+    SqlUserRepository,
+)
+from src.infrastructure.persistence.repositories.sql_activity_type_repository import (
+    SqlActivityTypeRepository,
+)
+from src.infrastructure.persistence.repositories.sql_activity_log_repository import (
+    SqlActivityLogRepository,
+)
+from src.infrastructure.persistence.repositories.sql_export_package_repository import (
+    SqlExportPackageRepository,
+)
 
 __all__ = [
     "SqlGreenhouseRepository",
@@ -26,4 +38,8 @@ __all__ = [
     "SqlMonitoringMetricsRepository",
     "SqlMonitoringRepository",
     "SqlSnapshotRepository",
+    "SqlUserRepository",
+    "SqlActivityTypeRepository",
+    "SqlActivityLogRepository",
+    "SqlExportPackageRepository",
 ]

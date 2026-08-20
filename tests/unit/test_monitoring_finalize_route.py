@@ -25,8 +25,14 @@ from src.domain.exceptions import InvalidTransitionError
 @pytest.fixture
 def app():
     """Minimal FastAPI app with agricultural router."""
+    from types import SimpleNamespace
+    from app.dependencies import require_current_user_html
+
     application = FastAPI()
     application.include_router(router)
+    application.dependency_overrides[require_current_user_html] = lambda: SimpleNamespace(
+        id=1, full_name="Test", email="test@test.com", role="operator"
+    )
     return application
 
 

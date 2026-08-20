@@ -1,0 +1,58 @@
+{% extends "base_agricultural.html" %}
+
+{% block header_title %}Bitácora agrícola{% endblock %}
+
+{% block header_actions %}
+<a href="/modulos/{{ module.id }}/actividades/registrar" class="btn-icon" aria-label="Registrar actividad">+</a>
+{% endblock %}
+
+{% block content %}
+<div class="info-panel">
+    <div class="info-row">
+        <span class="info-label">Módulo</span>
+        <span class="info-value">{{ module.name }}</span>
+    </div>
+</div>
+
+<a href="/modulos/{{ module.id }}/actividades/registrar" class="btn btn-primary btn-full-width" style="margin-bottom: 16px;">Registrar actividad</a>
+
+{% if activities %}
+<div class="card-list">
+    {% for item in activities %}
+    <div class="card">
+        <div class="card-body">
+            <h3 class="card-title">{{ item.activity_type_name }}</h3>
+            <p class="card-subtitle">
+                {% if item.occurred_at %}
+                {{ item.occurred_at.strftime('%d/%m/%Y %H:%M') }}
+                {% endif %}
+                {% if item.category %}
+                 — {{ item.category }}
+                {% endif %}
+            </p>
+            {% if item.product_name %}
+            <p class="card-subtitle">Producto: {{ item.product_name }}</p>
+            {% endif %}
+            {% if item.quantity %}
+            <p class="card-subtitle">Cantidad: {{ item.quantity }} {{ item.unit or '' }}</p>
+            {% endif %}
+            {% if item.notes %}
+            <p class="card-subtitle">{{ item.notes }}</p>
+            {% endif %}
+            {% if item.sync_status == 'pending' %}
+            <span class="badge badge-warning">Pendiente de exportar</span>
+            {% elif item.sync_status == 'exported' %}
+            <span class="badge badge-success">Exportado</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No hay actividades registradas para este módulo.</p>
+</div>
+{% endif %}
+
+<a href="/modulos/{{ module.id }}" class="btn btn-secondary btn-full-width" style="margin-top: 16px;">Volver al módulo</a>
+{% endblock %}

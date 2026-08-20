@@ -19,7 +19,12 @@ from src.infrastructure.persistence.models import (  # noqa: F401
     SnapshotModel,
     InspectionResultModel,
     MonitoringMetricsModel,
+    UserModel,
+    ActivityTypeModel,
+    ActivityLogModel,
+    ExportPackageModel,
 )
+from src.domain.entities.user import User
 
 
 @pytest.fixture(scope="session")
@@ -73,3 +78,51 @@ def db_session(db_manager):
     session = db_manager.get_session()
     yield session
     session.close()
+
+
+# ---------------------------------------------------------------------------
+# Authentication fixtures for TestClient
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def test_user():
+    """A test user for authenticated requests."""
+    return User(
+        id=1,
+        full_name="Test Operator",
+        email="test@example.com",
+        password_hash="pbkdf2_sha256$260000$aaaaaaaaaaaaaaaa$bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        role="operator",
+    )
+
+
+@pytest.fixture
+def authenticated_client(test_user):
+    """TestClient with authentication dependency overridden.
+
+    This ensures existing tests that hit protected routes still work
+    without needing a real login cookie.
+    """
+    from app.main import app
+    from app.dependencies import get_current_user_optional, require_current_user_html, require_current_user_api
+    from fastapi import Request
+
+    async def _override_optional(request: Request):
+        return test_user
+
+    async def _override_html(request: Request):
+        return test_user
+
+    async def _override_api(request: Request):
+        return test_user
+
+    app.dependency_overrides[get_current_user_optional] = _override_optional
+    app.dependency_overrides[require_current_user_html] = _override_html
+    app.dependency_overrides[require_current_user_api] = _override_api
+    from fastapi.testclient import TestClient
+    with TestClient(app) as client:
+        yield client
+    app.dependency_overrides.pop(get_current_user_optional, None)
+    app.dependency_overrides.pop(require_current_user_html, None)
+    app.dependency_overrides.pop(require_current_user_api, None)

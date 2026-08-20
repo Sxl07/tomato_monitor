@@ -58,3 +58,13 @@ class MonitoringRepository(ABC):
         Monitoring → MonitoringMetrics.
         """
         ...
+
+    @abstractmethod
+    def list_all(self) -> list[Monitoring]:
+        """Return all monitorings, ordered by started_at descending."""
+        ...
+
+    @abstractmethod
+    def update_sync_status(self, ids: list[int], status: str) -> None:
+        """Update sync_status for the given monitoring ids."""
+        ...

@@ -128,7 +128,7 @@ class TestTemplateActiveMonitoring:
         assert "Ya existe un monitoreo activo para este módulo." in template
 
     def test_keeps_historial(self, template):
-        assert "Historial de Monitoreos" in template
+        assert "Historial del módulo" in template
 
     def test_keeps_report_link(self, template):
-        assert "/monitoreos/{{ item.id }}/reporte" in template
+        assert "item.url" in template

@@ -11,6 +11,17 @@
 <div class="alert alert-error" role="alert">{{ error }}</div>
 {% endif %}
 
+{% if alerts %}
+<div class="alerts-section" style="margin-bottom: 16px;">
+    <h2 class="section-header">⚠️ Alertas operativas</h2>
+    {% for alert in alerts[:5] %}
+    <div class="alert {% if alert.severity == 'critical' %}alert-error{% elif alert.severity == 'warning' %}alert-warning{% else %}alert-info{% endif %}" role="alert" style="margin-bottom: 8px;">
+        <strong>{{ alert.title }}</strong>: {{ alert.message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
 {% if greenhouses %}
 <div class="card-list">
     {% for gh in greenhouses %}
