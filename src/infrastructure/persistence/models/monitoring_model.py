@@ -29,8 +29,8 @@ class MonitoringModel(Base):
         DateTime, nullable=False, default=utcnow
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    width_m: Mapped[float] = mapped_column(Float, nullable=False)
-    length_m: Mapped[float] = mapped_column(Float, nullable=False)
+    width_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    length_m: Mapped[float | None] = mapped_column(Float, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     total_snapshots: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_detections: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

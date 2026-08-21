@@ -9,13 +9,15 @@
 # See: docs/thesis-notes/limitations.md for known reproducibility risks
 
 # --- Python version ---
-# Python 3.11 (system default on Raspberry Pi OS Bookworm)
+# Python 3.13.5 (validated post-Spec 015 environment)
+# Note: Original baseline was Python 3.11 (Bookworm system default)
 
 # --- Core framework ---
 fastapi==0.115.12
 uvicorn==0.34.3
 jinja2==3.1.6
 python-multipart==0.0.20
+SQLAlchemy==2.0.41
 
 # --- Deep learning ---
 # ARM64 note: torch and torchvision wheels for aarch64 may require

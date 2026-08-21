@@ -137,8 +137,8 @@ class MonitoringService:
     def start_session(
         self,
         module_id: int,
-        width_m: float,
-        length_m: float,
+        width_m: "float | None",
+        length_m: "float | None",
         notes: Optional[str],
         frame_source: FrameSource,
         db_session: Session,
@@ -148,8 +148,8 @@ class MonitoringService:
 
         Args:
             module_id: The module to monitor (must exist).
-            width_m: Module width in meters (confirmed by farmer).
-            length_m: Module length in meters (confirmed by farmer).
+            width_m: Module width in meters (confirmed by farmer), or None if not provided.
+            length_m: Module length in meters, or None if not provided.
             notes: Optional farmer notes for this session.
             frame_source: Camera or video frame source.
             db_session: SQLAlchemy session for the worker to commit results.

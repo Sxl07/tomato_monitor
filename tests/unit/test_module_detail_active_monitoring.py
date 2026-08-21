@@ -73,10 +73,11 @@ class TestBuildActiveMonitoringContext:
 
     def test_started_at_display_formatted(self):
         from app.context_builders import build_active_monitoring_context
+        # 2025-07-17 01:39 UTC = 2025-07-16 20:39 Bogota
         m = _make_monitoring(1, "running", datetime(2025, 7, 17, 1, 39, 0))
         result = build_active_monitoring_context([m])
-        assert "17 Jul 2025" in result.started_at_display
-        assert "01:39" in result.started_at_display
+        assert "16 Jul 2025" in result.started_at_display
+        assert "20:39" in result.started_at_display
 
     def test_does_not_mutate_input(self):
         from app.context_builders import build_active_monitoring_context
@@ -128,7 +129,7 @@ class TestTemplateActiveMonitoring:
         assert "Ya existe un monitoreo activo para este módulo." in template
 
     def test_keeps_historial(self, template):
-        assert "Historial del módulo" in template
+        assert "Historial general" in template
 
     def test_keeps_report_link(self, template):
         assert "item.url" in template

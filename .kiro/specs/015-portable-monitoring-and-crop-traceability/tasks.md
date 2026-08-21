@@ -164,3 +164,25 @@ El operario usa una Raspberry Pi 5 con pantalla táctil como dispositivo portát
 - Avoid unsupported dashboard indicators — only show data backed by real system state.
 - Auth implementation must not break existing tests; use injectable dependencies, not global middleware.
 - New SQLAlchemy columns added to existing tables MUST be nullable or have defaults for migration safety.
+
+## 12. Post-Raspberry hardware validation stabilization (Spec 016)
+
+Fixes applied after physical validation on Raspberry Pi 5 + AI Camera + DSI 7" + portrait orientation.
+See `.kiro/specs/016-post-raspberry-stabilization/` for detailed requirements and design.
+
+- [x] Fix 1: Remove redundant "Acceso rápido" dashboard section (duplicates bottom nav)
+- [x] Fix 2: Replace all emoji icons with inline SVG icon system (RPi OS lacks emoji fonts)
+- [x] Fix 3: CSS safe margins 20px for portrait — no overflow-x: hidden
+- [x] Fix 4: Optional dimensions (width_m/length_m) — end-to-end with SQLite migration
+- [x] Fix 5: EDGE thermal thresholds adjusted (pause=78°C, resume=72°C)
+- [x] Fix 6: Centralized UTC→Bogota timezone conversion for all displayed timestamps
+- [x] Fix 7: LogService uses timezone-aware UTC with 'Z' suffix
+- [x] Fix 8: Module history section title updated to "Historial general"
+- [x] Fix 9: Export description clarified for operator understanding
+- [x] Fix 10: Export image path resolution uses snapshot.image_path + path_sanitizer.relative_to()
+- [x] Fix 11: Orphan export reconciliation at startup (generating→error)
+- [x] Fix 12: Sync UI shows "Modo local" indicator + state explanations
+- [x] Fix 13: httpx declared in requirements-test.txt overlay + SQLAlchemy in requirements-raspberry.txt
+- [x] Fix 14: Activity form converts local (Bogota) time input to UTC before persistence
+
+**Verified:** 1266 tests pass, 0 failures, 0 skipped. Architecture boundaries, pipeline integrity, and preservation properties validated. Corrective review applied (false-positive tests rewritten, init_db migration connected, orphan reconciliation via real function, timezone applied to all display layers).

@@ -6,7 +6,7 @@ Designed for the Activity Log Panel UI — entries are NOT persisted to SQLite.
 
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from threading import Lock
 from typing import Optional
@@ -67,7 +67,7 @@ class LogService:
             The created LogEntry instance.
         """
         entry = LogEntry(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             level=level,
             source=source,
             message=message,
@@ -100,6 +100,9 @@ class LogService:
             entries = list(session_deque)
 
         if since is not None:
+            # Normalize: if since is naive, assume UTC
+            if since.tzinfo is None:
+                since = since.replace(tzinfo=timezone.utc)
             entries = [e for e in entries if e.timestamp > since]
 
         return entries

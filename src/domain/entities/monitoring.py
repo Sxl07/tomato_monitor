@@ -15,8 +15,8 @@ class Monitoring:
     """A monitoring session capturing snapshots and running inference on a module."""
 
     module_id: int
-    width_m: float
-    length_m: float
+    width_m: Optional[float] = None
+    length_m: Optional[float] = None
     id: Optional[int] = None
     status: str = field(default="initializing")
     started_at: Optional[datetime] = None

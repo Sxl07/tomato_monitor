@@ -1,4 +1,5 @@
 {% extends "base_agricultural.html" %}
+{% from "agricultural/partials/icons.html" import icon %}
 
 {% block header_title %}{{ title }}{% endblock %}
 
@@ -61,7 +62,7 @@
             <div id="analysis-progress-fill" class="progress-bar-fill" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width: 0%;"></div>
         </div>
         <div id="analysis-thermal-alert" class="alert alert--warning hidden" style="margin-top: 12px;">
-            <span class="alert-icon">🌡️</span>
+            <span class="alert-icon">{{ icon('thermometer') }}</span>
             <span id="analysis-thermal-text">Análisis pausado por temperatura alta</span>
             <span id="analysis-thermal-stats" class="text-secondary" style="display: block; font-size: var(--font-size-small); margin-top: 4px;"></span>
         </div>
@@ -71,7 +72,7 @@
 {# --- Paused --- #}
 <div id="status-paused" class="execution-status-block {% if monitoring.status != 'paused' %}hidden{% endif %}">
     <div class="alert alert--warning">
-        <span class="alert-icon">⚠️</span>
+        <span class="alert-icon">{{ icon('warning') }}</span>
         <span id="pause-reason">Pausado</span>
     </div>
 
@@ -117,7 +118,7 @@
 
 {# --- Temperature warning banner (hidden by default, shown by JS) --- #}
 <div id="temp-warning" class="alert alert--warning hidden">
-    <span class="alert-icon">🌡️</span>
+    <span class="alert-icon">{{ icon('thermometer') }}</span>
     <span id="temp-warning-text">Temperatura alta — El sistema puede pausarse</span>
 </div>
 

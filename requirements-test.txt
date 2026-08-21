@@ -1,0 +1,15 @@
+# Test dependencies - pure overlay.
+# Install AFTER your runtime requirements file:
+#
+#   PC (development):
+#     pip install -r requirements.txt -r requirements-test.txt
+#
+#   Raspberry Pi (runtime + tests):
+#     pip install -r requirements-raspberry.txt -r requirements-test.txt
+#
+# Do NOT add -r requirements.txt here - it would conflict with
+# requirements-raspberry.txt when both are used on the Raspberry Pi.
+
+pytest>=8.0.0
+hypothesis>=6.100.0
+httpx>=0.27.0

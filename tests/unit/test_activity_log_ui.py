@@ -296,7 +296,7 @@ class TestActivityFormPost:
         assert created_logs[0].occurred_at.year == 2025
         assert created_logs[0].occurred_at.month == 6
         assert created_logs[0].occurred_at.day == 15
-        assert created_logs[0].occurred_at.hour == 10
+        assert created_logs[0].occurred_at.hour == 15  # 10:00 Bogota = 15:00 UTC
         assert created_logs[0].occurred_at.minute == 0
 
     def test_allows_quantity_false_ignores_quantity_and_unit_from_ui(self):

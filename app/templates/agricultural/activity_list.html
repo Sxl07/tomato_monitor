@@ -24,7 +24,7 @@
             <h3 class="card-title">{{ item.activity_type_name }}</h3>
             <p class="card-subtitle">
                 {% if item.occurred_at %}
-                {{ item.occurred_at.strftime('%d/%m/%Y %H:%M') }}
+                {{ item.occurred_at | to_bogota }}
                 {% endif %}
                 {% if item.category %}
                  — {{ item.category }}

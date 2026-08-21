@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from src.application.utils.timezone import format_bogota
+
 
 _MONITORING_BADGES = {
     "completed": ("Completado", "badge-success"),
@@ -22,18 +24,18 @@ _MONITORING_BADGES = {
 }
 
 _ACTIVITY_ICONS = {
-    "riego": "💧",
-    "fertilizacion": "🌱",
-    "fitosanitario": "🧪",
-    "cosecha": "🍅",
-    "poda": "✂️",
-    "deshoje": "🍃",
-    "tutorado": "🌿",
-    "limpieza": "🧹",
-    "inspeccion_visual": "👁️",
-    "monitoreo_plagas": "🔍",
-    "monitoreo_enfermedades": "🔍",
-    "observacion_general": "📝",
+    "riego": "watering",
+    "fertilizacion": "fertilization",
+    "fitosanitario": "phytosanitary",
+    "cosecha": "harvest",
+    "poda": "pruning",
+    "deshoje": "defoliation",
+    "tutorado": "trellising",
+    "limpieza": "cleaning",
+    "inspeccion_visual": "inspection",
+    "monitoreo_plagas": "pest_monitoring",
+    "monitoreo_enfermedades": "pest_monitoring",
+    "observacion_general": "observation",
 }
 
 
@@ -115,22 +117,14 @@ class HistoryService:
             "item_type": "monitoring",
             "id": monitoring.id,
             "occurred_at": monitoring.started_at,
-            "date_display": (
-                monitoring.started_at.strftime("%d/%m/%Y")
-                if monitoring.started_at
-                else ""
-            ),
-            "time_display": (
-                monitoring.started_at.strftime("%H:%M")
-                if monitoring.started_at
-                else ""
-            ),
+            "date_display": format_bogota(monitoring.started_at, "%d/%m/%Y"),
+            "time_display": format_bogota(monitoring.started_at, "%H:%M"),
             "title": "Monitoreo visual",
             "subtitle": subtitle,
             "status": monitoring.status,
             "badge_label": badge_label,
             "badge_class": badge_class,
-            "icon": "📷",
+            "icon_key": "monitoring",
             "url": url,
             "action_label": action_label,
         }
@@ -140,7 +134,7 @@ class HistoryService:
         name = activity_type.name if activity_type else "Actividad agrícola"
         category = activity_type.category if activity_type else ""
         code = activity_type.code if activity_type else ""
-        icon = _ACTIVITY_ICONS.get(code, "📋")
+        icon_key = _ACTIVITY_ICONS.get(code, "note")
 
         # Build subtitle from available fields
         parts: list[str] = []
@@ -156,18 +150,14 @@ class HistoryService:
             "item_type": "activity",
             "id": log.id,
             "occurred_at": log.occurred_at,
-            "date_display": (
-                log.occurred_at.strftime("%d/%m/%Y") if log.occurred_at else ""
-            ),
-            "time_display": (
-                log.occurred_at.strftime("%H:%M") if log.occurred_at else ""
-            ),
+            "date_display": format_bogota(log.occurred_at, "%d/%m/%Y"),
+            "time_display": format_bogota(log.occurred_at, "%H:%M"),
             "title": name,
             "subtitle": subtitle,
             "status": None,
             "badge_label": category or "Actividad",
             "badge_class": "badge-info",
-            "icon": icon,
+            "icon_key": icon_key,
             "url": None,
             "action_label": None,
         }

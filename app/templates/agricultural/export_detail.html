@@ -1,4 +1,5 @@
 {% extends "base_agricultural.html" %}
+{% from "agricultural/partials/icons.html" import icon %}
 
 {% block header_title %}Exportación #{{ package.id }}{% endblock %}
 
@@ -29,9 +30,9 @@
     <div class="card" style="margin-bottom: 16px;">
         <div class="card-body">
             <p><strong>Alcance:</strong> {{ package.scope }}</p>
-            <p><strong>Creada:</strong> {% if package.created_at %}{{ package.created_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</p>
+            <p><strong>Creada:</strong> {% if package.created_at %}{{ package.created_at | to_bogota }}{% endif %}</p>
             {% if package.completed_at %}
-            <p><strong>Completada:</strong> {{ package.completed_at.strftime('%d/%m/%Y %H:%M') }}</p>
+            <p><strong>Completada:</strong> {{ package.completed_at | to_bogota }}</p>
             {% endif %}
             <p><strong>Registros:</strong> {{ package.records_count }}</p>
             <p><strong>Imágenes:</strong> {{ package.images_count }}</p>
@@ -57,7 +58,7 @@
             <div style="margin-top: 8px;">
                 <p class="text-secondary"><strong>Avisos:</strong></p>
                 {% for warning in manifest.warnings %}
-                <p class="text-secondary">⚠️ {{ warning }}</p>
+                <p class="text-secondary">{{ icon('warning') }} {{ warning }}</p>
                 {% endfor %}
             </div>
             {% endif %}

@@ -29,6 +29,7 @@ from src.application.validators import (
     validate_greenhouse_name,
     validate_module_name,
     validate_dimensions,
+    validate_optional_dimensions,
     validate_notes,
 )
 from app.dependencies import (
@@ -48,9 +49,12 @@ from src.infrastructure.config.settings import DETECTION_MODEL_PATH
 from src.domain.entities.greenhouse import Greenhouse
 from src.domain.entities.module import Module
 from src.domain.exceptions import DuplicateModuleError
+from src.application.utils.jinja_filters import register_filters
+from src.application.utils.timezone import bogota_to_utc
 
 router = APIRouter(tags=["agricultural-ui"])
 templates = Jinja2Templates(directory="app/templates")
+register_filters(templates)
 
 import logging as _logging
 
@@ -697,8 +701,8 @@ async def monitoring_setup(request: Request, id: int, user=Depends(require_curre
 def monitoring_start(
     request: Request,
     id: int,
-    width_m: str = Form(...),
-    length_m: str = Form(...),
+    width_m: str = Form(""),
+    length_m: str = Form(""),
     notes: str = Form(""),
     user=Depends(require_current_user_html),
 ):
@@ -728,10 +732,10 @@ def monitoring_start(
 
     # Validate dimensions and notes using application validators
     errors: list[str] = []
-    width: float = 0.0
-    length: float = 0.0
+    width: "float | None" = None
+    length: "float | None" = None
     try:
-        width, length = validate_dimensions(width_m, length_m)
+        width, length = validate_optional_dimensions(width_m, length_m)
     except ValidationError as e:
         errors.append(e.message)
 
@@ -750,8 +754,9 @@ def monitoring_start(
             "back_url": f"/modulos/{id}",
         })
 
-    # Auto-save dimensions to module record (R4.7)
-    repo.update(id, {"width_m": width, "length_m": length})
+    # Auto-save dimensions to module record only when provided (R4.7)
+    if width is not None and length is not None:
+        repo.update(id, {"width_m": width, "length_m": length})
 
     # Construct dependencies for MonitoringService.start_session()
     # 1. Frame source (camera backend — picamera2 on RPi, OpenCV on PC)
@@ -1110,7 +1115,8 @@ def activity_create(
         try:
             date_str = occurred_at_date.strip()
             time_str = occurred_at_time.strip() if occurred_at_time.strip() else "00:00"
-            occurred_at = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+            local_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+            occurred_at = bogota_to_utc(local_dt)
         except ValueError:
             errors.append("Formato de fecha/hora inválido.")
 

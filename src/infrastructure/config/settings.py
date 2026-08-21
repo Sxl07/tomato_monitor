@@ -109,8 +109,8 @@ EDGE_PROFILE = ExecutionProfile(
     thermal_critical_temp=78.0,
     thermal_resume_temp=65.0,
     analysis_skip_maturity=False,
-    analysis_thermal_pause_threshold=72.0,
-    analysis_thermal_resume_threshold=65.0,
+    analysis_thermal_pause_threshold=78.0,  # pause at >= 78C
+    analysis_thermal_resume_threshold=72.0,
     memory_warning_rss_mb=3000,
 )
 
