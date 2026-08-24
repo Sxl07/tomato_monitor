@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
+from src.application.utils.timezone import to_bogota
 from src.infrastructure.security.path_sanitizer import validate_safe_path, PathTraversalError
 from src.infrastructure.config.settings import OUTPUTS_DIR
 
@@ -118,18 +119,26 @@ class ActiveMonitoringContext:
 def _format_date_spanish(dt: datetime) -> str:
     """Format a datetime as 'DD Mon YYYY' with Spanish month abbreviation.
 
-    Example: datetime(2025, 6, 12) → "12 Jun 2025"
+    Converts UTC to America/Bogota before formatting.
+    Example: datetime(2025, 6, 12, 5, 0) UTC → "12 Jun 2025" (Bogota)
     """
-    month_abbr = _SPANISH_MONTHS.get(dt.month, "???")
-    return f"{dt.day} {month_abbr} {dt.year}"
+    local_dt = to_bogota(dt)
+    if local_dt is None:
+        return ""
+    month_abbr = _SPANISH_MONTHS.get(local_dt.month, "???")
+    return f"{local_dt.day} {month_abbr} {local_dt.year}"
 
 
 def _format_time(dt: datetime) -> str:
     """Format a datetime's time component as 'HH:MM'.
 
-    Example: datetime(..., hour=14, minute=30) → "14:30"
+    Converts UTC to America/Bogota before formatting.
+    Example: datetime(..., hour=5, minute=30) UTC → "00:30" (Bogota)
     """
-    return f"{dt.hour:02d}:{dt.minute:02d}"
+    local_dt = to_bogota(dt)
+    if local_dt is None:
+        return ""
+    return f"{local_dt.hour:02d}:{local_dt.minute:02d}"
 
 
 def _get_last_monitoring_date(monitorings: list) -> Optional[str]:

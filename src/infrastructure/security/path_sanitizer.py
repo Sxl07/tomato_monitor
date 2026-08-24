@@ -58,11 +58,13 @@ def validate_safe_path(path: str, allowed_base: Path) -> Path:
     if ".." in path.split("/") or ".." in path.split("\\"):
         raise PathTraversalError("Path contains traversal sequence")
 
-    # 5. Resolve and verify containment
+    # 5. Resolve and verify containment via Path semantics
     resolved_base = allowed_base.resolve()
     candidate = (allowed_base / path).resolve()
 
-    if not str(candidate).startswith(str(resolved_base)):
+    try:
+        candidate.relative_to(resolved_base)
+    except ValueError:
         raise PathTraversalError("Resolved path escapes allowed directory")
 
     return candidate

@@ -214,9 +214,33 @@ class ExportService:
                     frame_idx = snapshot.frame_index
                     img_filename = f"snapshot_{frame_idx:06d}.jpg"
 
-                    # Try annotated first, then raw
+                    # Prefer snapshot.image_path as authoritative source for raw
+                    raw_path = None
+                    if hasattr(snapshot, "image_path") and snapshot.image_path:
+                        # image_path is stored relative to project root (e.g. "outputs/monitorings/1/snapshots/raw/...")
+                        # base_path corresponds to base_snapshots_dir which is outputs/monitorings
+                        # So we strip the "outputs/monitorings/" prefix to get a relative path from base_path
+                        rel_candidate = snapshot.image_path
+                        # Normalize: strip common prefix patterns
+                        for prefix in ("outputs/monitorings/", "outputs\\monitorings\\"):
+                            if rel_candidate.startswith(prefix):
+                                rel_candidate = rel_candidate[len(prefix):]
+                                break
+                        candidate_path = base_path / rel_candidate
+                        if candidate_path.exists():
+                            # Verify containment
+                            try:
+                                candidate_path.resolve().relative_to(base_path.resolve())
+                                raw_path = candidate_path
+                            except ValueError:
+                                raw_path = None  # Traversal attempt, fall through
+
+                    # Fallback: reconstruct from frame_index
+                    if raw_path is None:
+                        raw_path = base_path / str(m_id) / "snapshots" / "raw" / img_filename
+
+                    # Annotated path derived from same filename
                     annotated_path = base_path / str(m_id) / "annotated_snapshots" / img_filename
-                    raw_path = base_path / str(m_id) / "snapshots" / "raw" / img_filename
 
                     image_added = False
 

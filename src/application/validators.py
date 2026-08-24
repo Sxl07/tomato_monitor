@@ -114,3 +114,40 @@ def validate_notes(notes: str) -> Optional[str]:
     if not trimmed:
         return None
     return trimmed[:MAX_NOTES_LENGTH]
+
+
+def validate_optional_dimensions(
+    width: str, length: str
+) -> tuple[Optional[float], Optional[float]]:
+    """Parse and validate optional module dimensions from form strings.
+
+    Rules:
+    - Both empty -> (None, None) valid
+    - Both filled with positive values -> (width, length) valid
+    - One filled, one empty -> ValidationError
+    - Invalid numbers or negative -> ValidationError
+
+    Returns (width_float_or_None, length_float_or_None).
+    Raises ValidationError if values are inconsistent or invalid.
+    """
+    w_stripped = width.strip()
+    l_stripped = length.strip()
+
+    # Both empty: valid
+    if not w_stripped and not l_stripped:
+        return (None, None)
+
+    # One filled, one empty: error
+    if not w_stripped and l_stripped:
+        raise ValidationError(
+            "width_m",
+            "Ingresa ambas dimensiones o deja ambos campos vacíos."
+        )
+    if w_stripped and not l_stripped:
+        raise ValidationError(
+            "length_m",
+            "Ingresa ambas dimensiones o deja ambos campos vacíos."
+        )
+
+    # Both filled: validate as positive finite floats
+    return validate_dimensions(w_stripped, l_stripped)

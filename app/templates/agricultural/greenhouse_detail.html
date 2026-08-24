@@ -1,11 +1,12 @@
 {% extends "base_agricultural.html" %}
+{% from "agricultural/partials/icons.html" import icon %}
 
 {% block header_title %}{{ greenhouse.name }}{% endblock %}
 
 {% block header_actions %}
 <a href="/invernaderos/{{ greenhouse.id }}/modulos/crear" class="btn-icon" aria-label="Agregar módulo">+</a>
-<a href="/invernaderos/{{ greenhouse.id }}/editar" class="btn-icon" aria-label="Editar invernadero">✎</a>
-<button type="button" class="btn-icon btn-icon-danger" aria-label="Eliminar invernadero" onclick="showConfirmDialog('confirm-dialog')">🗑</button>
+<a href="/invernaderos/{{ greenhouse.id }}/editar" class="btn-icon" aria-label="Editar invernadero">{{ icon('edit') }}</a>
+<button type="button" class="btn-icon btn-icon-danger" aria-label="Eliminar invernadero" onclick="showConfirmDialog('confirm-dialog')">{{ icon('delete') }}</button>
 {% endblock %}
 
 {% block content %}

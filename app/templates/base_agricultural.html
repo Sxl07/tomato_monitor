@@ -23,11 +23,12 @@
         {% block content %}{% endblock %}
     </main>
 
+    {% from "agricultural/partials/icons.html" import icon %}
     <nav class="bottom-nav" aria-label="Navegación principal">
-        <a href="/dashboard" class="bottom-nav__item">🏠<span>Inicio</span></a>
-        <a href="/invernaderos" class="bottom-nav__item">🌱<span>Módulos</span></a>
-        <a href="/exportar" class="bottom-nav__item">📦<span>Exportar</span></a>
-        <a href="/sincronizacion" class="bottom-nav__item">🔄<span>Sync</span></a>
+        <a href="/dashboard" class="bottom-nav__item">{{ icon('home', 20) }}<span>Inicio</span></a>
+        <a href="/invernaderos" class="bottom-nav__item">{{ icon('plant', 20) }}<span>Módulos</span></a>
+        <a href="/exportar" class="bottom-nav__item">{{ icon('package', 20) }}<span>Exportar</span></a>
+        <a href="/sincronizacion" class="bottom-nav__item">{{ icon('sync', 20) }}<span>Sync</span></a>
     </nav>
 
     {% block scripts %}{% endblock %}

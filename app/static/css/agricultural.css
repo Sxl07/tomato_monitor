@@ -705,6 +705,13 @@ img {
     color: #0D47A1;
 }
 
+/* Single-dash aliases for templates using Jinja conditionals */
+.alert-error { background-color: #FFEBEE; border: 1px solid var(--color-danger); color: var(--color-danger-dark); }
+.alert-warning { background-color: #FFF8E1; border: 1px solid var(--color-warning); color: var(--color-warning-dark); }
+.alert-success { background-color: #E8F5E9; border: 1px solid var(--color-primary); color: var(--color-primary-dark); }
+.alert-info { background-color: #E3F2FD; border: 1px solid #1976D2; color: #0D47A1; }
+.alert-danger { background-color: #FFEBEE; border: 1px solid var(--color-danger); color: var(--color-danger-dark); }
+
 /* ==========================================================================
    16. Confirmation Dialog
    ========================================================================== */
@@ -1239,7 +1246,7 @@ a + a,
 
     /* Reduce header padding */
     .app-header {
-        padding: 8px var(--safe-margin);
+        padding: 8px 20px;
     }
 
     /* Snapshot gallery single column */
@@ -1250,8 +1257,18 @@ a + a,
     /* Content max width full */
     .main-content {
         max-width: 100%;
-        padding-left: var(--safe-margin);
-        padding-right: var(--safe-margin);
+        padding-left: 20px;
+        padding-right: 20px;
+    }
+
+    /* Prevent overflow via proper sizing, not hiding */
+    .card,
+    .info-panel,
+    .alert,
+    .form-control,
+    .btn {
+        max-width: 100%;
+        box-sizing: border-box;
     }
 
     /* Status badges compact */

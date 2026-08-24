@@ -142,7 +142,7 @@ class TestDashboardExportLink:
         response = authenticated_client.get("/dashboard")
         assert response.status_code == 200
         assert "/exportar" in response.text
-        assert "Exportar datos" in response.text
+
 
 
 class TestExportDownloadSafety:

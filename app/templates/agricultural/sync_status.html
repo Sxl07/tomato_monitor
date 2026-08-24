@@ -5,7 +5,21 @@
 {% block content %}
 <div class="sync-status-page">
 
+    <!-- Modo local indicator -->
+    <div class="alert alert-info" role="status" style="margin-bottom: 16px;">
+        <strong>Modo local</strong> — No hay proveedor remoto configurado
+    </div>
+
     <p class="text-secondary">Estado de sincronización de datos</p>
+
+    <!-- State explanations -->
+    <div class="card" style="margin-bottom: 16px;">
+        <div class="card-body">
+            <p style="margin-bottom: 8px;"><strong>Pendiente:</strong> dato aún no incluido en un respaldo local.</p>
+            <p style="margin-bottom: 8px;"><strong>Exportado:</strong> dato incluido en un paquete ZIP local.</p>
+            <p style="margin-bottom: 0;"><strong>Sincronizado:</strong> reservado para futura sincronización remota.</p>
+        </div>
+    </div>
 
     {% if error %}
     <div class="alert alert-error" role="alert">{{ error }}</div>
@@ -47,7 +61,7 @@
         {% if last_export %}
         <div class="card">
             <div class="card-body">
-                <p><strong>Fecha:</strong> {{ last_export.created_at.strftime('%d/%m/%Y %H:%M') if last_export.created_at else 'N/A' }}</p>
+                <p><strong>Fecha:</strong> {{ last_export.created_at | to_bogota if last_export.created_at else 'N/A' }}</p>
                 <p><strong>Estado:</strong> {{ last_export.status }}</p>
                 <p><strong>Registros:</strong> {{ last_export.records_count }}</p>
             </div>

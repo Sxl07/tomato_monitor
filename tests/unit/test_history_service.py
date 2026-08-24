@@ -184,7 +184,7 @@ class TestMonitoringItems:
         service = HistoryService()
         m = _make_monitoring(1, "completed")
         result = service.build_combined_history([m], {}, [], [])
-        assert result[0]["icon"] == "📷"
+        assert result[0]["icon_key"] == "monitoring"
 
 
 class TestActivityItems:
@@ -240,14 +240,14 @@ class TestActivityItems:
         log = _make_activity_log(1, activity_type_id=1)
         at = _make_activity_type(id=1, code="riego")
         result = service.build_combined_history([], {}, [log], [at])
-        assert result[0]["icon"] == "💧"
+        assert result[0]["icon_key"] == "watering"
 
     def test_unknown_code_default_icon(self):
         service = HistoryService()
         log = _make_activity_log(1, activity_type_id=1)
         at = _make_activity_type(id=1, code="desconocido")
         result = service.build_combined_history([], {}, [log], [at])
-        assert result[0]["icon"] == "📋"
+        assert result[0]["icon_key"] == "note"
 
 
 class TestSortingOrder:

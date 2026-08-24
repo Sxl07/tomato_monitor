@@ -59,6 +59,126 @@ def seed_activity_types(session: Session) -> None:
     session.commit()
 
 
+
+
+def _migrate_dimensions_nullable(engine) -> None:
+    """Migrate width_m/length_m from NOT NULL to nullable.
+
+    SQLite doesn't support ALTER COLUMN. Strategy:
+    1. PRAGMA table_info -> detect if width_m is NOT NULL
+    2. If already nullable -> no-op (idempotent)
+    3. Disable foreign_keys via raw DBAPI, VERIFY OFF
+    4. BEGIN transaction
+    5. Create monitorings_new with correct schema (nullable width_m/length_m)
+    6. Copy data with EXPLICIT column list
+    7. DROP old monitorings
+    8. RENAME monitorings_new -> monitorings
+    9. PRAGMA foreign_key_check -> if violations: ROLLBACK + ERROR
+    10. COMMIT (only if FK check passes)
+    11. Re-enable foreign_keys via raw DBAPI, VERIFY ON
+    """
+    with engine.connect() as conn:
+        # 1. Check current schema
+        result = conn.execute(text("PRAGMA table_info(monitorings)"))
+        columns_info = result.fetchall()
+
+        if not columns_info:
+            return  # Table doesn't exist yet (fresh install handles via create_all)
+
+        columns = {row[1]: row for row in columns_info}
+
+        width_col = columns.get("width_m")
+        if width_col is None:
+            return  # Table doesn't have the column yet
+
+        # row[3] is 'notnull' flag (1 = NOT NULL, 0 = nullable)
+        if width_col[3] == 0:
+            return  # Already nullable, nothing to do
+
+        # 2. Get explicit column list for safe INSERT
+        column_names = [row[1] for row in columns_info]
+        col_list = ", ".join(column_names)
+
+        # 3. Close any open transaction; FK OFF must be outside transaction
+        conn.commit()
+
+        # Use raw DBAPI connection for reliable PRAGMA control
+        raw_conn = conn.connection.dbapi_connection
+
+        raw_conn.execute("PRAGMA foreign_keys = OFF")
+
+        # VERIFY FK is actually disabled
+        cursor = raw_conn.execute("PRAGMA foreign_keys")
+        fk_status = cursor.fetchone()[0]
+        if fk_status != 0:
+            raise DatabaseInitError(
+                cause="Failed to disable foreign_keys for migration",
+                original=None,
+            )
+
+        try:
+            # 4-8. All destructive ops in one transaction
+            raw_conn.execute("BEGIN")
+
+            raw_conn.execute("""
+                CREATE TABLE monitorings_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    module_id INTEGER NOT NULL REFERENCES modules(id),
+                    status VARCHAR(20) NOT NULL DEFAULT 'initializing',
+                    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    completed_at DATETIME,
+                    width_m FLOAT,
+                    length_m FLOAT,
+                    notes TEXT,
+                    total_snapshots INTEGER NOT NULL DEFAULT 0,
+                    total_detections INTEGER NOT NULL DEFAULT 0,
+                    created_by_user_id INTEGER REFERENCES users(id),
+                    sync_status VARCHAR(20) NOT NULL DEFAULT 'pending'
+                )
+            """)
+
+            raw_conn.execute(f"""
+                INSERT INTO monitorings_new ({col_list})
+                SELECT {col_list} FROM monitorings
+            """)
+
+            raw_conn.execute("DROP TABLE monitorings")
+            raw_conn.execute("ALTER TABLE monitorings_new RENAME TO monitorings")
+
+            # 9. FK check BEFORE commit -- can still ROLLBACK
+            violations = raw_conn.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raw_conn.execute("ROLLBACK")
+                raise DatabaseInitError(
+                    cause=f"FK integrity violation after migration: {violations}",
+                    original=None,
+                )
+
+            # 10. All good -- commit
+            raw_conn.execute("COMMIT")
+
+        except DatabaseInitError:
+            raise
+        except Exception as e:
+            try:
+                raw_conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise DatabaseInitError(
+                cause=f"Dimensions migration failed: {e}",
+                original=e,
+            )
+        finally:
+            # 11. Re-enable foreign_keys and VERIFY
+            raw_conn.execute("PRAGMA foreign_keys = ON")
+            cursor = raw_conn.execute("PRAGMA foreign_keys")
+            fk_status = cursor.fetchone()[0]
+            if fk_status != 1:
+                raise DatabaseInitError(
+                    cause="Failed to re-enable foreign_keys after migration",
+                    original=None,
+                )
+
 def _migrate_add_columns(engine) -> None:
     """Non-destructive migration: add missing columns to existing tables.
 
@@ -141,6 +261,7 @@ class DatabaseManager:
         """
         try:
             Base.metadata.create_all(self._engine, checkfirst=True)
+            _migrate_dimensions_nullable(self._engine)
             _migrate_add_columns(self._engine)
             session = self._session_factory()
             try:

@@ -1,4 +1,5 @@
 {% extends "base_agricultural.html" %}
+{% from "agricultural/partials/icons.html" import icon %}
 
 {% block header_title %}Dashboard{% endblock %}
 
@@ -68,7 +69,7 @@
         {% if last_monitoring %}
         <div class="card">
             <div class="card-body">
-                <p><strong>Fecha:</strong> {{ last_monitoring.started_at.strftime('%d/%m/%Y %H:%M') }}</p>
+                <p><strong>Fecha:</strong> {{ last_monitoring.started_at | to_bogota }}</p>
                 <p><strong>Snapshots:</strong> {{ last_monitoring.total_snapshots }}</p>
                 <p><strong>Detecciones:</strong> {{ last_monitoring.total_detections }}</p>
                 <p><strong>Estado:</strong> {{ last_monitoring.status }}</p>
@@ -86,7 +87,7 @@
 
     <!-- Alerts -->
     <section class="dashboard-section">
-        <h2 class="section-header">⚠️ Alertas operativas</h2>
+        <h2 class="section-header">{{ icon('warning') }} Alertas operativas</h2>
         {% if alerts %}
         {% for alert in alerts %}
         <div class="alert {% if alert.severity == 'critical' %}alert-error{% elif alert.severity == 'warning' %}alert-warning{% else %}alert-info{% endif %}" role="alert">
@@ -107,7 +108,7 @@
             <div class="card">
                 <div class="card-body">
                     <p class="card-title">{{ activity.activity_type_name }}</p>
-                    <p class="card-meta">{{ activity.occurred_at.strftime('%d/%m/%Y %H:%M') }} — {{ activity.category }}</p>
+                    <p class="card-meta">{{ activity.occurred_at | to_bogota }} — {{ activity.category }}</p>
                 </div>
             </div>
             {% endfor %}
@@ -115,17 +116,6 @@
         {% else %}
         <p class="empty-text">No hay actividades recientes.</p>
         {% endif %}
-    </section>
-
-    <!-- Quick links -->
-    <section class="dashboard-section">
-        <h2 class="section-header">Acceso rápido</h2>
-        <div class="quick-links">
-            <a href="/invernaderos" class="btn btn-primary">Ver invernaderos</a>
-            <a href="/invernaderos" class="btn btn-secondary" style="margin-top: 8px;">Iniciar monitoreo</a>
-            <a href="/exportar" class="btn btn-secondary" style="margin-top: 8px;">Exportar datos</a>
-            <a href="/sincronizacion" class="btn btn-secondary" style="margin-top: 8px;">Sincronización</a>
-        </div>
     </section>
 
 </div>

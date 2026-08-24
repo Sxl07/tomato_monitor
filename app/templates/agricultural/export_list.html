@@ -5,7 +5,7 @@
 {% block content %}
 <div class="export-page">
 
-    <p class="text-secondary">Genera paquetes ZIP con datos e imágenes para respaldo o análisis externo.</p>
+    <p class="text-secondary">Genera un respaldo ZIP con los datos e imágenes almacenados actualmente en este dispositivo.</p>
 
     <form method="post" action="/exportar" style="margin-bottom: 24px;">
         <button type="submit" class="btn btn-primary btn-full-width">Generar exportación ZIP</button>
@@ -23,7 +23,7 @@
                         <div>
                             <p class="card-title">Exportación #{{ pkg.id }}</p>
                             <p class="card-meta">
-                                {% if pkg.created_at %}{{ pkg.created_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}
+                                {% if pkg.created_at %}{{ pkg.created_at | to_bogota }}{% endif %}
                                 — {{ pkg.records_count }} registros, {{ pkg.images_count }} imágenes
                             </p>
                         </div>

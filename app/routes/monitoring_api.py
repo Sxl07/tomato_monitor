@@ -1,5 +1,5 @@
 """API endpoints for monitoring UX: camera preview, status, activity log, last snapshot."""
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -69,7 +69,7 @@ async def monitoring_log(
     entries = log_service.get_entries(monitoring_id, since=parsed_since)
     return [
         {
-            "timestamp": entry.timestamp.isoformat(),
+            "timestamp": entry.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "level": entry.level.value,
             "source": entry.source,
             "message": entry.message,

@@ -1,4 +1,5 @@
 {% extends "base_agricultural.html" %}
+{% from "agricultural/partials/icons.html" import icon %}
 
 {% block header_title %}Mis Invernaderos{% endblock %}
 
@@ -13,7 +14,7 @@
 
 {% if alerts %}
 <div class="alerts-section" style="margin-bottom: 16px;">
-    <h2 class="section-header">⚠️ Alertas operativas</h2>
+    <h2 class="section-header">{{ icon('warning') }} Alertas operativas</h2>
     {% for alert in alerts[:5] %}
     <div class="alert {% if alert.severity == 'critical' %}alert-error{% elif alert.severity == 'warning' %}alert-warning{% else %}alert-info{% endif %}" role="alert" style="margin-bottom: 8px;">
         <strong>{{ alert.title }}</strong>: {{ alert.message }}

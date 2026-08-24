@@ -32,6 +32,10 @@ async def lifespan(app: FastAPI):
     app.state.db_manager = db_manager
     app.state.log_service = LogService()
 
+    # Reconcile orphan exports stuck in 'generating' from interrupted process
+    from src.application.services.export_reconciliation import reconcile_orphan_exports
+    reconcile_orphan_exports(db_manager)
+
     from src.application.services.camera_service import CameraService
     app.state.camera_service = CameraService()
 

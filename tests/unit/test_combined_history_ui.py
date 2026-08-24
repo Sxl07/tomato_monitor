@@ -29,13 +29,13 @@ class TestTemplateContent:
         ).read_text("utf-8")
 
     def test_shows_historial_del_modulo(self, template):
-        assert "Historial del módulo" in template
+        assert "Historial general" in template
 
     def test_iterates_combined_history(self, template):
         assert "combined_history" in template
 
     def test_shows_item_icon(self, template):
-        assert "item.icon" in template
+        assert "item.icon_key" in template
 
     def test_shows_item_title(self, template):
         assert "item.title" in template
@@ -137,7 +137,7 @@ class TestModuleDetailRoute:
     def test_page_loads_with_combined_history(self, authenticated_client):
         response = authenticated_client.get("/modulos/1")
         assert response.status_code == 200
-        assert "Historial del módulo" in response.text
+        assert "Historial general" in response.text
 
     def test_shows_monitoring_in_history(self, authenticated_client):
         response = authenticated_client.get("/modulos/1")

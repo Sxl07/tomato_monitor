@@ -1,10 +1,11 @@
 {% extends "base_agricultural.html" %}
+{% from "agricultural/partials/icons.html" import icon %}
 
 {% block header_title %}{{ module.name }}{% endblock %}
 
 {% block header_actions %}
-<a href="/modulos/{{ module.id }}/editar" class="btn-icon" aria-label="Editar módulo">✎</a>
-<button type="button" class="btn-icon btn-icon-danger" aria-label="Eliminar módulo" onclick="showConfirmDialog('confirm-dialog')">🗑</button>
+<a href="/modulos/{{ module.id }}/editar" class="btn-icon" aria-label="Editar módulo">{{ icon('edit') }}</a>
+<button type="button" class="btn-icon btn-icon-danger" aria-label="Eliminar módulo" onclick="showConfirmDialog('confirm-dialog')">{{ icon('delete') }}</button>
 {% endblock %}
 
 {% block content %}
@@ -58,7 +59,8 @@
 <p class="text-secondary" style="margin-bottom: 16px;">Ya existe un monitoreo activo para este módulo.</p>
 {% endif %}
 
-<h2 class="section-header">Historial del módulo</h2>
+<h2 class="section-header">Historial general</h2>
+<p class="section-subtitle">Monitoreos y actividades agrícolas registradas en este módulo</p>
 
 {% if combined_history %}
 <div class="card-list">
@@ -66,7 +68,7 @@
     <div class="card">
         <div class="card-body">
             <div style="display: flex; align-items: flex-start; gap: 12px;">
-                <span style="font-size: 24px;">{{ item.icon }}</span>
+                {{ icon(item.icon_key, 24) }}
                 <div style="flex: 1;">
                     <h3 class="card-title">{{ item.title }}</h3>
                     <p class="card-meta">{{ item.date_display }} — {{ item.time_display }}</p>

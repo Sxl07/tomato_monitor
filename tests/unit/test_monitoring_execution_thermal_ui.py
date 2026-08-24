@@ -72,7 +72,7 @@ class TestThermalAlertElement:
         alert_start = template_content.find('id="analysis-thermal-alert"')
         text_start = template_content.find('id="analysis-thermal-text"')
         between = template_content[alert_start:text_start]
-        assert "🌡️" in between
+        assert "icon('thermometer')" in between or "<svg" in between
 
 
 class TestMonitoringJsThermalFunction:

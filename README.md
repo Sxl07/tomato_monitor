@@ -855,6 +855,18 @@ En el directorio `scripts/` se encuentran smoke tests para validar componentes i
 
 ## Ejecutar pruebas
 
+### Instalar dependencias de test
+
+```bash
+# PC (desarrollo):
+pip install -r requirements.txt -r requirements-test.txt
+
+# Raspberry Pi:
+pip install -r requirements-raspberry.txt -r requirements-test.txt
+```
+
+### Ejecutar tests
+
 ```bash
 # Suite completa (no requiere hardware)
 python -m pytest -q
