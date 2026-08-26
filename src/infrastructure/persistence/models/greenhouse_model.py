@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Integer, String, DateTime
+from sqlalchemy import Integer, String, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.infrastructure.persistence.models.base import Base
@@ -27,6 +27,14 @@ class GreenhouseModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, onupdate=utcnow
     )
+
+    # Remote sync metadata
+    remote_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    remote_sync_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    remote_sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
     modules = relationship(

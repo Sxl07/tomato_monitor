@@ -5,10 +5,12 @@
 {% block content %}
 <div class="sync-status-page">
 
+    {% if not supabase_configured %}
     <!-- Modo local indicator -->
     <div class="alert alert-info" role="status" style="margin-bottom: 16px;">
         <strong>Modo local</strong> — No hay proveedor remoto configurado
     </div>
+    {% endif %}
 
     <p class="text-secondary">Estado de sincronización de datos</p>
 
@@ -28,7 +30,7 @@
     <div class="alert alert-info" role="alert">{{ success_message }}</div>
     {% endif %}
 
-    <!-- Sync status counts -->
+    <!-- Sync status counts (local ZIP) -->
     <section class="dashboard-metrics">
         <div class="metric-card">
             <span class="metric-value">{{ sync_status.total_pending }}</span>
@@ -71,7 +73,7 @@
         {% endif %}
     </section>
 
-    <!-- Manual sync action -->
+    <!-- Manual local sync action (ZIP) -->
     <section class="dashboard-section">
         <h2 class="section-header">Sincronización local</h2>
         <div class="card">
@@ -88,5 +90,57 @@
         </div>
     </section>
 
+    {% if supabase_configured %}
+    <!-- Remote sync section -->
+    <section class="dashboard-section" id="remote-sync-section">
+        <h2 class="section-header">Sincronización con Supabase</h2>
+        <div class="card">
+            <div class="card-body">
+                <div id="remote-sync-status">
+                    <p class="text-secondary">Cargando estado remoto...</p>
+                </div>
+
+                <div id="remote-sync-progress" style="display: none; margin-top: 12px;">
+                    <div class="alert alert-info" role="status">
+                        <strong>Sincronizando...</strong>
+                        <span id="remote-sync-phase"></span>
+                        <span id="remote-sync-counter"></span>
+                    </div>
+                </div>
+
+                <div id="remote-sync-result" style="display: none; margin-top: 12px;"></div>
+
+                <div id="remote-sync-form" style="margin-top: 16px;">
+                    <label for="sync-password" style="display: block; margin-bottom: 8px; font-weight: 500;">
+                        Contraseña para autenticación remota
+                    </label>
+                    <input
+                        type="password"
+                        id="sync-password"
+                        autocomplete="current-password"
+                        placeholder="Tu contraseña"
+                        class="form-input"
+                        style="width: 100%; margin-bottom: 12px;"
+                    >
+                    <button
+                        type="button"
+                        id="remote-sync-btn"
+                        class="btn btn-primary"
+                        style="min-height: 48px; width: 100%;"
+                    >
+                        Sincronizar ahora
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+    {% endif %}
+
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if supabase_configured %}
+<script src="/static/js/remote_sync.js"></script>
+{% endif %}
 {% endblock %}

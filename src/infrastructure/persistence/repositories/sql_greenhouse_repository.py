@@ -49,8 +49,18 @@ class SqlGreenhouseRepository(GreenhouseRepository):
         model = self._session.get(GreenhouseModel, id)
         if model is None:
             raise ValueError(f"Greenhouse with id={id} not found")
+
+        # Detect real domain change for dirty tracking
+        domain_changed = (model.name != name or model.location != location)
+
         model.name = name
         model.location = location
+
+        # Dirty tracking: if synced and domain changed, mark pending for re-sync
+        if domain_changed and getattr(model, "remote_sync_status", None) == "synced":
+            model.remote_sync_status = "pending"
+            model.remote_sync_error = None
+
         self._session.flush()
         self._session.commit()
         self._session.refresh(model)

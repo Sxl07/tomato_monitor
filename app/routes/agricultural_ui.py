@@ -56,6 +56,12 @@ router = APIRouter(tags=["agricultural-ui"])
 templates = Jinja2Templates(directory="app/templates")
 register_filters(templates)
 
+
+def _is_supabase_configured(request: Request) -> bool:
+    """Check if Supabase remote sync is configured on this device."""
+    config = getattr(request.app.state, "supabase_config", None)
+    return config is not None and config.is_configured
+
 import logging as _logging
 
 _logger = _logging.getLogger(__name__)
@@ -144,6 +150,7 @@ async def dashboard(request: Request, user=Depends(require_current_user_html)):
     return templates.TemplateResponse(request, "agricultural/dashboard.html", {
         "title": "Dashboard",
         "show_back": False,
+        "supabase_configured": _is_supabase_configured(request),
         **context,
     })
 
@@ -1384,12 +1391,16 @@ async def sync_status_page(request: Request, user=Depends(require_current_user_h
     error = request.query_params.get("error")
     success_message = request.query_params.get("success")
 
+    # Check if Supabase remote sync is configured
+    supabase_configured = _is_supabase_configured(request)
+
     return templates.TemplateResponse(request, "agricultural/sync_status.html", {
         "title": "Sincronización",
         "sync_status": sync_status,
         "last_export": last_export,
         "error": error,
         "success_message": success_message,
+        "supabase_configured": supabase_configured,
         "show_back": True,
         "back_url": "/dashboard",
     })
