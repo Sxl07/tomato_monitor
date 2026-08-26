@@ -17,16 +17,19 @@ from app.routes.sessions import router as sessions_router
 from app.routes.monitoring import router as monitoring_router
 from app.routes.agricultural_ui import router as agricultural_router
 from app.routes.monitoring_api import router as monitoring_api_router
+from app.routes.sync_api import router as sync_api_router
 from app.dependencies import _AuthRedirectException
 from src.application.services.log_service import LogService
 from src.infrastructure.config.logging_config import configure_logging
 from src.infrastructure.persistence.database import DatabaseManager
+from src.infrastructure.supabase.supabase_config import load_supabase_config
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize logging and database on startup."""
     configure_logging()
+    app.state.supabase_config = load_supabase_config()
     db_manager = DatabaseManager()
     db_manager.init_db()
     app.state.db_manager = db_manager
@@ -41,6 +44,9 @@ async def lifespan(app: FastAPI):
 
     from src.application.services.monitoring_runtime_registry import MonitoringRuntimeRegistry
     app.state.monitoring_runtime_registry = MonitoringRuntimeRegistry()
+
+    from src.application.services.sync_runtime_state import SyncRuntimeState
+    app.state.sync_runtime_state = SyncRuntimeState()
 
     # Bootstrap admin user from environment (idempotent)
     from src.application.services.auth_service import maybe_bootstrap_admin
@@ -143,3 +149,4 @@ app.include_router(pipeline_router, prefix="/pipeline", tags=["pipeline"])
 app.include_router(sessions_router, prefix="/sessions", tags=["sessions"])
 app.include_router(monitoring_router)
 app.include_router(monitoring_api_router)
+app.include_router(sync_api_router)

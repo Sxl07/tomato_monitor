@@ -27,6 +27,11 @@
             </div>
             <button type="submit" class="btn btn-primary btn-full" style="margin-top: 16px; width: 100%;">Iniciar sesión</button>
         </form>
+        {% if registration_available %}
+        <p style="text-align: center; margin-top: 20px; font-size: 14px;">
+            <a href="/registro" style="color: #4CAF50; text-decoration: none; display: inline-block; padding: 8px 16px; min-height: 44px; line-height: 28px;">¿No tienes una cuenta? Crear cuenta</a>
+        </p>
+        {% endif %}
     </div>
 </body>
 </html>

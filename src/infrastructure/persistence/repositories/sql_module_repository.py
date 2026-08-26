@@ -88,7 +88,7 @@ class SqlModuleRepository(ModuleRepository):
     def update(self, id: int, fields: dict) -> Module:
         """Update module fields and return the updated entity.
 
-        Valid keys: name, crop_type, width_m, length_m.
+        Valid keys: name, crop_type, width_m, length_m, monitoring_frequency_days.
 
         Args:
             id: The module identifier.
@@ -104,9 +104,17 @@ class SqlModuleRepository(ModuleRepository):
         model = self._session.query(ModuleModel).filter(ModuleModel.id == id).one()
 
         allowed_fields = {"name", "crop_type", "width_m", "length_m", "monitoring_frequency_days"}
+        domain_changed = False
         for key, value in fields.items():
             if key in allowed_fields:
+                if getattr(model, key) != value:
+                    domain_changed = True
                 setattr(model, key, value)
+
+        # Dirty tracking: if synced and domain changed, mark pending for re-sync
+        if domain_changed and getattr(model, "remote_sync_status", None) == "synced":
+            model.remote_sync_status = "pending"
+            model.remote_sync_error = None
 
         try:
             self._session.flush()

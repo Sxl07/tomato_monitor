@@ -69,8 +69,11 @@ class TestSyncStatusPage:
         finally:
             app.dependency_overrides.update(saved)
 
-    def test_sync_page_no_cloud_terms(self, authenticated_client):
-        """Sync page does not mention cloud providers."""
+    def test_sync_page_no_cloud_terms(self, authenticated_client, monkeypatch):
+        """Sync page does not mention cloud providers when Supabase is not configured."""
+        from app.main import app
+        # Ensure Supabase is not configured for this test
+        app.state.supabase_config = None
         response = authenticated_client.get("/sincronizacion")
         text_lower = response.text.lower()
         cloud_terms = ["google drive", "oauth", "amazon s3", "supabase", "dropbox"]

@@ -61,6 +61,11 @@
             {{ pending_exports_count }} exportación(es) pendiente(s)
         </div>
         {% endif %}
+        {% if supabase_configured %}
+        <div class="status-badge status-info" id="dashboard-remote-sync-badge" style="display: none;">
+            <span id="dashboard-remote-pending">0</span> pendiente(s) de sincronizar
+        </div>
+        {% endif %}
     </section>
 
     <!-- Last monitoring -->
@@ -119,4 +124,26 @@
     </section>
 
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if supabase_configured %}
+<script>
+(function() {
+    "use strict";
+    fetch("/api/sync/status", {credentials: "same-origin"})
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(data) {
+            if (!data) return;
+            var badge = document.getElementById("dashboard-remote-sync-badge");
+            var counter = document.getElementById("dashboard-remote-pending");
+            if (badge && counter && data.pending_count > 0) {
+                counter.textContent = data.pending_count;
+                badge.style.display = "";
+            }
+        })
+        .catch(function() { /* offline or error — badge stays hidden */ });
+})();
+</script>
+{% endif %}
 {% endblock %}

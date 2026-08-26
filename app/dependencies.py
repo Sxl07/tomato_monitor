@@ -176,6 +176,31 @@ def get_monitoring_service(request: Request) -> "MonitoringService":
 
 
 # ---------------------------------------------------------------------------
+# Sync dependencies (shared runtime state from app.state)
+# ---------------------------------------------------------------------------
+
+
+def get_sync_runtime_state(request: Request) -> "SyncRuntimeState":
+    """Return the shared SyncRuntimeState singleton from app.state."""
+    from src.application.services.sync_runtime_state import SyncRuntimeState
+
+    return request.app.state.sync_runtime_state
+
+
+def get_sync_state_repository(request: Request) -> "SyncStateRepository":
+    """Provide a SyncStateRepository using the db_manager session factory."""
+    from src.infrastructure.persistence.sync_state_repository import SyncStateRepository
+
+    db_manager = request.app.state.db_manager
+    return SyncStateRepository(session_factory=db_manager.get_session)
+
+
+def get_monitoring_runtime_registry(request: Request) -> "MonitoringRuntimeRegistry":
+    """Return the shared MonitoringRuntimeRegistry singleton from app.state."""
+    return request.app.state.monitoring_runtime_registry
+
+
+# ---------------------------------------------------------------------------
 # Monitoring UX service dependencies
 # ---------------------------------------------------------------------------
 
@@ -203,6 +228,30 @@ def get_model_service() -> ModelService:
 def get_auth_service() -> AuthService:
     """Provide an AuthService instance."""
     return AuthService()
+
+
+def get_supabase_config(request: Request) -> "Optional[SupabaseConfig]":
+    """Return the SupabaseConfig loaded at startup, or None if offline-only."""
+    return getattr(request.app.state, "supabase_config", None)
+
+
+def get_hybrid_auth_service(request: Request) -> "HybridAuthService":
+    """Provide a HybridAuthService for the current request.
+
+    Constructs with request-scoped UserRepository and optional
+    SupabaseAuthAdapter based on startup configuration.
+    """
+    from src.application.services.hybrid_auth_service import HybridAuthService
+    from src.infrastructure.supabase.supabase_auth_adapter import SupabaseAuthAdapter
+
+    config = get_supabase_config(request)
+    remote_auth = SupabaseAuthAdapter(config) if config is not None else None
+
+    return HybridAuthService(
+        auth_service=AuthService(),
+        user_repo=get_user_repository(request),
+        remote_auth=remote_auth,
+    )
 
 
 async def get_current_user_optional(request: Request) -> Optional["User"]:

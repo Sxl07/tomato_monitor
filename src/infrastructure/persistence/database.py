@@ -209,6 +209,62 @@ def _migrate_add_columns(engine) -> None:
         conn.commit()
 
 
+def _migrate_add_sync_columns(engine) -> None:
+    """Non-destructive migration: add remote sync metadata columns.
+
+    Adds remote_id, remote_sync_status, last_synced_at, and remote_sync_error
+    to all syncable tables. Snapshot additionally receives raw_storage_path
+    and annotated_storage_path.
+
+    Uses PRAGMA table_info to detect existing columns. Idempotent — safe to
+    call on every startup. Does nothing if columns already exist.
+
+    Spec 017 — Supabase Remote Sync.
+    """
+    # Column definitions: (column_name, ddl_type)
+    _COMMON_SYNC_COLUMNS = [
+        ("remote_id", "VARCHAR(36)"),
+        ("remote_sync_status", "VARCHAR(20) NOT NULL DEFAULT 'pending'"),
+        ("last_synced_at", "DATETIME"),
+        ("remote_sync_error", "TEXT"),
+    ]
+
+    _SNAPSHOT_EXTRA_COLUMNS = [
+        ("raw_storage_path", "VARCHAR(500)"),
+        ("annotated_storage_path", "VARCHAR(500)"),
+    ]
+
+    _TABLE_COLUMNS = {
+        "greenhouses": _COMMON_SYNC_COLUMNS,
+        "modules": _COMMON_SYNC_COLUMNS,
+        "monitorings": _COMMON_SYNC_COLUMNS,
+        "snapshots": _COMMON_SYNC_COLUMNS + _SNAPSHOT_EXTRA_COLUMNS,
+        "monitoring_metrics": _COMMON_SYNC_COLUMNS,
+        "inspection_results": _COMMON_SYNC_COLUMNS,
+        "activity_logs": _COMMON_SYNC_COLUMNS,
+    }
+
+    with engine.connect() as conn:
+        for table_name, columns_to_add in _TABLE_COLUMNS.items():
+            # Get existing columns for this table
+            result = conn.execute(text(f"PRAGMA table_info({table_name})"))
+            existing_columns = {row[1] for row in result.fetchall()}
+
+            # Skip if table doesn't exist (empty set from PRAGMA)
+            if not existing_columns:
+                continue
+
+            for col_name, col_ddl in columns_to_add:
+                if col_name not in existing_columns:
+                    conn.execute(
+                        text(
+                            f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_ddl}"
+                        )
+                    )
+
+        conn.commit()
+
+
 class DatabaseManager:
     """Manages SQLite database connection, session factory, and schema initialization."""
 
@@ -263,6 +319,7 @@ class DatabaseManager:
             Base.metadata.create_all(self._engine, checkfirst=True)
             _migrate_dimensions_nullable(self._engine)
             _migrate_add_columns(self._engine)
+            _migrate_add_sync_columns(self._engine)
             session = self._session_factory()
             try:
                 seed_activity_types(session)
