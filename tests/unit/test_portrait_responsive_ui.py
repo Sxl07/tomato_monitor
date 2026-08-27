@@ -212,3 +212,16 @@ class TestPortraitStackedButtonMarginReset:
         assert ".form-actions .btn + .btn" in css_content
         assert ".execution-actions .btn + .btn" in css_content
         assert ".bottom-nav__item + .bottom-nav__item" in css_content
+
+
+class TestLogoutFormInLayout:
+    """Verify the base layout contains a POST logout form."""
+
+    def test_logout_form_present(self, base_template_content):
+        """base_agricultural.html must have a form POST to /logout."""
+        assert 'action="/logout"' in base_template_content
+        assert 'method="post"' in base_template_content
+
+    def test_logout_button_text(self, base_template_content):
+        """The logout button must display 'Cerrar sesión'."""
+        assert "Cerrar sesión" in base_template_content

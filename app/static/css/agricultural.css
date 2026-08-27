@@ -1307,3 +1307,39 @@ a + a,
         flex-direction: column;
     }
 }
+
+/* ==========================================================================
+   26. Logout Button
+   ========================================================================== */
+
+.logout-form {
+    display: inline-flex;
+    margin: 0;
+    padding: 0;
+}
+
+.btn-logout {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--touch-min);
+    min-height: var(--touch-min);
+    padding: 8px 14px;
+    font-family: var(--font-family);
+    font-size: var(--font-size-small);
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    background-color: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.btn-logout:active {
+    background-color: var(--color-bg);
+    color: var(--color-danger);
+    border-color: var(--color-danger);
+}

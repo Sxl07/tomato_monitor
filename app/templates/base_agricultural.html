@@ -14,7 +14,12 @@
             <a href="{{ back_url }}" class="back-button" aria-label="Volver">←</a>
             {% endif %}
             <h1 class="header-title">{% block header_title %}Monitor de Tomates{% endblock %}</h1>
-            {% block header_actions %}{% endblock %}
+            <div class="header-actions">
+                {% block header_actions %}{% endblock %}
+                <form method="post" action="/logout" class="logout-form">
+                    <button type="submit" class="btn-logout" aria-label="Cerrar sesión">Cerrar sesión</button>
+                </form>
+            </div>
         </div>
         {% endblock %}
     </header>
