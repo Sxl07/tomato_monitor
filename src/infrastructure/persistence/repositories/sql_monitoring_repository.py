@@ -66,6 +66,26 @@ class SqlMonitoringRepository(MonitoringRepository):
         )
         return [self._to_entity(m) for m in models]
 
+    def get_active(self) -> list[Monitoring]:
+        """Return all monitorings in a non-terminal (active) status.
+
+        Ordered by started_at descending. Used by startup reconciliation.
+        """
+        active_statuses = [
+            MonitoringState.INITIALIZING.value,
+            MonitoringState.RUNNING.value,
+            MonitoringState.PAUSED.value,
+            MonitoringState.FINISHING.value,
+            MonitoringState.ANALYZING.value,
+        ]
+        models = (
+            self._session.query(MonitoringModel)
+            .filter(MonitoringModel.status.in_(active_statuses))
+            .order_by(MonitoringModel.started_at.desc())
+            .all()
+        )
+        return [self._to_entity(m) for m in models]
+
     def get_by_id(self, id: int) -> Optional[Monitoring]:
         """Return the monitoring with the given id, or None if not found."""
         model = self._session.get(MonitoringModel, id)

@@ -32,8 +32,12 @@ class MonitoringResponse(BaseModel):
 class MonitoringStatusResponse(MonitoringResponse):
     """Extended response including session configuration details."""
 
-    width_m: float
-    length_m: float
+    # Nullable: an INITIALIZING or startup-reconciled monitoring may not have
+    # confirmed dimensions yet. Keeping these Optional mirrors what
+    # MonitoringService/the ORM can actually carry and prevents the /status
+    # endpoint from 500-ing on a partially-initialized row.
+    width_m: Optional[float] = None
+    length_m: Optional[float] = None
     notes: Optional[str] = None
     analysis_processed: int = 0
     analysis_total: int = 0

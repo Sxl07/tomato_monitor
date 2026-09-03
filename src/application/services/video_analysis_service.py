@@ -105,13 +105,31 @@ class VideoAnalysisConfig:
 
 @dataclass
 class VideoAnalysisProgress:
-    """Lightweight progress for the offline analysis."""
+    """Lightweight progress for the offline analysis.
+
+    The ``processed_snapshots`` / ``total_snapshots`` and ``thermal_*`` fields
+    intentionally mirror the SnapshotAnalysisService ``AnalysisProgress``
+    contract so the shared GET /monitoring/{id}/status endpoint can read live
+    video-analysis progress and thermal telemetry through the same attribute
+    names. For the video-first flow these are frame-based:
+      - ``processed_snapshots`` == frames read/processed so far
+      - ``total_snapshots``     == total frames in the video (from metadata)
+    They are NOT the persisted snapshot counters on the Monitoring ORM row.
+    """
 
     status: str = "pending"  # "pending" | "running" | "completed" | "error"
     total_frames_read: int = 0
     current_frame_index: int = -1
     unique_tracks: int = 0
     thermal_paused: bool = False
+    # Frame-based progress surfaced to the UI (analysis_processed/analysis_total).
+    processed_snapshots: int = 0
+    total_snapshots: int = 0
+    # Thermal telemetry surfaced during ANALYZING (populated from ThermalMonitor).
+    thermal_current_temperature_c: Optional[float] = None
+    thermal_peak_temperature_c: float = 0.0
+    thermal_pause_count: int = 0
+    thermal_pause_duration_seconds: float = 0.0
 
 
 @dataclass
@@ -471,7 +489,12 @@ class VideoAnalysisService:
                 pass
 
     def _thermal_cooperative_pause(self) -> None:
-        """Wait cooperatively while the thermal monitor's pause_event is set."""
+        """Wait cooperatively while the thermal monitor's pause_event is set.
+
+        Also refreshes the live thermal telemetry on the progress object so the
+        status endpoint can surface temperature / peak / pause counts during
+        ANALYZING (not only after the run completes).
+        """
         tm = self._thermal_monitor
         if tm is None:
             return
@@ -481,11 +504,43 @@ class VideoAnalysisService:
         try:
             while pause_event.is_set():
                 self._progress.thermal_paused = True
+                self._refresh_thermal_progress()
                 time.sleep(0.25)
             self._progress.thermal_paused = False
+            self._refresh_thermal_progress()
         except Exception:
             # Thermal read failure must never crash analysis.
             pass
+
+    def _refresh_thermal_progress(self) -> None:
+        """Copy the latest thermal telemetry from the monitor onto progress.
+
+        Reads current/peak temperature and pause counters defensively; any
+        failure is swallowed (thermal telemetry is best-effort and must never
+        crash or pause analysis). Values mirror the SnapshotAnalysisService
+        progress contract consumed by the status endpoint.
+        """
+        tm = self._thermal_monitor
+        if tm is None:
+            return
+        try:
+            current = getattr(tm, "current_temperature", None)
+            if current is not None and isinstance(current, (int, float)) and not isinstance(current, bool):
+                self._progress.thermal_current_temperature_c = float(current)
+            elif current is None:
+                self._progress.thermal_current_temperature_c = None
+        except Exception:
+            pass
+        self._progress.thermal_peak_temperature_c = max(
+            0.0, float(self._thermal_metric("peak_temperature", 0.0) or 0.0)
+        )
+        self._progress.thermal_pause_count = max(
+            0, int(self._thermal_metric("pause_count", 0) or 0)
+        )
+        self._progress.thermal_pause_duration_seconds = max(
+            0.0,
+            float(self._thermal_metric("total_pause_duration_seconds", 0.0) or 0.0),
+        )
 
     def _thermal_metric(self, attr: str, default):
         """Safely read a numeric metric from the thermal monitor."""
@@ -780,6 +835,9 @@ class VideoAnalysisService:
             result.source_width = meta.width
             result.source_height = meta.height
             result.source_frame_count = meta.total_frames
+            # Expose the total frame count as progress denominator so the UI can
+            # render "processed / total" instead of the previous 0/0.
+            self._progress.total_snapshots = max(0, int(meta.total_frames or 0))
 
             # Build the pipeline components EXACTLY ONCE for the whole video. The
             # same object (and thus the same components.tracker / SimpleTracker)
@@ -832,6 +890,9 @@ class VideoAnalysisService:
                 # preserves how many frames were read before it.
                 result.total_frames_read = frames_read
                 self._progress.total_frames_read = frames_read
+                # processed_snapshots mirrors frames processed for the UI
+                # numerator (analysis_processed). Kept in lockstep with reads.
+                self._progress.processed_snapshots = frames_read
                 self._progress.current_frame_index = frame_idx
 
                 decision = decide_run_detector(

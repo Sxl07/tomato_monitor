@@ -5,16 +5,21 @@
  *   startMonitoringPolling(monitoringId, options)
  *   stopMonitoringPolling()
  *
- * Polls every 2 seconds (max 3 requests per cycle):
+ * Slow polling cycle every 2 seconds:
  *   1. GET /monitoring/{id}/status — live counters, status blocks, warning banners
  *   2. GET /api/monitoring/{id}/log?since=... — activity log entries (incremental)
- *   3. GET /api/monitoring/{id}/last-snapshot — last captured image thumbnail
+ *   3. GET /api/monitoring/{id}/last-snapshot — last thumbnail (when not recording)
+ *
+ * Fast recording-preview loop (~5 fps / 200 ms) runs separately while the
+ * session is "running" and reads the recording worker's last-frame copy via
+ * GET /api/monitoring/{id}/preview. It never opens a camera and does not
+ * change recording_target_fps.
  *
  * Also manages:
  *   - Elapsed time counter (MM:SS) updating every second
  *   - Auto-redirect to report on completed status
  *   - Temperature warning banner
- *   - Analysis progress (X/Y snapshots) during analyzing state
+ *   - Analysis progress (X/Y frames) during analyzing state
  *
  * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 5.3, 5.9, 5.10, 6.1,
  *              6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 9.3, 10.3, 12.3, 14.2, 14.3, 14.4
@@ -31,10 +36,32 @@
     var currentStatus = null;
     var lastLogTimestamp = null;
     var lastSnapshotBlobUrl = null;
+    // Concurrency guard for the fast preview loop: true while a single preview
+    // fetch is in flight. Reset by stopPreviewLoop() (and thus on teardown/
+    // restart) and by the owning request's finally.
+    var previewRequestInFlight = false;
+    // AbortController of the single active preview fetch (null when none).
+    // Aborting it cancels an in-flight request when the loop stops, polling
+    // restarts, or the session leaves "running".
+    var previewAbortController = null;
+    // Monotonic generation token. Incremented every time the preview is
+    // (re)started or torn down. A request captures the generation at launch;
+    // if the current generation has advanced by the time it resolves, the
+    // response belongs to an older session and must NOT touch the UI or the
+    // shared guard/controller.
+    var previewGeneration = 0;
 
     // --- Configuration ---
     var POLL_INTERVAL_MS = 2000;
+    // Live recording preview runs on its OWN faster loop (~5 fps / 200 ms) so
+    // the recording feels live, while status/log stay on the slow 2 s cycle.
+    // This does NOT change recording_target_fps — it only refreshes the
+    // worker's last-frame copy more often. Single camera owner is preserved.
+    var PREVIEW_INTERVAL_MS = 200;
     var TEMPERATURE_THRESHOLD = 70;
+
+    // Separate interval id for the fast recording-preview loop.
+    var previewIntervalId = null;
 
     // Terminal states that stop polling
     var TERMINAL_STATES = ["completed", "aborted", "error"];
@@ -69,14 +96,19 @@
      * @param {number} [options.temperatureThreshold] - Temp threshold in °C (default 70).
      */
     function startMonitoringPolling(monitoringId, options) {
-        if (pollingIntervalId !== null) {
-            stopMonitoringPolling();
-        }
+        // Always tear down any prior run first. Calling this unconditionally
+        // (not only when pollingIntervalId is set) guarantees repeated calls
+        // can never leave a duplicate preview loop, slow interval, or
+        // visibility/unload listener registered.
+        stopMonitoringPolling();
 
         currentMonitoringId = monitoringId;
         currentStatus = null;
         lastLogTimestamp = null;
         elapsedSeconds = 0;
+        // Preview state (guard, controller, generation) was already reset by
+        // the stopMonitoringPolling() call above via stopPreviewLoop(), which
+        // aborts any in-flight request and advances the generation token.
 
         if (options) {
             if (typeof options.interval === "number" && options.interval > 0) {
@@ -106,9 +138,53 @@
             clearInterval(pollingIntervalId);
             pollingIntervalId = null;
         }
+        stopPreviewLoop();
         stopElapsedTimer();
         document.removeEventListener("visibilitychange", handleVisibilityChange);
         window.removeEventListener("beforeunload", stopMonitoringPolling);
+    }
+
+    /**
+     * Start the fast recording-preview loop (~5 fps). Idempotent. Only the
+     * preview is refreshed here — no status/log requests. Never opens a camera.
+     */
+    function startPreviewLoop() {
+        if (previewIntervalId !== null) return; // already running
+        // Kick off immediately so the preview appears without a 200 ms delay.
+        pollRecordingPreview(currentMonitoringId);
+        previewIntervalId = setInterval(function () {
+            pollRecordingPreview(currentMonitoringId);
+        }, PREVIEW_INTERVAL_MS);
+    }
+
+    /**
+     * Stop the fast recording-preview loop. Idempotent.
+     *
+     * Besides clearing the interval, this ABORTS any in-flight preview fetch
+     * and advances the generation token. Together these guarantee that a
+     * pending request cannot update the UI or release the guard/controller of
+     * a later session after the loop has stopped.
+     */
+    function stopPreviewLoop() {
+        if (previewIntervalId !== null) {
+            clearInterval(previewIntervalId);
+            previewIntervalId = null;
+        }
+        // Cancel the active preview request (if any). Its rejected fetch is
+        // handled inside pollRecordingPreview; the generation bump below makes
+        // it a no-op even if it somehow resolves.
+        if (previewAbortController !== null) {
+            try {
+                previewAbortController.abort();
+            } catch (e) {
+                // Older engines without AbortController: nothing to abort.
+            }
+            previewAbortController = null;
+        }
+        // Invalidate any outstanding request so its late finally/then cannot
+        // touch shared state that now belongs to a new generation.
+        previewGeneration++;
+        previewRequestInFlight = false;
     }
 
     // --- Polling cycle (max 3 requests) ---
@@ -121,17 +197,31 @@
         // Request 1: Status
         await pollStatus(monitoringId);
 
-        // Only poll log and preview if not in a terminal state
+        // Only poll log/thumbnail if not in a terminal state. The live recording
+        // preview is NOT fetched here — it runs on its own ~5 fps loop (managed
+        // by state transitions) so the slow 2 s cycle stays at status + log.
         if (TERMINAL_STATES.indexOf(currentStatus) === -1) {
             // Request 2: Activity log
             pollLog(monitoringId);
-            // Request 3: During recording (running), show a live preview of the
-            // recording worker's last frame. No camera is opened by this call.
-            if (currentStatus === "running") {
-                pollRecordingPreview(monitoringId);
-            } else if (currentStatus !== "analyzing") {
+            // Request 3: last-snapshot thumbnail only when NOT recording and NOT
+            // analyzing (during recording the fast preview loop shows the frame).
+            if (currentStatus !== "running" && currentStatus !== "analyzing") {
                 pollLastSnapshot(monitoringId);
             }
+        }
+    }
+
+    /**
+     * Enable/disable the fast recording-preview loop based on the current
+     * status. Called on every status update so the loop starts when a recording
+     * begins and stops as soon as it leaves the "running" state.
+     */
+    function syncPreviewLoop() {
+        if (currentStatus === "running" &&
+            TERMINAL_STATES.indexOf(currentStatus) === -1) {
+            startPreviewLoop();
+        } else {
+            stopPreviewLoop();
         }
     }
 
@@ -203,6 +293,9 @@
             handleStateTransition(data.status);
             currentStatus = data.status;
         }
+
+        // Start/stop the fast recording-preview loop to match the current state.
+        syncPreviewLoop();
     }
 
     // --- Analysis progress ---
@@ -436,26 +529,64 @@
     // --- Recording preview polling (video-first) ---
 
     var recordingPreviewBlobUrl = null;
+    // Concurrency is enforced by THREE cooperating pieces of module state:
+    //   - previewRequestInFlight: at most ONE preview fetch runs at a time;
+    //   - previewAbortController: lets stopPreviewLoop() cancel that fetch;
+    //   - previewGeneration: a token captured at launch so a response from an
+    //     aborted/older session can never update the UI nor release the guard
+    //     of a newer request.
 
     /**
      * Fetch the recording worker's last frame during a video-first recording.
      * The endpoint reads a thread-safe copy from the registry worker and NEVER
      * opens a camera. 503 means "no frame yet" — the placeholder remains.
+     *
+     * Race-safe by construction:
+     *   1. Returns immediately if a preview fetch is already in flight
+     *      (no two concurrent preview requests).
+     *   2. Uses a dedicated AbortController so stopPreviewLoop()/restart can
+     *      cancel the active request.
+     *   3. Captures the generation token at launch; after every await it bails
+     *      (without touching imgEl.src) if the generation advanced — i.e. the
+     *      loop was stopped/restarted meanwhile.
+     *   4. Only clears the shared guard/controller in finally when it still
+     *      owns the current generation, so an old request's late finally can
+     *      never free a newer request's state.
      * @param {number} monitoringId
      */
     async function pollRecordingPreview(monitoringId) {
+        // (1) Skip if a previous preview request has not completed yet.
+        if (previewRequestInFlight) return;
+
         var imgEl = document.getElementById("recording-preview-img");
         var placeholderEl = document.getElementById("recording-preview-placeholder");
         if (!imgEl) return;
         var url = imgEl.getAttribute("data-preview-url") ||
             ("/api/monitoring/" + monitoringId + "/preview");
+
+        // (2) Own AbortController + (3) generation captured for THIS request.
+        var controller = (typeof AbortController !== "undefined")
+            ? new AbortController()
+            : null;
+        var myGeneration = previewGeneration;
+
+        previewRequestInFlight = true;
+        previewAbortController = controller;
         try {
-            var response = await fetch(url + "?t=" + Date.now());
+            var response = await fetch(
+                url + "?t=" + Date.now(),
+                controller ? { signal: controller.signal } : undefined
+            );
+            // Stale (loop stopped/restarted while awaiting) → do not touch UI.
+            if (myGeneration !== previewGeneration) return;
             if (!response.ok) {
                 // 503 — recording not producing frames yet; keep the placeholder
                 return;
             }
             var blob = await response.blob();
+            // Re-check after the second await: an aborted/older response must
+            // NEVER update imgEl.src for the current session.
+            if (myGeneration !== previewGeneration) return;
             if (recordingPreviewBlobUrl) {
                 URL.revokeObjectURL(recordingPreviewBlobUrl);
             }
@@ -464,7 +595,16 @@
             imgEl.style.display = "block";
             if (placeholderEl) placeholderEl.style.display = "none";
         } catch (error) {
-            // Silently ignore — non-critical, placeholder remains
+            // AbortError (cancelled) and network errors are both non-critical;
+            // the placeholder / last frame remains.
+        } finally {
+            // (4) Only release shared state if THIS request is still current.
+            // A stale request (generation advanced, e.g. after a restart or
+            // stop) must not clear the guard/controller owned by a newer one.
+            if (myGeneration === previewGeneration) {
+                previewRequestInFlight = false;
+                previewAbortController = null;
+            }
         }
     }
 
@@ -652,6 +792,9 @@
                 clearInterval(pollingIntervalId);
                 pollingIntervalId = null;
             }
+            // Also stop the fast preview loop while hidden — no point fetching
+            // frames the operator cannot see, and it avoids background load.
+            stopPreviewLoop();
             stopElapsedTimer();
         } else {
             if (currentMonitoringId !== null && pollingIntervalId === null) {
@@ -662,6 +805,8 @@
                 if (currentStatus === "running") {
                     startElapsedTimer();
                 }
+                // Restore the fast preview loop ONLY if still recording.
+                syncPreviewLoop();
             }
         }
     }

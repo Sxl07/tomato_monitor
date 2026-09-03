@@ -34,6 +34,16 @@ class MonitoringRepository(ABC):
         ...
 
     @abstractmethod
+    def get_active(self) -> list[Monitoring]:
+        """Return all monitorings currently in a non-terminal (active) status.
+
+        Active statuses are initializing, running, paused, finishing, analyzing.
+        Used by startup reconciliation to detect sessions orphaned by a process
+        restart. Returns an empty list if none exist.
+        """
+        ...
+
+    @abstractmethod
     def get_by_id(self, id: int) -> Optional[Monitoring]:
         """Return the monitoring with the given id, or None if not found."""
         ...

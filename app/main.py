@@ -26,11 +26,14 @@ from src.infrastructure.supabase.supabase_config import load_supabase_config
 
 
 def _recover_abrupt_recordings(db_manager, runtime_registry) -> None:
-    """Wire startup recovery to MonitoringService (Task 11.1).
+    """Wire startup recovery to MonitoringService (Task 11.1 + hotfix).
 
     Builds a MonitoringService with SQL repositories on a fresh session and
-    delegates to recover_abrupt_recordings(). No recovery logic lives here —
-    this is pure wiring. Best-effort: never raises, never blocks startup.
+    delegates to recover_abrupt_recordings() (leftover video promotion) and
+    reconcile_orphaned_sessions_on_startup() (mark restart-orphaned sessions,
+    e.g. stuck in 'analyzing', as 'error' while preserving the video). No
+    recovery logic lives here — this is pure wiring. Best-effort: never
+    raises, never blocks startup.
     """
     from src.application.services.monitoring_service import MonitoringService
     from src.infrastructure.persistence.repositories.sql_monitoring_repository import SqlMonitoringRepository
@@ -49,7 +52,12 @@ def _recover_abrupt_recordings(db_manager, runtime_registry) -> None:
             module_repo=SqlModuleRepository(session=session),
             runtime_registry=runtime_registry,
         )
+        # Promote any leftover recording temp files first (filesystem only).
         service.recover_abrupt_recordings()
+        # Then reconcile sessions left in a non-terminal status by the restart
+        # (e.g. stuck in 'analyzing' with no worker) to 'error'. Preserves
+        # monitoring.mp4 and does NOT auto-reprocess.
+        service.reconcile_orphaned_sessions_on_startup()
         session.commit()
     except Exception as e:
         try:

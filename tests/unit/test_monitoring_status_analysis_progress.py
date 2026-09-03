@@ -361,3 +361,51 @@ class TestOnlyGetWorkerCalled:
 
         mock_registry.get_worker.assert_called_once()
         mock_registry.get_thread.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 8. Null dimensions (HOTFIX regression — width_m/length_m may be None)
+# ---------------------------------------------------------------------------
+
+
+class TestNullDimensions:
+    """A monitoring with width_m/length_m = None must NOT 500 the status endpoint.
+
+    Regression for the post-Spec019 hotfix: MonitoringStatusResponse declared
+    width_m/length_m as required floats, so a partially-initialized or
+    startup-reconciled row carrying None raised a Pydantic ValidationError
+    (HTTP 500). They are now Optional[float] = None.
+    """
+
+    def test_null_dimensions_return_200_and_null(self, app, client, mock_service):
+        mock_service.get_status.return_value = _make_monitoring(
+            status="initializing", width_m=None, length_m=None
+        )
+
+        mock_registry = MagicMock()
+        mock_registry.get_worker.return_value = None
+        app.state.monitoring_runtime_registry = mock_registry
+
+        response = client.get("/monitoring/1/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["width_m"] is None
+        assert data["length_m"] is None
+
+    def test_partial_null_dimension_returns_200(self, app, client, mock_service):
+        # Only one dimension null — still must not error.
+        mock_service.get_status.return_value = _make_monitoring(
+            status="analyzing", width_m=5.0, length_m=None
+        )
+
+        mock_registry = MagicMock()
+        mock_registry.get_worker.return_value = None
+        app.state.monitoring_runtime_registry = mock_registry
+
+        response = client.get("/monitoring/1/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["width_m"] == 5.0
+        assert data["length_m"] is None

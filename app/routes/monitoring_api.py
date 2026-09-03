@@ -125,7 +125,13 @@ async def monitoring_log(
     entries = log_service.get_entries(monitoring_id, since=parsed_since)
     return [
         {
-            "timestamp": entry.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            # Serialize at full precision (microseconds + UTC offset) so the
+            # value round-trips through datetime.fromisoformat when the client
+            # echoes it back as ?since. Truncating to whole seconds (the old
+            # strftime("%Y-%m-%dT%H:%M:%SZ")) dropped microseconds, so the
+            # strict ">" filter in LogService kept re-returning the last entry
+            # on every poll.
+            "timestamp": entry.timestamp.isoformat(),
             "level": entry.level.value,
             "source": entry.source,
             "message": entry.message,

@@ -1422,6 +1422,54 @@ class MonitoringService:
                 # Clean up stale references from registry.
                 self._registry.remove(m.id)
 
+    def reconcile_orphaned_sessions_on_startup(self) -> None:
+        """Reconcile sessions left active after a process restart (startup only).
+
+        On restart the in-memory runtime registry is empty, so ANY monitoring
+        still in a non-terminal status (initializing / running / paused /
+        finishing / analyzing) has no worker backing it and can never progress
+        on its own. Without this, such a session — notably one stuck in
+        'analyzing' — would remain active indefinitely, blocking the module and
+        leaving the UI polling 0/0 forever.
+
+        Each orphaned session is transitioned to 'error'. This ONLY updates the
+        status: it never clears video_path nor deletes monitoring.mp4, so a
+        video-first session remains reprocessable afterwards. It does NOT
+        auto-reprocess anything at startup. Best-effort — never raises.
+        """
+        try:
+            active = self._monitoring_repo.get_active()
+        except Exception as e:
+            logger.error(f"Startup reconciliation: failed to list active sessions: {e}")
+            return
+
+        for m in active:
+            # Defensive: a live worker could exist if reconciliation is ever
+            # invoked outside the empty-registry startup path.
+            thread = self._registry.get_thread(m.id)
+            if thread is not None and thread.is_alive():
+                continue
+
+            logger.warning(
+                f"Startup reconciliation: orphaned session monitoring_id={m.id}, "
+                f"status={m.status}. Transitioning to 'error' "
+                f"(video preserved, reprocessable)."
+            )
+            try:
+                self._monitoring_repo.update_status(
+                    m.id, MonitoringState.ERROR.value
+                )
+            except Exception as e:
+                logger.error(
+                    f"Startup reconciliation: failed to mark session {m.id} "
+                    f"as error: {e}"
+                )
+            # Drop any stale registry reference (no-op if absent).
+            try:
+                self._registry.remove(m.id)
+            except Exception:
+                pass
+
     def _get_monitoring_or_raise(self, monitoring_id: int) -> Monitoring:
         """Fetch monitoring by id or raise MonitoringNotFoundError."""
         monitoring = self._monitoring_repo.get_by_id(monitoring_id)
