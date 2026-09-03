@@ -25,6 +25,43 @@ from src.infrastructure.persistence.database import DatabaseManager
 from src.infrastructure.supabase.supabase_config import load_supabase_config
 
 
+def _recover_abrupt_recordings(db_manager, runtime_registry) -> None:
+    """Wire startup recovery to MonitoringService (Task 11.1).
+
+    Builds a MonitoringService with SQL repositories on a fresh session and
+    delegates to recover_abrupt_recordings(). No recovery logic lives here —
+    this is pure wiring. Best-effort: never raises, never blocks startup.
+    """
+    from src.application.services.monitoring_service import MonitoringService
+    from src.infrastructure.persistence.repositories.sql_monitoring_repository import SqlMonitoringRepository
+    from src.infrastructure.persistence.repositories.sql_snapshot_repository import SqlSnapshotRepository
+    from src.infrastructure.persistence.repositories.sql_inspection_result_repository import SqlInspectionResultRepository
+    from src.infrastructure.persistence.repositories.sql_monitoring_metrics_repository import SqlMonitoringMetricsRepository
+    from src.infrastructure.persistence.repositories.sql_module_repository import SqlModuleRepository
+
+    session = db_manager.get_session()
+    try:
+        service = MonitoringService(
+            monitoring_repo=SqlMonitoringRepository(session=session),
+            snapshot_repo=SqlSnapshotRepository(session=session),
+            inspection_result_repo=SqlInspectionResultRepository(session=session),
+            metrics_repo=SqlMonitoringMetricsRepository(session=session),
+            module_repo=SqlModuleRepository(session=session),
+            runtime_registry=runtime_registry,
+        )
+        service.recover_abrupt_recordings()
+        session.commit()
+    except Exception as e:
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        _recovery_logger = _logging.getLogger("app.recovery")
+        _recovery_logger.warning(f"Startup recovery failed: {e}")
+    finally:
+        session.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize logging and database on startup."""
@@ -44,6 +81,11 @@ async def lifespan(app: FastAPI):
 
     from src.application.services.monitoring_runtime_registry import MonitoringRuntimeRegistry
     app.state.monitoring_runtime_registry = MonitoringRuntimeRegistry()
+
+    # Recover leftover recordings from an abrupt termination (Task 11.1).
+    # Delegates entirely to MonitoringService.recover_abrupt_recordings();
+    # best-effort — must never crash startup.
+    _recover_abrupt_recordings(db_manager, app.state.monitoring_runtime_registry)
 
     from src.application.services.sync_runtime_state import SyncRuntimeState
     app.state.sync_runtime_state = SyncRuntimeState()

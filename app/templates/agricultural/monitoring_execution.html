@@ -14,28 +14,28 @@
     </div>
 </div>
 
-{# --- Running --- #}
+{# --- Running (video-first: Recording) --- #}
 <div id="status-running" class="execution-status-block {% if monitoring.status != 'running' %}hidden{% endif %}">
     <div class="status-indicator">
         <div class="spinner"></div>
-        <span class="status-text">Monitoreando...</span>
+        <span class="status-text">Grabando...</span>
         <span id="elapsed-timer" class="elapsed-timer">00:00</span>
     </div>
 
-    <div class="live-counters">
-        <div class="live-counter">
-            <span id="counter-snapshots" class="live-counter-value">{{ monitoring.total_snapshots }}</span>
-            <span class="live-counter-label">Snapshots capturados</span>
-        </div>
-    </div>
-
-    {# Last snapshot thumbnail #}
-    <div class="last-snapshot-container">
-        <h2 class="section-header mt-0">Última captura</h2>
-        <div id="last-snapshot-wrapper">
-            <img id="last-snapshot-img" src="/static/images/placeholder-snapshot.svg" alt="Última captura del monitoreo" style="{% if monitoring.total_snapshots == 0 %}display:none;{% endif %}">
-            <p id="last-snapshot-placeholder" class="text-secondary text-center" style="padding: 16px; {% if monitoring.total_snapshots > 0 %}display:none;{% endif %}">
-                Monitoreo activo, esperando primera captura...
+    {# Live recording preview — a copy of the recording worker's last frame.
+       Served by /api/monitoring/{id}/preview WITHOUT opening a second camera. #}
+    <div class="recording-preview-container">
+        <h2 class="section-header mt-0">Vista de grabación</h2>
+        <div id="recording-preview-wrapper">
+            <img
+                id="recording-preview-img"
+                data-preview-url="/api/monitoring/{{ monitoring.id }}/preview"
+                src="/static/images/placeholder-snapshot.svg"
+                alt="Vista de la grabación en curso"
+                style="display:none;"
+            >
+            <p id="recording-preview-placeholder" class="text-secondary text-center" style="padding: 16px;">
+                Recorra el módulo con el dispositivo. Grabando...
             </p>
         </div>
     </div>
@@ -54,7 +54,7 @@
 <div id="status-analyzing" class="execution-status-block {% if monitoring.status != 'analyzing' %}hidden{% endif %}">
     <div class="execution-center">
         <div class="spinner spinner--lg"></div>
-        <p id="analysis-progress-text" class="execution-status-text">Preparando análisis...</p>
+        <p id="analysis-progress-text" class="execution-status-text">Procesando video...</p>
         <div class="live-counters" style="margin-top: 8px;">
             <span id="analysis-processed">0</span> / <span id="analysis-total">0</span> snapshots
         </div>
@@ -133,7 +133,7 @@
 {# --- Finalize capture confirmation dialog --- #}
 <div id="finalize-dialog" class="dialog-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="finalize-dialog-message">
     <div class="dialog">
-        <p id="finalize-dialog-message" class="dialog-message">La cámara se liberará y comenzará el análisis de los snapshots capturados.</p>
+        <p id="finalize-dialog-message" class="dialog-message">La grabación finalizará y comenzará el procesamiento del video.</p>
         <div class="dialog-actions">
             <button type="button" class="btn btn-secondary" onclick="hideConfirmDialog('finalize-dialog')">Cancelar</button>
             <form id="finalize-form" method="post" action="/monitoreos/{{ monitoring.id }}/finalizar-captura" style="margin:0;">
@@ -160,8 +160,8 @@
 <div id="finalizing-capture-overlay" class="execution-status-block hidden">
     <div class="execution-center">
         <div class="spinner spinner--lg"></div>
-        <p class="execution-status-text">Finalizando captura...</p>
-        <p class="text-secondary" style="font-size: var(--font-size-small);">Liberando cámara antes de iniciar el análisis.</p>
+        <p class="execution-status-text">Finalizando grabación...</p>
+        <p class="text-secondary" style="font-size: var(--font-size-small);">Liberando cámara antes de procesar el video.</p>
     </div>
 </div>
 

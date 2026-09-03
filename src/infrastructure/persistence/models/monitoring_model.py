@@ -40,6 +40,7 @@ class MonitoringModel(Base):
     sync_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="pending"
     )
+    video_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # Remote sync metadata
     remote_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

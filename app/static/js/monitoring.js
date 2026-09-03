@@ -121,12 +121,15 @@
         // Request 1: Status
         await pollStatus(monitoringId);
 
-        // Only poll log and snapshot if not in a terminal state
+        // Only poll log and preview if not in a terminal state
         if (TERMINAL_STATES.indexOf(currentStatus) === -1) {
             // Request 2: Activity log
             pollLog(monitoringId);
-            // Request 3: Last snapshot (only during capture, not analysis)
-            if (currentStatus !== "analyzing") {
+            // Request 3: During recording (running), show a live preview of the
+            // recording worker's last frame. No camera is opened by this call.
+            if (currentStatus === "running") {
+                pollRecordingPreview(monitoringId);
+            } else if (currentStatus !== "analyzing") {
                 pollLastSnapshot(monitoringId);
             }
         }
@@ -224,7 +227,7 @@
         var fillEl = document.getElementById("analysis-progress-fill");
 
         if (total <= 0) {
-            if (textEl) textEl.textContent = "Preparando análisis...";
+            if (textEl) textEl.textContent = "Procesando video...";
             if (processedEl) processedEl.textContent = "0";
             if (totalEl) totalEl.textContent = "0";
             if (fillEl) {
@@ -236,7 +239,7 @@
             if (pct < 0) pct = 0;
             if (pct > 100) pct = 100;
 
-            if (textEl) textEl.textContent = "Analizando snapshots... (" + processed + "/" + total + ")";
+            if (textEl) textEl.textContent = "Procesando video... (" + processed + "/" + total + ")";
             if (processedEl) processedEl.textContent = String(processed);
             if (totalEl) totalEl.textContent = String(total);
             if (fillEl) {
@@ -425,6 +428,41 @@
             if (placeholderEl) {
                 placeholderEl.style.display = "none";
             }
+        } catch (error) {
+            // Silently ignore — non-critical, placeholder remains
+        }
+    }
+
+    // --- Recording preview polling (video-first) ---
+
+    var recordingPreviewBlobUrl = null;
+
+    /**
+     * Fetch the recording worker's last frame during a video-first recording.
+     * The endpoint reads a thread-safe copy from the registry worker and NEVER
+     * opens a camera. 503 means "no frame yet" — the placeholder remains.
+     * @param {number} monitoringId
+     */
+    async function pollRecordingPreview(monitoringId) {
+        var imgEl = document.getElementById("recording-preview-img");
+        var placeholderEl = document.getElementById("recording-preview-placeholder");
+        if (!imgEl) return;
+        var url = imgEl.getAttribute("data-preview-url") ||
+            ("/api/monitoring/" + monitoringId + "/preview");
+        try {
+            var response = await fetch(url + "?t=" + Date.now());
+            if (!response.ok) {
+                // 503 — recording not producing frames yet; keep the placeholder
+                return;
+            }
+            var blob = await response.blob();
+            if (recordingPreviewBlobUrl) {
+                URL.revokeObjectURL(recordingPreviewBlobUrl);
+            }
+            recordingPreviewBlobUrl = URL.createObjectURL(blob);
+            imgEl.src = recordingPreviewBlobUrl;
+            imgEl.style.display = "block";
+            if (placeholderEl) placeholderEl.style.display = "none";
         } catch (error) {
             // Silently ignore — non-critical, placeholder remains
         }

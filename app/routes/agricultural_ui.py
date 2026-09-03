@@ -768,12 +768,22 @@ def monitoring_start(
     # Construct dependencies for MonitoringService.start_session()
     # 1. Frame source (camera backend — picamera2 on RPi, OpenCV on PC)
     #    Pass camera resolution from ACTIVE_PROFILE for monitoring capture.
+    #    Video-first (Task 10.1): use the VIDEO camera configuration with the
+    #    configured recording fps so the sensor cadence is explicit.
     from src.infrastructure.config.settings import ACTIVE_PROFILE
-    frame_source = create_frame_source(
-        width=ACTIVE_PROFILE.camera_width,
-        height=ACTIVE_PROFILE.camera_height,
-        fps=ACTIVE_PROFILE.camera_fps,
-    )
+    if getattr(ACTIVE_PROFILE, "video_first_enabled", False):
+        frame_source = create_frame_source(
+            width=ACTIVE_PROFILE.camera_width,
+            height=ACTIVE_PROFILE.camera_height,
+            fps=int(ACTIVE_PROFILE.recording_target_fps),
+            camera_mode="video",
+        )
+    else:
+        frame_source = create_frame_source(
+            width=ACTIVE_PROFILE.camera_width,
+            height=ACTIVE_PROFILE.camera_height,
+            fps=ACTIVE_PROFILE.camera_fps,
+        )
     if frame_source is None:
         errors = ["La cámara no está disponible. Verifica la conexión y vuelve a intentar."]
         return templates.TemplateResponse(request, "agricultural/monitoring_setup.html", {

@@ -63,7 +63,8 @@ class TestBuildActiveMonitoringContext:
         from app.context_builders import build_active_monitoring_context
         m = _make_monitoring(5, "analyzing")
         result = build_active_monitoring_context([m])
-        assert result.status_label == "Analizando snapshots"
+        # Video-first wording (Spec 019 Task 14.2): analyzing = Processing.
+        assert result.status_label == "Procesando video"
 
     def test_execution_url(self):
         from app.context_builders import build_active_monitoring_context

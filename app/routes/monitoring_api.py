@@ -32,6 +32,62 @@ async def camera_preview(request: Request, user=Depends(require_current_user_api
     return Response(content=frame_bytes, media_type="image/jpeg")
 
 
+@router.get("/monitoring/{monitoring_id}/preview")
+async def monitoring_preview(
+    monitoring_id: int,
+    request: Request,
+    user=Depends(require_current_user_api),
+):
+    """Return the last recorded frame during a video-first recording as JPEG.
+
+    Single camera owner (Requirement 7): the VideoRecordingWorker owns the
+    camera during recording. This endpoint NEVER opens the camera, never calls
+    capture_single_frame(), never constructs a second RaspberryCameraFrameSource
+    / Picamera2, and never re-acquires the camera lock. It only reads a
+    thread-safe COPY of the worker's last frame via
+    MonitoringRuntimeRegistry.get_worker(monitoring_id).get_last_frame().
+
+    Returns 503 (not an error, no camera opened) when there is no active
+    recording worker or no frame has been captured yet.
+    """
+    registry = getattr(request.app.state, "monitoring_runtime_registry", None)
+    worker = registry.get_worker(monitoring_id) if registry is not None else None
+
+    # Only a video-first recording worker exposes get_last_frame(). If there is
+    # no such worker (no active recording), report unavailable WITHOUT touching
+    # the camera — the caller must not fall back to opening a second source.
+    get_last_frame = getattr(worker, "get_last_frame", None)
+    if worker is None or not callable(get_last_frame):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Vista previa no disponible",
+                "reason": "No hay una grabación activa para este monitoreo.",
+            },
+        )
+
+    frame = get_last_frame()  # thread-safe COPY from the recording worker
+    if frame is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Vista previa no disponible",
+                "reason": "Aún no hay imagen grabada.",
+            },
+        )
+
+    frame_bytes = CameraService.encode_frame_jpeg(frame)
+    if frame_bytes is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Vista previa no disponible",
+                "reason": "No se pudo generar la imagen.",
+            },
+        )
+    return Response(content=frame_bytes, media_type="image/jpeg")
+
+
 @router.get("/camera/status")
 async def camera_status(request: Request, user=Depends(require_current_user_api)):
     """Return camera availability status as JSON.

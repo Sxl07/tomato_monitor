@@ -160,13 +160,15 @@ def _get_last_monitoring_date(monitorings: list) -> Optional[str]:
     return _format_date_spanish(most_recent.started_at)
 
 
-# Status labels for active monitoring card (Spanish, farmer-friendly)
+# Status labels for active monitoring card (Spanish, farmer-friendly).
+# Video-first wording: running = Grabando (Recording), analyzing = Procesando
+# (Processing). See Spec 019 Task 14.2.
 _ACTIVE_STATUS_LABELS = {
     "initializing": "Inicializando",
-    "running": "Capturando snapshots",
+    "running": "Grabando",
     "paused": "Pausado",
     "finishing": "Finalizando",
-    "analyzing": "Analizando snapshots",
+    "analyzing": "Procesando video",
 }
 
 # Active statuses for the module detail card

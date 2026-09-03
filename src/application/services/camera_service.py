@@ -12,12 +12,6 @@ from src.domain.interfaces.frame_source import FrameSource
 
 logger = logging.getLogger(__name__)
 
-try:
-    import cv2
-    CV2_AVAILABLE = True
-except ImportError:
-    CV2_AVAILABLE = False
-
 
 class CameraStatus(str, Enum):
     AVAILABLE = "available"
@@ -97,9 +91,6 @@ class CameraService:
         """
         if self._frame_source is None:
             return None
-        if not CV2_AVAILABLE:
-            logger.warning("cv2 not available for JPEG encoding")
-            return None
         try:
             if hasattr(self._frame_source, 'capture_single_frame'):
                 ret, frame = self._frame_source.capture_single_frame()
@@ -107,8 +98,20 @@ class CameraService:
                 ret, frame = self._frame_source.read()
             if not ret or frame is None:
                 return None
-            _, jpeg_bytes = cv2.imencode(".jpg", frame)
-            return jpeg_bytes.tobytes()
+            return self.encode_frame_jpeg(frame)
         except Exception as e:
             logger.error(f"Camera capture error: {e}")
             return None
+
+    @staticmethod
+    def encode_frame_jpeg(frame) -> Optional[bytes]:
+        """Encode an already-captured BGR frame to JPEG bytes.
+
+        Delegates the OpenCV operation to the infrastructure encoder so this
+        application service stays free of ``cv2``. Used by both preview paths
+        (pre-monitoring capture and the video-first recording preview). Does NOT
+        touch the camera or acquire any lock. Returns None on any failure.
+        """
+        from src.infrastructure.camera.jpeg_encoder import encode_frame_to_jpeg
+
+        return encode_frame_to_jpeg(frame)

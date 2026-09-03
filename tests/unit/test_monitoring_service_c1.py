@@ -116,8 +116,11 @@ class TestStartSessionCreatesCaptureWorker:
             runtime_registry=registry,
         )
 
-        # Patch the lazy imports at their source modules
+        # Patch the lazy imports at their source modules. This test pins the
+        # PRESERVED capture-first path (video_first_enabled=False); the video-first
+        # default is exercised in test_monitoring_service_video_first.py.
         mock_profile = MagicMock()
+        mock_profile.video_first_enabled = False
         mock_profile.capture_loop_fps = 5.0
         mock_profile.min_seconds_between_snapshots = 1.0
         mock_profile.max_seconds_without_snapshot = 3.0
@@ -136,6 +139,8 @@ class TestStartSessionCreatesCaptureWorker:
                     is_camera_locked=MagicMock(return_value=False)
                 ),
             },
+        ), patch(
+            "src.infrastructure.config.settings.ACTIVE_PROFILE", mock_profile
         ):
             result = service.start_session(
                 module_id=1,

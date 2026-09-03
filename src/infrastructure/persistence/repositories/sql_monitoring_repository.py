@@ -49,6 +49,7 @@ class SqlMonitoringRepository(MonitoringRepository):
             total_detections=0,
             created_by_user_id=monitoring.created_by_user_id,
             sync_status=monitoring.sync_status,
+            video_path=monitoring.video_path,
         )
         self._session.add(model)
         self._session.flush()
@@ -117,6 +118,21 @@ class SqlMonitoringRepository(MonitoringRepository):
         self._session.commit()
         return self._to_entity(model)
 
+    def update_video_path(self, id: int, video_path: Optional[str]) -> Monitoring:
+        """Persist the monitoring video path (relative) and return the entity.
+
+        Stores the value as-is; None clears the path. No filesystem resolution
+        or traversal validation happens here.
+        """
+        model = self._session.get(MonitoringModel, id)
+        if model is None:
+            raise ValueError(f"Monitoring with id={id} not found")
+
+        model.video_path = video_path
+        self._session.flush()
+        self._session.commit()
+        return self._to_entity(model)
+
     def delete(self, id: int) -> None:
         """Delete the monitoring and cascade-delete all descendant entities.
 
@@ -127,6 +143,103 @@ class SqlMonitoringRepository(MonitoringRepository):
         if model is not None:
             self._session.delete(model)
             self._session.flush()
+
+    def has_synced_descendants(self, id: int) -> bool:
+        """Strict sync guard: True if the monitoring or ANY descendant is synced."""
+        from src.infrastructure.persistence.models.snapshot_model import SnapshotModel
+        from src.infrastructure.persistence.models.inspection_result_model import (
+            InspectionResultModel,
+        )
+        from src.infrastructure.persistence.models.monitoring_metrics_model import (
+            MonitoringMetricsModel,
+        )
+
+        _SYNCED = "synced"
+
+        # Monitoring itself.
+        model = self._session.get(MonitoringModel, id)
+        if model is not None and getattr(model, "remote_sync_status", None) == _SYNCED:
+            return True
+
+        # Any snapshot.
+        snapshot_synced = (
+            self._session.query(SnapshotModel.id)
+            .filter(
+                SnapshotModel.monitoring_id == id,
+                SnapshotModel.remote_sync_status == _SYNCED,
+            )
+            .first()
+        )
+        if snapshot_synced is not None:
+            return True
+
+        # Any inspection result (joined via its snapshot's monitoring).
+        result_synced = (
+            self._session.query(InspectionResultModel.id)
+            .join(SnapshotModel, InspectionResultModel.snapshot_id == SnapshotModel.id)
+            .filter(
+                SnapshotModel.monitoring_id == id,
+                InspectionResultModel.remote_sync_status == _SYNCED,
+            )
+            .first()
+        )
+        if result_synced is not None:
+            return True
+
+        # The monitoring metrics.
+        metrics_synced = (
+            self._session.query(MonitoringMetricsModel.id)
+            .filter(
+                MonitoringMetricsModel.monitoring_id == id,
+                MonitoringMetricsModel.remote_sync_status == _SYNCED,
+            )
+            .first()
+        )
+        return metrics_synced is not None
+
+    def clear_analysis_results(self, id: int) -> None:
+        """Delete snapshots (cascade to results) and metrics; keep monitoring+video."""
+        from src.infrastructure.persistence.models.snapshot_model import SnapshotModel
+        from src.infrastructure.persistence.models.monitoring_metrics_model import (
+            MonitoringMetricsModel,
+        )
+
+        # Delete snapshots via ORM so InspectionResult cascade (delete-orphan) runs.
+        snapshots = (
+            self._session.query(SnapshotModel)
+            .filter(SnapshotModel.monitoring_id == id)
+            .all()
+        )
+        for snap in snapshots:
+            self._session.delete(snap)
+
+        metrics = (
+            self._session.query(MonitoringMetricsModel)
+            .filter(MonitoringMetricsModel.monitoring_id == id)
+            .all()
+        )
+        for m in metrics:
+            self._session.delete(m)
+
+        self._session.flush()
+        self._session.commit()
+
+    def reset_for_reprocess(self, id: int) -> Monitoring:
+        """Reset a terminal monitoring to 'analyzing' (audited reset, not a FSM edge).
+
+        Deliberately bypasses MonitoringStatus.transition_to: reprocess is an
+        explicit analysis restart, not a normal business transition, so no
+        completed→analyzing edge is added to the FSM.
+        """
+        model = self._session.get(MonitoringModel, id)
+        if model is None:
+            raise ValueError(f"Monitoring with id={id} not found")
+
+        model.status = MonitoringState.ANALYZING.value
+        model.completed_at = None
+        self._session.flush()
+        self._session.commit()
+        return self._to_entity(model)
 
     def list_all(self) -> list[Monitoring]:
         """Return all monitorings, ordered by started_at descending."""
@@ -162,4 +275,5 @@ class SqlMonitoringRepository(MonitoringRepository):
             total_detections=model.total_detections,
             created_by_user_id=model.created_by_user_id,
             sync_status=model.sync_status,
+            video_path=model.video_path,
         )

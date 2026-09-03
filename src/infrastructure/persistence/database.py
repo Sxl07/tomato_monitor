@@ -205,6 +205,10 @@ def _migrate_add_columns(engine) -> None:
             conn.execute(
                 text("ALTER TABLE monitorings ADD COLUMN sync_status VARCHAR(20) NOT NULL DEFAULT 'pending'")
             )
+        if "video_path" not in monitoring_columns:
+            conn.execute(
+                text("ALTER TABLE monitorings ADD COLUMN video_path VARCHAR(500)")
+            )
 
         conn.commit()
 

@@ -23,6 +23,7 @@ def create_frame_source(
     width: int | None = None,
     height: int | None = None,
     fps: int | None = None,
+    camera_mode: str | None = None,
 ) -> Optional[FrameSource]:
     """Select the best available FrameSource backend.
 
@@ -40,6 +41,8 @@ def create_frame_source(
             If None, uses the frame source default.
         fps: Camera hardware FPS (passed to RaspberryCameraFrameSource).
             If None, uses the frame source default.
+        camera_mode: "still" (default) or "video". Only affects
+            RaspberryCameraFrameSource; ignored by the OpenCV fallback.
 
     Returns:
         A FrameSource instance (not yet connected to hardware), or None.
@@ -64,6 +67,8 @@ def create_frame_source(
                 kwargs["height"] = height
             if fps is not None:
                 kwargs["fps"] = fps
+            if camera_mode is not None:
+                kwargs["camera_mode"] = camera_mode
             return RaspberryCameraFrameSource(**kwargs)
     except Exception as e:
         logger.debug(f"picamera2 backend not available: {e}")
