@@ -120,8 +120,8 @@ class ExecutionProfile:
 
 EDGE_PROFILE = ExecutionProfile(
     name="edge",
-    camera_width=480,
-    camera_height=360,
+    camera_width=960,
+    camera_height=720,
     camera_fps=5,
     capture_loop_fps=5.0,
     min_seconds_between_snapshots=1.0,

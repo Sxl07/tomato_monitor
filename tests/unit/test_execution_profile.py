@@ -2,7 +2,8 @@
 
 Tests verify:
 - Both profiles instantiate with all required fields.
-- EDGE_PROFILE has more conservative values than FULL_PROFILE.
+- EDGE_PROFILE and FULL_PROFILE differ per their configured values (EDGE is
+  more conservative on most axes; camera resolution is a deliberate exception).
 - Environment variable selects the correct profile.
 - Invalid env var defaults to edge with warning.
 
@@ -88,17 +89,23 @@ class TestExecutionProfileStructure:
         assert isinstance(FULL_PROFILE.detection_score_threshold, float)
 
 
-class TestEdgeIsMoreConservative:
-    """Verify EDGE_PROFILE has more conservative values than FULL_PROFILE."""
+class TestEdgeVsFullProfileDifferences:
+    """Verify the configured differences between EDGE_PROFILE and FULL_PROFILE.
 
-    def test_edge_lower_camera_resolution(self):
-        from src.infrastructure.config.settings import EDGE_PROFILE, FULL_PROFILE
+    EDGE is more conservative on most axes (fps, gate resolution, timing), but
+    camera resolution is a deliberate exception: EDGE capture is set to 960x720
+    for the Spec 019 coverage/recall experiment. Assertions below reflect the
+    real configured values, not a blanket "EDGE is smaller everywhere" rule.
+    """
 
-        assert EDGE_PROFILE.camera_width < FULL_PROFILE.camera_width
-        assert EDGE_PROFILE.camera_height < FULL_PROFILE.camera_height
-        edge_pixels = EDGE_PROFILE.camera_width * EDGE_PROFILE.camera_height
-        full_pixels = FULL_PROFILE.camera_width * FULL_PROFILE.camera_height
-        assert edge_pixels < full_pixels
+    def test_edge_camera_resolution(self):
+        # Controlled experiment (Spec 019): EDGE capture raised to 960x720 to
+        # study coverage/recall on Raspberry Pi. This validates the current
+        # configured resolution — it is NOT a permanent EDGE>=FULL policy.
+        from src.infrastructure.config.settings import EDGE_PROFILE
+
+        assert EDGE_PROFILE.camera_width == 960
+        assert EDGE_PROFILE.camera_height == 720
 
     def test_edge_lower_camera_fps(self):
         from src.infrastructure.config.settings import EDGE_PROFILE, FULL_PROFILE

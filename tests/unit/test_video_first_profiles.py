@@ -1,6 +1,6 @@
 """Tests for the video-first ExecutionProfile fields (Spec 019, Task 7.2).
 
-Covers cases A-J plus a capture-first/model-threshold regression guard:
+Covers cases A-J plus a profile critical-values guard:
     A. All video-first fields present on EDGE and FULL.
     B. video_first_enabled is True on both.
     C. recording_target_fps == expected and == camera_fps.
@@ -12,7 +12,9 @@ Covers cases A-J plus a capture-first/model-threshold regression guard:
     I. profile selection unchanged — covered by test_execution_profile.py (not duplicated).
     J. settings importable without torch/detectron2/cv2/picamera2.
 
-Regression: critical capture-first/model values unchanged (additive task).
+Critical profile values: EDGE camera resolution was intentionally raised to
+960x720 (Spec 019 experiment); other critical values and all FULL values
+remain unchanged.
 
 Follows the existing torch-mock pattern used by test_execution_profile.py so
 settings imports cleanly on machines without torch.
@@ -211,11 +213,15 @@ assert settings.FULL_PROFILE.video_first_enabled is True
         assert result.returncode == 0, result.stderr
 
 
-# Regression: additive task did not change critical capture-first / model values.
-class TestCaptureFirstRegression:
-    def test_edge_critical_values_unchanged(self):
-        assert EDGE_PROFILE.camera_width == 480
-        assert EDGE_PROFILE.camera_height == 360
+# Critical profile values: EDGE camera resolution was intentionally raised to
+# 960x720 (Spec 019 coverage/recall experiment); other critical values (fps,
+# threshold) and all FULL values remain unchanged.
+class TestProfileCriticalValues:
+    def test_edge_critical_values(self):
+        # EDGE capture raised to 960x720 for the Spec 019 coverage/recall
+        # experiment; fps and detection threshold remain unchanged.
+        assert EDGE_PROFILE.camera_width == 960
+        assert EDGE_PROFILE.camera_height == 720
         assert EDGE_PROFILE.camera_fps == 5
         assert EDGE_PROFILE.detection_score_threshold == 0.85
 
