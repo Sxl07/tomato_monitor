@@ -103,10 +103,12 @@ class ExecutionProfile:
     # conversion here. These values are configurable and must be re-evaluated via
     # benchmarks over real videos:
     #   - FULL 5/12 is the documented LEGACY baseline (reference).
-    #   - EDGE 3/8 is a deliberately MORE CONSERVATIVE initial setting: a smaller
-    #     min lets the detector be re-scheduled sooner and a smaller max forces it
-    #     sooner, i.e. RetinaNet runs MORE often to preserve coverage/recall, at the
-    #     cost of longer offline analysis time (analysis is offline, not real-time).
+    #   - EDGE 1/4 was selected after the Raspberry monitoring 16 benchmark to
+    #     prioritize coverage/recall: smaller gaps mean more frequent detection
+    #     (a smaller min lets the detector be re-scheduled sooner and a smaller
+    #     max forces it sooner), i.e. RetinaNet runs MORE often to preserve
+    #     coverage/recall, at the cost of longer offline analysis time
+    #     (analysis is offline, not real-time).
     # save_annotated_video: MUST be False in production; the primary artifact is
     #   monitoring.mp4. Annotated video is an optional/diagnostic capability only.
     sparse_min_frames_between_detections: int
@@ -146,9 +148,12 @@ EDGE_PROFILE = ExecutionProfile(
     video_first_enabled=True,
     recording_target_fps=5.0,
     video_codec_candidates=("mp4v", "avc1"),
-    # Deferred sparse analysis — EDGE is more conservative (3/8) than FULL (5/12).
-    sparse_min_frames_between_detections=3,
-    sparse_max_frames_without_detection=8,
+    # Deferred sparse analysis — EDGE uses smaller gaps (1/4) than FULL (5/12)
+    # to prioritize recall in the field. Validated baseline after the Scene
+    # Gate wiring fix (Raspberry monitoring 16, 155 frames @ 5 FPS): 1/4 ->
+    # ~22.6% scheduled frames vs ~12.9% at 3/8.
+    sparse_min_frames_between_detections=1,
+    sparse_max_frames_without_detection=4,
     sparse_use_scene_gate=True,
     sparse_enable_flow_propagation=True,
     save_annotated_video=False,

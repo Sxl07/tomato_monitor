@@ -5,7 +5,7 @@ Covers cases A-J plus a capture-first/model-threshold regression guard:
     B. video_first_enabled is True on both.
     C. recording_target_fps == expected and == camera_fps.
     D. codec candidates == ("mp4v", "avc1") (tuple, ordered).
-    E. sparse config values EDGE 3/8, FULL 5/12, min<=max, gate/flow on.
+    E. sparse config values EDGE 1/4, FULL 5/12, min<=max, gate/flow on.
     F. EDGE more conservative: edge.min<=full.min and edge.max<=full.max.
     G. save_annotated_video is False on both.
     H. immutability (frozen dataclass) — light check, existing suite covers more.
@@ -92,8 +92,10 @@ class TestCodecCandidates:
 # E. Sparse config
 class TestSparseConfig:
     def test_edge_values(self):
-        assert EDGE_PROFILE.sparse_min_frames_between_detections == 3
-        assert EDGE_PROFILE.sparse_max_frames_without_detection == 8
+        # Validated baseline after the Scene Gate wiring fix (Raspberry
+        # monitoring 16): EDGE adopts 1/4 to prioritize recall in the field.
+        assert EDGE_PROFILE.sparse_min_frames_between_detections == 1
+        assert EDGE_PROFILE.sparse_max_frames_without_detection == 4
 
     def test_full_values(self):
         assert FULL_PROFILE.sparse_min_frames_between_detections == 5
@@ -132,6 +134,19 @@ class TestEdgeMoreConservative:
         assert (
             EDGE_PROFILE.sparse_max_frames_without_detection
             <= FULL_PROFILE.sparse_max_frames_without_detection
+        )
+
+    def test_edge_strictly_smaller_gaps_than_full(self):
+        # Smaller gaps => the detector is scheduled more often => higher frame
+        # coverage/recall. EDGE (1/4) must sample strictly more aggressively
+        # than FULL (5/12).
+        assert (
+            EDGE_PROFILE.sparse_min_frames_between_detections
+            < FULL_PROFILE.sparse_min_frames_between_detections
+        )
+        assert (
+            EDGE_PROFILE.sparse_max_frames_without_detection
+            < FULL_PROFILE.sparse_max_frames_without_detection
         )
 
 
