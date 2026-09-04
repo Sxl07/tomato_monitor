@@ -272,11 +272,27 @@ class VideoAnalysisService:
         return process_frame
 
     def _resolve_scene_gate_fn(self) -> Callable:
-        """Lazily import the Scene Gate callable (only when use_scene_gate)."""
+        """Lazily import the Scene Gate callable (only when use_scene_gate).
+
+        Binds the gate's internal cooldown/timeout to THIS analysis'
+        ``VideoAnalysisConfig`` gaps (``min_frames_between_detections`` /
+        ``max_frames_without_detection``) rather than the legacy 18/45
+        defaults. Without this, in video-first the Scene Gate could never fire
+        in the min-gap window (3–7): the legacy internal cooldown of 18 would
+        block every evaluation while ``decide_run_detector`` had already forced
+        a run at gap == max via ``max_gap_force``. The returned closure keeps
+        the exact ``(reference_bgr, current_bgr, frames_since_last_detection)``
+        keyword contract expected by ``decide_run_detector``.
+        """
+        from functools import partial
         from src.infrastructure.vision.capture_gate import (
             should_run_detector_by_scene_change,
         )
-        return should_run_detector_by_scene_change
+        return partial(
+            should_run_detector_by_scene_change,
+            cooldown_frames=self._config.min_frames_between_detections,
+            timeout_frames=self._config.max_frames_without_detection,
+        )
 
     def _create_flow_tracker(self):
         """Lazily create a single OpticalFlowVisualTracker (only when flow on)."""

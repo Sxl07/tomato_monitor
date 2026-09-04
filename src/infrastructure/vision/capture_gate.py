@@ -132,9 +132,25 @@ def should_run_detector_by_scene_change(
     reference_bgr,
     current_bgr,
     frames_since_last_detection: int,
+    *,
+    cooldown_frames: int = MIN_FRAMES_BETWEEN_CAPTURES,
+    timeout_frames: int = MAX_FRAMES_WITHOUT_CAPTURE,
 ) -> Tuple[bool, Dict[str, float]]:
+    """Scene Gate wrapper used as the injected ``scene_gate_fn``.
+
+    ``cooldown_frames`` / ``timeout_frames`` default to the legacy capture
+    thresholds (18 / 45) so the legacy runner and capture-first keep their
+    exact observable behavior. Callers that operate with different sampling
+    gaps (e.g. video-first ``VideoAnalysisService`` using ``VideoAnalysisConfig``)
+    pass explicit overrides so the internal cooldown/timeout match the gaps the
+    outer ``decide_run_detector`` already enforces — otherwise the internal
+    legacy cooldown would double-gate and the gate could never fire in the
+    min-gap window. Visual thresholds (ORB/HSV) are unchanged.
+    """
     return should_capture_new_image(
         reference_bgr=reference_bgr,
         current_bgr=current_bgr,
         frames_since_last_capture=frames_since_last_detection,
+        cooldown_frames=cooldown_frames,
+        timeout_frames=timeout_frames,
     )
