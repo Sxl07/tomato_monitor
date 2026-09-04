@@ -36,6 +36,32 @@ W = 640
 H = 480
 
 
+# --------------------------------------------------------------------------- #
+# Fake libcamera enums (PC/CI has no real libcamera). These stand in for
+# libcamera.controls.* so the VIDEO configuration can be built and inspected
+# without depending on the real library. Sentinel values are compared by
+# identity in the assertions below.
+# --------------------------------------------------------------------------- #
+
+class _FakeAeConstraintModeEnum:
+    Highlight = "AeConstraintMode.Highlight"
+
+
+class _FakeAeExposureModeEnum:
+    Normal = "AeExposureMode.Normal"
+    Short = "AeExposureMode.Short"
+
+
+class _FakeAwbModeEnum:
+    Auto = "AwbMode.Auto"
+
+
+class _FakeLibcameraControls:
+    AeConstraintModeEnum = _FakeAeConstraintModeEnum
+    AeExposureModeEnum = _FakeAeExposureModeEnum
+    AwbModeEnum = _FakeAwbModeEnum
+
+
 class _FakeCamera:
     """Fake Picamera2 recording configuration/lifecycle calls."""
 
@@ -114,6 +140,9 @@ def fake_picamera(monkeypatch):
     factory = _CameraFactory()
     monkeypatch.setattr(rcfs, "PICAMERA2_AVAILABLE", True)
     monkeypatch.setattr(rcfs, "Picamera2", factory, raising=False)
+    # VIDEO mode needs the libcamera exposure/AWB enums; provide a fake so the
+    # configuration can be built and inspected without the real library.
+    monkeypatch.setattr(rcfs, "libcamera_controls", _FakeLibcameraControls, raising=False)
     # Avoid real settling sleeps slowing the tests.
     monkeypatch.setattr(rcfs.time, "sleep", lambda *_a, **_k: None)
     return factory
@@ -170,6 +199,59 @@ class TestVideoConfiguration:
         cam = fake_picamera.instances[0]
         assert cam.still_calls == []
         src.release()
+
+    def test_video_applies_exposure_and_awb_controls(self, fake_picamera):
+        # VIDEO must add the IMX500-validated Highlight + EV -0.7 auto-exposure
+        # and Auto AWB controls as siblings of FrameDurationLimits, keeping the
+        # frame duration intact.
+        src = RaspberryCameraFrameSource(width=W, height=H, fps=5, camera_mode="video")
+        src.read()
+        cam = fake_picamera.instances[0]
+        controls = cam.video_calls[0]["controls"]
+
+        # FrameDurationLimits unchanged (5 FPS -> 200000).
+        assert controls["FrameDurationLimits"] == (200000, 200000)
+        # Auto-exposure / AWB tuning.
+        assert controls["AeEnable"] is True
+        assert controls["AeConstraintMode"] is _FakeAeConstraintModeEnum.Highlight
+        assert controls["AeExposureMode"] is _FakeAeExposureModeEnum.Normal
+        assert controls["ExposureValue"] == -0.7
+        assert controls["AwbEnable"] is True
+        assert controls["AwbMode"] is _FakeAwbModeEnum.Auto
+        src.release()
+
+    def test_video_does_not_set_manual_exposure_or_gains(self, fake_picamera):
+        # The camera must keep deciding ExposureTime / AnalogueGain / ColourGains
+        # automatically — none of these may be present in controls.
+        src = RaspberryCameraFrameSource(width=W, height=H, fps=5, camera_mode="video")
+        src.read()
+        cam = fake_picamera.instances[0]
+        controls = cam.video_calls[0]["controls"]
+
+        assert "ExposureTime" not in controls
+        assert "AnalogueGain" not in controls
+        assert "ColourGains" not in controls
+        src.release()
+
+    def test_video_exposure_mode_is_not_short(self, fake_picamera):
+        src = RaspberryCameraFrameSource(width=W, height=H, fps=5, camera_mode="video")
+        src.read()
+        cam = fake_picamera.instances[0]
+        controls = cam.video_calls[0]["controls"]
+        assert controls["AeExposureMode"] is not _FakeAeExposureModeEnum.Short
+        src.release()
+
+    def test_video_without_libcamera_fails_explicitly(self, fake_picamera, monkeypatch):
+        # If libcamera enums are unavailable, VIDEO must fail explicitly rather
+        # than build a config without the exposure controls.
+        monkeypatch.setattr(rcfs, "libcamera_controls", None, raising=False)
+        src = RaspberryCameraFrameSource(width=W, height=H, fps=5, camera_mode="video")
+        ok, frame = src.read()
+        # read() wraps start failures and returns (False, None); the camera is
+        # cleaned up and the lock released.
+        assert ok is False
+        assert frame is None
+        assert rcfs.is_camera_locked() is False
 
 
 # --------------------------------------------------------------------------- #
@@ -249,6 +331,8 @@ class TestReadPath:
         factory = _FourChannelFactory()
         monkeypatch.setattr(rcfs, "PICAMERA2_AVAILABLE", True)
         monkeypatch.setattr(rcfs, "Picamera2", factory, raising=False)
+        # VIDEO mode requires the libcamera exposure/AWB enums.
+        monkeypatch.setattr(rcfs, "libcamera_controls", _FakeLibcameraControls, raising=False)
         monkeypatch.setattr(rcfs.time, "sleep", lambda *_a, **_k: None)
 
         src = RaspberryCameraFrameSource(width=W, height=H, fps=10, camera_mode="video")

@@ -121,6 +121,19 @@ def fake_picamera(monkeypatch):
     factory = _Picamera2Factory()
     monkeypatch.setattr(rcfs, "PICAMERA2_AVAILABLE", True)
     monkeypatch.setattr(rcfs, "Picamera2", factory, raising=False)
+    # VIDEO mode requires the libcamera exposure/AWB enums; provide a minimal
+    # fake so the video configuration builds without the real library (PC/CI).
+    class _FakeLibcameraControls:
+        class AeConstraintModeEnum:
+            Highlight = "AeConstraintMode.Highlight"
+
+        class AeExposureModeEnum:
+            Normal = "AeExposureMode.Normal"
+
+        class AwbModeEnum:
+            Auto = "AwbMode.Auto"
+
+    monkeypatch.setattr(rcfs, "libcamera_controls", _FakeLibcameraControls, raising=False)
     monkeypatch.setattr(rcfs.time, "sleep", lambda *_a, **_k: None)  # no settling delays
     return factory
 

@@ -25,6 +25,18 @@ try:
 except ImportError:
     PICAMERA2_AVAILABLE = False
 
+# libcamera provides the auto-exposure / AWB control enums used by the VIDEO
+# configuration. It only exists on the Raspberry Pi; keep the module importable
+# on PC/CI by guarding the import. STILL/preview never touch these enums, so
+# they keep working without libcamera. VIDEO fails explicitly if the enums are
+# unavailable (see _build_persistent_configuration).
+try:
+    from libcamera import controls as libcamera_controls
+    LIBCAMERA_AVAILABLE = True
+except ImportError:
+    libcamera_controls = None
+    LIBCAMERA_AVAILABLE = False
+
 # =============================================================================
 # GLOBAL CAMERA LOCK — the single source of truth for camera ownership.
 # Any code path that touches Picamera2 must hold this lock.
@@ -273,10 +285,30 @@ class RaspberryCameraFrameSource(FrameSource):
         """
         if self._camera_mode == self.CAMERA_MODE_VIDEO:
             duration_us = self._frame_duration_us(self._fps)
+            # Auto-exposure / AWB tuning validated on IMX500 (Highlight
+            # constraint + EV -0.7 to protect highlights while the camera keeps
+            # choosing ExposureTime/AnalogueGain automatically). Requires the
+            # real libcamera enums; fail explicitly if unavailable (VIDEO mode
+            # only runs on the Raspberry Pi).
+            if libcamera_controls is None:
+                raise RuntimeError(
+                    "libcamera is required for video camera_mode "
+                    "(exposure/AWB controls) but is not available."
+                )
             return cam.create_video_configuration(
                 main={"size": (self._width, self._height)},
                 controls={
                     "FrameDurationLimits": (duration_us, duration_us),
+                    "AeEnable": True,
+                    "AeConstraintMode": (
+                        libcamera_controls.AeConstraintModeEnum.Highlight
+                    ),
+                    "AeExposureMode": (
+                        libcamera_controls.AeExposureModeEnum.Normal
+                    ),
+                    "ExposureValue": -0.7,
+                    "AwbEnable": True,
+                    "AwbMode": libcamera_controls.AwbModeEnum.Auto,
                 },
             )
         # Default/still: unchanged from the original behavior.
