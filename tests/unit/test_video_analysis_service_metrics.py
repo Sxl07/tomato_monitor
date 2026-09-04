@@ -84,6 +84,9 @@ class _Snap:
 class SnapshotRepo:
     def __init__(self):
         self._next_id = 1
+        # Record has_detections updates so tests can inspect the SAME repo
+        # instance handed to the service: {snapshot_id: bool}.
+        self.updated_has_detections = {}
 
     def create(self, monitoring_id, snapshot):
         s = _Snap(self._next_id, monitoring_id, snapshot.image_path, snapshot.frame_index)
@@ -91,7 +94,7 @@ class SnapshotRepo:
         return s
 
     def update_has_detections(self, id, has_detections):
-        pass
+        self.updated_has_detections[id] = has_detections
 
 
 class InspectionRepo:
@@ -411,14 +414,10 @@ class TestUnavailablePopulatesReport:
 # --------------------------------------------------------------------------- #
 
 class TestAnnotatedVideoOff:
-    def test_no_annotated_writer_or_renderer_used(self, tmp_path, monkeypatch):
-        # annotation_renderer must never be called when save_annotated_video False.
-        renderer_calls = {"n": 0}
-
-        def renderer(*a, **k):  # pragma: no cover - must not be called
-            renderer_calls["n"] += 1
-            raise AssertionError("annotation renderer must not run by default")
-
+    def test_no_annotated_video_file_created(self, tmp_path, monkeypatch):
+        # save_annotated_video=False: NO annotated video (.mp4) must be written.
+        # This validates ONLY the video artifact; annotated snapshot JPEGs are a
+        # separate, allowed feature (see TestAnnotatedSnapshots).
         reader = FakeReader(4)
         cfg = _config(save_annotated_video=False)
         svc = VideoAnalysisService(
@@ -432,7 +431,6 @@ class TestAnnotatedVideoOff:
             video_reader=reader,
             components_factory=lambda: object(),
             process_frame_fn=lambda f, c, n: {"detections": []},
-            annotation_renderer=renderer,
             report_writer=SnapshotAnalysisReportWriter(base_outputs_dir=tmp_path / "monitorings"),
             profile_name="edge",
         )
@@ -446,10 +444,252 @@ class TestAnnotatedVideoOff:
         )
         result = svc.run()
         assert result.status == "completed"
-        assert renderer_calls["n"] == 0
         # No annotated mp4 anywhere under the monitoring dir.
         mp4s = list((tmp_path / "monitorings").rglob("*.mp4"))
         assert mp4s == []
+
+
+# --------------------------------------------------------------------------- #
+# 8b. Annotated SNAPSHOTS (restored video-first regression fix)
+# --------------------------------------------------------------------------- #
+
+class TestAnnotatedSnapshots:
+    """Annotated snapshot JPEGs are generated for frames WITH detections only,
+    using the same frame + frame_result, saved via _save_image, and fully
+    recoverable (failures never affect counters/status)."""
+
+    def test_annotated_generated_when_detections(self, tmp_path, monkeypatch):
+        # CASE 1: a frame with detections -> renderer called once with the SAME
+        # frame object + SAME frame_result object; raw and annotated saved to the
+        # exact paths; SnapshotRepo recorded has_detections=True.
+        frame_result = {"detections": [_det(1, (0, 0, 10, 10))]}
+        # Capture the exact frame object that process_frame_fn received so we can
+        # assert identity against what the renderer receives.
+        pf_frames = []
+
+        def process_frame_fn(f, c, n):
+            pf_frames.append(f)
+            return frame_result
+
+        renderer_calls = []
+
+        def renderer(frame, fr):
+            renderer_calls.append((frame, fr))
+            return frame  # pretend annotated image
+
+        save_calls = []
+
+        def fake_save(self, relative_path, image):
+            save_calls.append(relative_path)
+            return True
+
+        monkeypatch.setattr(VideoAnalysisService, "_save_image", fake_save)
+        monkeypatch.setattr(
+            VideoAnalysisService, "_generate_crops",
+            lambda self, frame, detections, frame_idx: None,
+        )
+
+        repo = SnapshotRepo()
+        reader = FakeReader(1)
+        cfg = _config()
+        svc = VideoAnalysisService(
+            monitoring_id=99,
+            video_path="outputs/monitorings/99/video/monitoring.mp4",
+            snapshot_repo=repo,
+            inspection_result_repo=InspectionRepo(),
+            monitoring_repo=object(),
+            db_session=DbSession(),
+            config=cfg,
+            video_reader=reader,
+            components_factory=lambda: object(),
+            process_frame_fn=process_frame_fn,
+            annotation_renderer=renderer,
+            report_writer=SnapshotAnalysisReportWriter(base_outputs_dir=tmp_path / "monitorings"),
+            profile_name="edge",
+        )
+        result = svc.run()
+
+        assert result.status == "completed"
+        # renderer called exactly once.
+        assert len(renderer_calls) == 1
+        rendered_frame, rendered_fr = renderer_calls[0]
+        # SAME frame object that process_frame_fn received.
+        assert len(pf_frames) == 1
+        assert rendered_frame is pf_frames[0]
+        # SAME frame_result object produced by process_frame_fn.
+        assert rendered_fr is frame_result
+        # raw saved to the EXACT expected relative path.
+        assert (
+            "outputs/monitorings/99/snapshots/raw/snapshot_000000.jpg"
+            in save_calls
+        )
+        # annotated saved to the EXACT expected relative path.
+        assert (
+            "outputs/monitorings/99/annotated_snapshots/snapshot_000000.jpg"
+            in save_calls
+        )
+        # SnapshotRepo (SAME instance) recorded has_detections=True for the snapshot.
+        assert repo.updated_has_detections == {1: True}
+
+    def test_no_annotation_when_no_detections(self, tmp_path, monkeypatch):
+        # CASE 2: detections == [] -> raw persisted, renderer NOT called, no
+        # annotated file, SnapshotRepo recorded has_detections=False.
+        renderer_calls = {"n": 0}
+
+        def renderer(frame, fr):  # pragma: no cover - must not run
+            renderer_calls["n"] += 1
+            return frame
+
+        save_calls = []
+
+        def fake_save(self, relative_path, image):
+            save_calls.append(relative_path)
+            return True
+
+        monkeypatch.setattr(VideoAnalysisService, "_save_image", fake_save)
+        monkeypatch.setattr(
+            VideoAnalysisService, "_generate_crops",
+            lambda self, frame, detections, frame_idx: None,
+        )
+
+        repo = SnapshotRepo()
+        reader = FakeReader(1)
+        svc = VideoAnalysisService(
+            monitoring_id=99,
+            video_path="outputs/monitorings/99/video/monitoring.mp4",
+            snapshot_repo=repo,
+            inspection_result_repo=InspectionRepo(),
+            monitoring_repo=object(),
+            db_session=DbSession(),
+            config=_config(),
+            video_reader=reader,
+            components_factory=lambda: object(),
+            process_frame_fn=lambda f, c, n: {"detections": []},
+            annotation_renderer=renderer,
+            report_writer=SnapshotAnalysisReportWriter(base_outputs_dir=tmp_path / "monitorings"),
+            profile_name="edge",
+        )
+        result = svc.run()
+
+        assert result.status == "completed"
+        # raw WAS persisted.
+        assert (
+            "outputs/monitorings/99/snapshots/raw/snapshot_000000.jpg"
+            in save_calls
+        )
+        # renderer NOT called, no annotated file.
+        assert renderer_calls["n"] == 0
+        assert not any("annotated_snapshots" in p for p in save_calls)
+        # SnapshotRepo recorded has_detections=False.
+        assert repo.updated_has_detections == {1: False}
+
+    def test_renderer_failure_is_recoverable(self, tmp_path, monkeypatch):
+        # CASE 3: renderer raises -> run completes, frame still SUCCESS, inference
+        # results/tracks/metrics untouched by annotation, error recorded on BOTH
+        # result.errors and svc.errors, has_detections preserved True.
+        frame_result = {"detections": [_det(1, (0, 0, 10, 10))]}
+
+        def renderer(frame, fr):
+            raise RuntimeError("renderer boom")
+
+        monkeypatch.setattr(
+            VideoAnalysisService, "_save_image",
+            lambda self, relative_path, image: True,
+        )
+        monkeypatch.setattr(
+            VideoAnalysisService, "_generate_crops",
+            lambda self, frame, detections, frame_idx: None,
+        )
+
+        repo = SnapshotRepo()
+        reader = FakeReader(1)
+        svc = VideoAnalysisService(
+            monitoring_id=99,
+            video_path="outputs/monitorings/99/video/monitoring.mp4",
+            snapshot_repo=repo,
+            inspection_result_repo=InspectionRepo(),
+            monitoring_repo=object(),
+            db_session=DbSession(),
+            config=_config(),
+            video_reader=reader,
+            components_factory=lambda: object(),
+            process_frame_fn=lambda f, c, n: frame_result,
+            annotation_renderer=renderer,
+            report_writer=SnapshotAnalysisReportWriter(base_outputs_dir=tmp_path / "monitorings"),
+            profile_name="edge",
+        )
+        result = svc.run()
+
+        assert result.status == "completed"
+        # The scheduled frame is still counted as SUCCESSFUL (annotation is aux).
+        assert result.analysis_successful_frames == 1
+        assert result.analysis_failed_frames == 0
+        assert result.detector_scheduled_frames == 1
+        assert (
+            result.analysis_successful_frames + result.analysis_failed_frames
+            == result.detector_scheduled_frames
+        )
+        # Inference results / tracks / metrics preserved.
+        assert result.total_detections == 1
+        assert result.unique_tracks == 1
+        assert len(result.best_results_by_track) == 1
+        assert result.snapshots_with_detections == 1
+        # Annotation error recorded on BOTH the result and the live property.
+        assert any("annotation failed" in e for e in result.errors)
+        assert any("annotation failed" in e for e in svc.errors)
+        # has_detections preserved True.
+        assert repo.updated_has_detections == {1: True}
+
+    def test_annotated_save_false_is_recoverable(self, tmp_path, monkeypatch):
+        # CASE 4: _save_image returns False for the annotated write -> same
+        # recoverable guarantees as CASE 3 (save stub fails ONLY for annotated).
+        frame_result = {"detections": [_det(1, (0, 0, 10, 10))]}
+
+        def fake_save(self, relative_path, image):
+            # Fail only the annotated write; raw/crops succeed.
+            if "annotated_snapshots" in relative_path:
+                return False
+            return True
+
+        monkeypatch.setattr(VideoAnalysisService, "_save_image", fake_save)
+        monkeypatch.setattr(
+            VideoAnalysisService, "_generate_crops",
+            lambda self, frame, detections, frame_idx: None,
+        )
+
+        repo = SnapshotRepo()
+        reader = FakeReader(1)
+        svc = VideoAnalysisService(
+            monitoring_id=99,
+            video_path="outputs/monitorings/99/video/monitoring.mp4",
+            snapshot_repo=repo,
+            inspection_result_repo=InspectionRepo(),
+            monitoring_repo=object(),
+            db_session=DbSession(),
+            config=_config(),
+            video_reader=reader,
+            components_factory=lambda: object(),
+            process_frame_fn=lambda f, c, n: frame_result,
+            annotation_renderer=lambda frame, fr: frame,
+            report_writer=SnapshotAnalysisReportWriter(base_outputs_dir=tmp_path / "monitorings"),
+            profile_name="edge",
+        )
+        result = svc.run()
+
+        assert result.status == "completed"
+        assert result.analysis_successful_frames == 1
+        assert result.analysis_failed_frames == 0
+        assert result.detector_scheduled_frames == 1
+        # Inference results / tracks / metrics preserved.
+        assert result.total_detections == 1
+        assert result.unique_tracks == 1
+        assert len(result.best_results_by_track) == 1
+        assert result.snapshots_with_detections == 1
+        # Recoverable annotation-save error on BOTH result and live property.
+        assert any("failed to save annotated snapshot" in e for e in result.errors)
+        assert any("failed to save annotated snapshot" in e for e in svc.errors)
+        # has_detections preserved True.
+        assert repo.updated_has_detections == {1: True}
 
 
 # --------------------------------------------------------------------------- #

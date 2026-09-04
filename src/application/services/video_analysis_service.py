@@ -299,6 +299,56 @@ class VideoAnalysisService:
         from src.infrastructure.vision.visual_tracker import OpticalFlowVisualTracker
         return OpticalFlowVisualTracker()
 
+    def _resolve_annotation_renderer(self) -> Callable:
+        """Return the annotation renderer, lazily importing the default if None.
+
+        Mirrors the lazy-dependency pattern used for the pipeline components and
+        the Scene Gate: keeps the heavy vision module (and cv2) out of this
+        Application module's import graph. If a renderer was injected, it is
+        returned exactly as-is (used by tests); otherwise the production default
+        ``render_snapshot_annotations`` (infrastructure) is imported on demand.
+        """
+        if self._annotation_renderer is not None:
+            return self._annotation_renderer
+        from src.infrastructure.vision.annotation_renderer import (
+            render_snapshot_annotations,
+        )
+        return render_snapshot_annotations
+
+    def _generate_annotated_snapshot(
+        self, frame, frame_result: dict, frame_idx: int
+    ) -> None:
+        """Render + save an annotated snapshot JPEG (AUXILIARY, fully recoverable).
+
+        Writes ``outputs/monitorings/{id}/annotated_snapshots/snapshot_{idx:06d}.jpg``
+        using the SAME ``frame`` and the SAME ``frame_result`` produced by
+        ``process_frame``, saved via infrastructure ``_save_image`` (no direct
+        cv2 in this layer). The annotated image is auxiliary evidence: ANY
+        failure here (renderer raises, save returns False, unexpected error) is
+        swallowed and only recorded in ``self._errors``. It never re-raises,
+        never touches counters, has_detections, tracking or the final status,
+        so the ``successful + failed == scheduled`` invariant is preserved.
+        """
+        try:
+            renderer = self._resolve_annotation_renderer()
+            annotated = renderer(frame, frame_result)
+            rel_path = (
+                f"outputs/monitorings/{self._monitoring_id}/annotated_snapshots"
+                f"/snapshot_{frame_idx:06d}.jpg"
+            )
+            ok = self._save_image(rel_path, annotated)
+            if not ok:
+                self._errors.append(
+                    f"frame {frame_idx}: failed to save annotated snapshot "
+                    f"(annotation is auxiliary; analysis unaffected)"
+                )
+        except Exception as exc:
+            # Auxiliary evidence only — never propagate.
+            self._errors.append(
+                f"frame {frame_idx}: annotation failed "
+                f"({type(exc).__name__}: {exc}); analysis unaffected"
+            )
+
     # --- persistence & fault-tolerance helpers (Task 8.3) ------------------ #
 
     def _save_image(self, relative_path: str, image) -> bool:
@@ -968,6 +1018,15 @@ class VideoAnalysisService:
                         self._total_detection_rows += len(detections)
                         if detections:
                             self._snapshots_with_detections += 1
+                        # AUXILIARY evidence (recoverable, isolated): generate an
+                        # annotated snapshot JPEG ONLY when there are detections.
+                        # This runs in its OWN try/except so a renderer or write
+                        # failure NEVER affects the scheduled/successful/failed
+                        # counters, has_detections, tracking or the final status.
+                        if detections:
+                            self._generate_annotated_snapshot(
+                                frame, frame_result, frame_idx
+                            )
                     except _FatalPersistenceError:
                         raise
                     except Exception as exc:
