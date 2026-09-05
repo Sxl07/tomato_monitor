@@ -26,6 +26,7 @@ class Monitoring:
     total_detections: int = field(default=0)
     created_by_user_id: Optional[int] = None
     sync_status: str = field(default="pending")
+    video_path: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.created_by_user_id is not None and self.created_by_user_id <= 0:

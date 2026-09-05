@@ -184,6 +184,74 @@ class TestSnapshotAnalysisServiceIsolation:
             )
 
 
+# --- Video-first application modules isolation (Spec 019, Task 15.1) ---
+
+
+class TestVideoFirstApplicationIsolation:
+    """video_analysis_service and video_recording_worker (application) must not
+    import cv2/torch/detectron2 at module level. The cv2 dependency is confined
+    to the infrastructure adapters (OpenCvVideoReader / VideoRecorder /
+    VideoFileFrameSource)."""
+
+    @pytest.fixture(scope="class")
+    def video_analysis_content(self) -> str:
+        path = SRC_DIR / "application" / "services" / "video_analysis_service.py"
+        assert path.exists(), "video_analysis_service.py not found"
+        return path.read_text(encoding="utf-8")
+
+    @pytest.fixture(scope="class")
+    def video_worker_content(self) -> str:
+        path = SRC_DIR / "application" / "services" / "video_recording_worker.py"
+        assert path.exists(), "video_recording_worker.py not found"
+        return path.read_text(encoding="utf-8")
+
+    def test_video_analysis_no_top_level_cv2(self, video_analysis_content):
+        for imp in _get_import_lines(video_analysis_content):
+            assert "import cv2" not in imp and "from cv2" not in imp, (
+                f"video_analysis_service.py has top-level cv2 import: {imp}"
+            )
+
+    def test_video_analysis_no_top_level_torch(self, video_analysis_content):
+        for imp in _get_import_lines(video_analysis_content):
+            assert "import torch" not in imp and "from torch" not in imp, (
+                f"video_analysis_service.py has top-level torch import: {imp}"
+            )
+
+    def test_video_analysis_no_top_level_detectron2(self, video_analysis_content):
+        for imp in _get_import_lines(video_analysis_content):
+            assert "detectron2" not in imp, (
+                f"video_analysis_service.py has top-level detectron2 import: {imp}"
+            )
+
+    def test_video_worker_no_top_level_cv2(self, video_worker_content):
+        for imp in _get_import_lines(video_worker_content):
+            assert "import cv2" not in imp and "from cv2" not in imp, (
+                f"video_recording_worker.py has top-level cv2 import: {imp}"
+            )
+
+    def test_video_worker_no_top_level_torch(self, video_worker_content):
+        for imp in _get_import_lines(video_worker_content):
+            assert "import torch" not in imp and "from torch" not in imp, (
+                f"video_recording_worker.py has top-level torch import: {imp}"
+            )
+
+    def test_video_worker_no_top_level_detectron2(self, video_worker_content):
+        for imp in _get_import_lines(video_worker_content):
+            assert "detectron2" not in imp, (
+                f"video_recording_worker.py has top-level detectron2 import: {imp}"
+            )
+
+    def test_video_file_frame_source_infra_owns_cv2(self):
+        """VideoFileFrameSource (infrastructure) is an allowed home for cv2."""
+        path = SRC_DIR / "infrastructure" / "camera" / "video_file_frame_source.py"
+        assert path.exists(), "video_file_frame_source.py not found"
+        content = path.read_text(encoding="utf-8")
+        assert any(
+            imp == "import cv2" or imp.startswith("import cv2")
+            for imp in _get_import_lines(content)
+        ), "video_file_frame_source.py should import cv2 (infra confinement)"
+
+
 # --- MonitoringService wiring ---
 
 
@@ -205,6 +273,91 @@ class TestMonitoringServiceWiring:
             assert "MonitoringWorker" not in imp, (
                 f"monitoring_service.py imports MonitoringWorker: {imp}"
             )
+
+
+# --- VideoReaderPort boundary (Spec 019, Task 2) ---
+
+
+class TestVideoReaderPortBoundary:
+    """The VideoReaderPort application interface must not import cv2/torch/detectron2.
+
+    The OpenCV dependency for video reading must be confined to the
+    infrastructure adapter OpenCvVideoReader.
+    """
+
+    @pytest.fixture(scope="class")
+    def port_content(self) -> str:
+        path = SRC_DIR / "application" / "interfaces" / "video_reader_port.py"
+        assert path.exists(), "video_reader_port.py not found"
+        return path.read_text(encoding="utf-8")
+
+    def test_port_does_not_import_cv2(self, port_content):
+        imports = _get_import_lines(port_content)
+        for imp in imports:
+            assert "import cv2" not in imp and "from cv2" not in imp, (
+                f"video_reader_port.py imports cv2: {imp}"
+            )
+
+    def test_port_does_not_import_torch(self, port_content):
+        imports = _get_import_lines(port_content)
+        for imp in imports:
+            assert "import torch" not in imp and "from torch" not in imp, (
+                f"video_reader_port.py imports torch: {imp}"
+            )
+
+    def test_port_does_not_import_detectron2(self, port_content):
+        imports = _get_import_lines(port_content)
+        for imp in imports:
+            assert "detectron2" not in imp, (
+                f"video_reader_port.py imports detectron2: {imp}"
+            )
+
+    def test_port_defines_video_reader_error(self, port_content):
+        """VideoReaderError is part of the application-level port contract."""
+        assert "class VideoReaderError" in port_content, (
+            "VideoReaderError must be defined in video_reader_port.py (application contract)"
+        )
+
+    def test_opencv_reader_adapter_imports_cv2(self):
+        """The infrastructure adapter is the place that owns the cv2 import."""
+        path = SRC_DIR / "infrastructure" / "camera" / "opencv_video_reader.py"
+        assert path.exists(), "opencv_video_reader.py not found"
+        content = path.read_text(encoding="utf-8")
+        imports = _get_import_lines(content)
+        assert any(imp == "import cv2" or imp.startswith("import cv2") for imp in imports), (
+            "opencv_video_reader.py should import cv2 (it confines the OpenCV dependency)"
+        )
+
+
+class TestCameraServiceBoundary:
+    """CameraService (application) must not import cv2 (Spec 019, Task 14).
+
+    JPEG encoding is delegated to the infrastructure helper
+    ``src/infrastructure/camera/jpeg_encoder.py``, which owns the cv2 import.
+    """
+
+    @pytest.fixture(scope="class")
+    def camera_service_content(self) -> str:
+        path = SRC_DIR / "application" / "services" / "camera_service.py"
+        assert path.exists(), "camera_service.py not found"
+        return path.read_text(encoding="utf-8")
+
+    def test_camera_service_does_not_import_cv2(self, camera_service_content):
+        imports = _get_import_lines(camera_service_content)
+        for imp in imports:
+            assert "import cv2" not in imp and "from cv2" not in imp, (
+                f"camera_service.py must not import cv2: {imp}"
+            )
+
+    def test_jpeg_encoder_infra_owns_cv2(self):
+        """The infrastructure JPEG encoder is the place that owns the cv2 import."""
+        path = SRC_DIR / "infrastructure" / "camera" / "jpeg_encoder.py"
+        assert path.exists(), "jpeg_encoder.py not found"
+        content = path.read_text(encoding="utf-8")
+        imports = _get_import_lines(content)
+        assert any(imp == "import cv2" or imp.startswith("import cv2") for imp in imports), (
+            "jpeg_encoder.py should import cv2 (it confines the OpenCV JPEG encoding)"
+        )
 
 
 # --- Steering documentation governance ---

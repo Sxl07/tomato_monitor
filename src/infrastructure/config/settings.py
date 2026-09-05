@@ -85,11 +85,43 @@ class ExecutionProfile:
     # Memory budget
     memory_warning_rss_mb: int
 
+    # --- Video-first recording (Spec 019) ---
+    # video_first_enabled: enables the video-first flow for the profile.
+    # recording_target_fps: NOMINAL fps requested from the camera/pipeline and
+    #   used as configured_recording_fps by RaspberryCameraFrameSource(camera_mode
+    #   ="video"), VideoRecordingWorker and VideoRecorder. It is kept aligned with
+    #   camera_fps so the requested cadence and the MP4 container fps match. This
+    #   is NOT the effective fps; effective_recording_fps is measured at runtime as
+    #   frames_written / recording_duration_seconds.
+    # video_codec_candidates: ordered codec fallback for VideoRecorder (tuple).
+    video_first_enabled: bool
+    recording_target_fps: float
+    video_codec_candidates: tuple[str, ...]
+
+    # --- Deferred sparse video analysis (Spec 019) ---
+    # Gaps are expressed IN FRAMES, not seconds; there is no frame<->time
+    # conversion here. These values are configurable and must be re-evaluated via
+    # benchmarks over real videos:
+    #   - FULL 5/12 is the documented LEGACY baseline (reference).
+    #   - EDGE 1/4 was selected after the Raspberry monitoring 16 benchmark to
+    #     prioritize coverage/recall: smaller gaps mean more frequent detection
+    #     (a smaller min lets the detector be re-scheduled sooner and a smaller
+    #     max forces it sooner), i.e. RetinaNet runs MORE often to preserve
+    #     coverage/recall, at the cost of longer offline analysis time
+    #     (analysis is offline, not real-time).
+    # save_annotated_video: MUST be False in production; the primary artifact is
+    #   monitoring.mp4. Annotated video is an optional/diagnostic capability only.
+    sparse_min_frames_between_detections: int
+    sparse_max_frames_without_detection: int
+    sparse_use_scene_gate: bool
+    sparse_enable_flow_propagation: bool
+    save_annotated_video: bool
+
 
 EDGE_PROFILE = ExecutionProfile(
     name="edge",
-    camera_width=480,
-    camera_height=360,
+    camera_width=960,
+    camera_height=720,
     camera_fps=5,
     capture_loop_fps=5.0,
     min_seconds_between_snapshots=1.0,
@@ -102,7 +134,10 @@ EDGE_PROFILE = ExecutionProfile(
     inference_input_width=416,
     inference_input_height=312,
     skip_maturity=True,
-    detection_score_threshold=0.85,
+    # Detector score threshold selected experimentally (threshold sweep on
+    # Monitoring 21): 0.60 recovers true positives around 0.61–0.66 that 0.70
+    # discarded, without going as low as 0.50. Re-evaluate after retraining.
+    detection_score_threshold=0.60,
     run_maturity_only_for_healthy=True,
     thermal_poll_interval_seconds=5.0,
     thermal_warning_temp=72.0,
@@ -112,6 +147,19 @@ EDGE_PROFILE = ExecutionProfile(
     analysis_thermal_pause_threshold=78.0,  # pause at >= 78C
     analysis_thermal_resume_threshold=72.0,
     memory_warning_rss_mb=3000,
+    # Video-first recording (nominal fps aligned with camera_fps).
+    video_first_enabled=True,
+    recording_target_fps=5.0,
+    video_codec_candidates=("mp4v", "avc1"),
+    # Deferred sparse analysis — EDGE uses smaller gaps (1/4) than FULL (5/12)
+    # to prioritize recall in the field. Validated baseline after the Scene
+    # Gate wiring fix (Raspberry monitoring 16, 155 frames @ 5 FPS): 1/4 ->
+    # ~22.6% scheduled frames vs ~12.9% at 3/8.
+    sparse_min_frames_between_detections=1,
+    sparse_max_frames_without_detection=4,
+    sparse_use_scene_gate=True,
+    sparse_enable_flow_propagation=True,
+    save_annotated_video=False,
 )
 
 FULL_PROFILE = ExecutionProfile(
@@ -140,6 +188,16 @@ FULL_PROFILE = ExecutionProfile(
     analysis_thermal_pause_threshold=78.0,
     analysis_thermal_resume_threshold=72.0,
     memory_warning_rss_mb=4000,
+    # Video-first recording (nominal fps aligned with camera_fps).
+    video_first_enabled=True,
+    recording_target_fps=10.0,
+    video_codec_candidates=("mp4v", "avc1"),
+    # Deferred sparse analysis — FULL uses the legacy baseline (5/12).
+    sparse_min_frames_between_detections=5,
+    sparse_max_frames_without_detection=12,
+    sparse_use_scene_gate=True,
+    sparse_enable_flow_propagation=True,
+    save_annotated_video=False,
 )
 
 # --- Profile Selection via Environment Variable ---

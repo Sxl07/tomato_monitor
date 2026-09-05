@@ -14,28 +14,28 @@
     </div>
 </div>
 
-{# --- Running --- #}
+{# --- Running (video-first: Recording) --- #}
 <div id="status-running" class="execution-status-block {% if monitoring.status != 'running' %}hidden{% endif %}">
     <div class="status-indicator">
         <div class="spinner"></div>
-        <span class="status-text">Monitoreando...</span>
+        <span class="status-text">Grabando...</span>
         <span id="elapsed-timer" class="elapsed-timer">00:00</span>
     </div>
 
-    <div class="live-counters">
-        <div class="live-counter">
-            <span id="counter-snapshots" class="live-counter-value">{{ monitoring.total_snapshots }}</span>
-            <span class="live-counter-label">Snapshots capturados</span>
-        </div>
-    </div>
-
-    {# Last snapshot thumbnail #}
-    <div class="last-snapshot-container">
-        <h2 class="section-header mt-0">Última captura</h2>
-        <div id="last-snapshot-wrapper">
-            <img id="last-snapshot-img" src="/static/images/placeholder-snapshot.svg" alt="Última captura del monitoreo" style="{% if monitoring.total_snapshots == 0 %}display:none;{% endif %}">
-            <p id="last-snapshot-placeholder" class="text-secondary text-center" style="padding: 16px; {% if monitoring.total_snapshots > 0 %}display:none;{% endif %}">
-                Monitoreo activo, esperando primera captura...
+    {# Live recording preview — a copy of the recording worker's last frame.
+       Served by /api/monitoring/{id}/preview WITHOUT opening a second camera. #}
+    <div class="recording-preview-container">
+        <h2 class="section-header mt-0">Vista de grabación</h2>
+        <div id="recording-preview-wrapper">
+            <img
+                id="recording-preview-img"
+                data-preview-url="/api/monitoring/{{ monitoring.id }}/preview"
+                src="/static/images/placeholder-snapshot.svg"
+                alt="Vista de la grabación en curso"
+                style="display:none;"
+            >
+            <p id="recording-preview-placeholder" class="text-secondary text-center" style="padding: 16px;">
+                Recorra el módulo con el dispositivo. Grabando...
             </p>
         </div>
     </div>
@@ -54,9 +54,9 @@
 <div id="status-analyzing" class="execution-status-block {% if monitoring.status != 'analyzing' %}hidden{% endif %}">
     <div class="execution-center">
         <div class="spinner spinner--lg"></div>
-        <p id="analysis-progress-text" class="execution-status-text">Preparando análisis...</p>
+        <p id="analysis-progress-text" class="execution-status-text">Procesando video...</p>
         <div class="live-counters" style="margin-top: 8px;">
-            <span id="analysis-processed">0</span> / <span id="analysis-total">0</span> snapshots
+            <span id="analysis-processed">0</span> / <span id="analysis-total">0</span> fotogramas
         </div>
         <div class="progress-bar" style="margin-top: 12px;">
             <div id="analysis-progress-fill" class="progress-bar-fill" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width: 0%;"></div>
@@ -66,6 +66,24 @@
             <span id="analysis-thermal-text">Análisis pausado por temperatura alta</span>
             <span id="analysis-thermal-stats" class="text-secondary" style="display: block; font-size: var(--font-size-small); margin-top: 4px;"></span>
         </div>
+    </div>
+</div>
+
+{# --- Ready for analysis (Spec 020: capture done, analysis pending, manual start) --- #}
+<div id="status-ready_for_analysis" class="execution-status-block {% if monitoring.status != 'ready_for_analysis' %}hidden{% endif %}">
+    <div class="execution-center">
+        <span class="execution-icon execution-icon--success">✓</span>
+        <p class="execution-status-text">Captura finalizada — análisis pendiente</p>
+        <p class="text-secondary" style="font-size: var(--font-size-small); margin-top: 8px;">
+            El video quedó guardado. Conecta el dispositivo a una fuente de energía
+            adecuada y luego inicia el análisis.
+        </p>
+    </div>
+
+    <div class="execution-actions">
+        <button type="button" class="btn btn-primary btn-full" data-monitoring-action onclick="showConfirmDialog('start-analysis-dialog')">
+            Iniciar análisis
+        </button>
     </div>
 </div>
 
@@ -133,7 +151,7 @@
 {# --- Finalize capture confirmation dialog --- #}
 <div id="finalize-dialog" class="dialog-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="finalize-dialog-message">
     <div class="dialog">
-        <p id="finalize-dialog-message" class="dialog-message">La cámara se liberará y comenzará el análisis de los snapshots capturados.</p>
+        <p id="finalize-dialog-message" class="dialog-message">La grabación finalizará y el video quedará listo para analizar. El análisis se inicia después, de forma manual.</p>
         <div class="dialog-actions">
             <button type="button" class="btn btn-secondary" onclick="hideConfirmDialog('finalize-dialog')">Cancelar</button>
             <form id="finalize-form" method="post" action="/monitoreos/{{ monitoring.id }}/finalizar-captura" style="margin:0;">
@@ -156,12 +174,37 @@
     </div>
 </div>
 
+{# --- Start-analysis power-source confirmation dialog (Spec 020) --- #}
+<div id="start-analysis-dialog" class="dialog-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="start-analysis-dialog-message">
+    <div class="dialog">
+        <p id="start-analysis-dialog-message" class="dialog-message">
+            Confirma que el dispositivo está conectado a una fuente de energía
+            adecuada antes de iniciar el análisis.
+        </p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" onclick="hideConfirmDialog('start-analysis-dialog')">Cancelar</button>
+            <form id="start-analysis-form" method="post" action="/monitoreos/{{ monitoring.id }}/iniciar-analisis" style="margin:0;">
+                <input type="hidden" name="power_source_confirmed" value="true">
+                <button type="submit" id="btn-confirm-start-analysis" class="btn btn-primary">Iniciar análisis</button>
+            </form>
+        </div>
+    </div>
+</div>
+
 {# --- Finalizing capture overlay (shown after finalize is submitted) --- #}
 <div id="finalizing-capture-overlay" class="execution-status-block hidden">
     <div class="execution-center">
         <div class="spinner spinner--lg"></div>
-        <p class="execution-status-text">Finalizando captura...</p>
-        <p class="text-secondary" style="font-size: var(--font-size-small);">Liberando cámara antes de iniciar el análisis.</p>
+        <p class="execution-status-text">Finalizando grabación...</p>
+        <p class="text-secondary" style="font-size: var(--font-size-small);">Liberando cámara antes de procesar el video.</p>
+    </div>
+</div>
+
+{# --- Starting-analysis overlay (shown after start-analysis is submitted) --- #}
+<div id="starting-analysis-overlay" class="execution-status-block hidden">
+    <div class="execution-center">
+        <div class="spinner spinner--lg"></div>
+        <p class="execution-status-text">Iniciando análisis...</p>
     </div>
 </div>
 
@@ -208,6 +251,32 @@ document.addEventListener("DOMContentLoaded", function () {
             if (overlay) { overlay.classList.remove("hidden"); }
 
             abortForm.submit();
+        });
+    }
+
+    // --- Start-analysis form submission (Spec 020) ---
+    var startAnalysisForm = document.getElementById("start-analysis-form");
+    if (startAnalysisForm) {
+        startAnalysisForm.addEventListener("submit", function (event) {
+            event.preventDefault();
+            if (startAnalysisForm.dataset.submitting === "true") return;
+            startAnalysisForm.dataset.submitting = "true";
+
+            if (typeof stopMonitoringPolling === "function") {
+                stopMonitoringPolling();
+            }
+
+            var btn = document.getElementById("btn-confirm-start-analysis");
+            if (btn) { btn.disabled = true; btn.textContent = "Iniciando..."; }
+
+            hideConfirmDialog("start-analysis-dialog");
+            var blocks = document.querySelectorAll(".execution-status-block");
+            for (var i = 0; i < blocks.length; i++) { blocks[i].classList.add("hidden"); }
+
+            var overlay = document.getElementById("starting-analysis-overlay");
+            if (overlay) { overlay.classList.remove("hidden"); }
+
+            startAnalysisForm.submit();
         });
     }
 

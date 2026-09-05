@@ -17,6 +17,7 @@ class MonitoringState(str, Enum):
     RUNNING = "running"
     PAUSED = "paused"
     FINISHING = "finishing"
+    READY_FOR_ANALYSIS = "ready_for_analysis"
     ANALYZING = "analyzing"
     COMPLETED = "completed"
     ABORTED = "aborted"
@@ -27,12 +28,19 @@ class MonitoringStatus:
     """Value object representing monitoring status with validated transitions.
 
     The state machine enforces the following transitions:
-        - initializing → running, error
-        - running → paused, finishing, analyzing, completed, aborted, error
-        - paused → running, aborted, error
-        - finishing → completed, error
-        - analyzing → completed, error
-        - completed, aborted, error → (no transitions allowed)
+        - initializing -> running, error
+        - running -> paused, finishing, analyzing, ready_for_analysis, completed, aborted, error
+        - paused -> running, aborted, error
+        - finishing -> completed, error
+        - ready_for_analysis -> analyzing, aborted, error   (Spec 020, video-first deferred manual analysis)
+        - analyzing -> completed, error
+        - completed, aborted, error -> (no transitions allowed)
+
+    Note (Spec 020): ``ready_for_analysis`` is a NON-terminal, active, persisted
+    and reboot-recoverable state. ``running -> analyzing`` is preserved for the
+    capture-first legacy flow and for the controlled reprocess reset. No
+    ``completed/error -> analyzing`` FSM edges exist; reprocess uses a controlled
+    reset outside the FSM.
     """
 
     VALID_TRANSITIONS: dict[MonitoringState, set[MonitoringState]] = {
@@ -44,6 +52,7 @@ class MonitoringStatus:
             MonitoringState.PAUSED,
             MonitoringState.FINISHING,
             MonitoringState.ANALYZING,
+            MonitoringState.READY_FOR_ANALYSIS,
             MonitoringState.COMPLETED,
             MonitoringState.ABORTED,
             MonitoringState.ERROR,
@@ -55,6 +64,11 @@ class MonitoringStatus:
         },
         MonitoringState.FINISHING: {
             MonitoringState.COMPLETED,
+            MonitoringState.ERROR,
+        },
+        MonitoringState.READY_FOR_ANALYSIS: {
+            MonitoringState.ANALYZING,
+            MonitoringState.ABORTED,
             MonitoringState.ERROR,
         },
         MonitoringState.ANALYZING: {

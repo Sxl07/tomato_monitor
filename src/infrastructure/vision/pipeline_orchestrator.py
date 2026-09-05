@@ -8,7 +8,10 @@ import numpy as np
 
 from src.domain.services.deduplication_policy import DeduplicationPolicy
 from src.domain.services.inspection_policy import InspectionPolicy
-from src.infrastructure.config.settings import RUN_MATURITY_ONLY_FOR_HEALTHY
+from src.infrastructure.config.settings import (
+    ACTIVE_PROFILE,
+    RUN_MATURITY_ONLY_FOR_HEALTHY,
+)
 from src.infrastructure.config.thresholds import MATURITY_MIN_DET_SCORE
 
 from src.infrastructure.vision.cropper import (
@@ -58,7 +61,11 @@ def build_pipeline_components() -> PipelineComponents:
     build_tomato_detector, _, _ = _import_detector()
     build_health_model_resnet, _ = _import_health()
 
-    detector = build_tomato_detector()
+    # Wire the active profile's score threshold into the detector so the
+    # ExecutionProfile field is actually consumed by the live pipeline.
+    detector = build_tomato_detector(
+        score_threshold=ACTIVE_PROFILE.detection_score_threshold
+    )
     health_model, health_transform = build_health_model_resnet()
     tracker = SimpleTracker()
     deduplication_policy = DeduplicationPolicy()

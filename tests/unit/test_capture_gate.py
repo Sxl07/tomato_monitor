@@ -13,7 +13,12 @@ import pytest
 
 from src.infrastructure.vision.capture_gate import (
     should_capture_new_image,
+    should_run_detector_by_scene_change,
     preprocess_for_scene_compare,
+)
+from src.infrastructure.config.thresholds import (
+    MIN_FRAMES_BETWEEN_CAPTURES,
+    MAX_FRAMES_WITHOUT_CAPTURE,
 )
 
 
@@ -161,3 +166,78 @@ class TestTimeoutAndCooldown:
             cooldown_frames=18,
         )
         assert metrics["cooldown_ok"] == 1.0
+
+
+class TestSceneGateCooldownTimeoutOverrides:
+    """should_run_detector_by_scene_change honors optional cooldown/timeout.
+
+    Regression for the Spec 019 / Task 8.2 defect: in video-first the Scene
+    Gate was wired with the legacy internal cooldown (18) even though the
+    analysis config used gaps 3/8, so the gate could never fire in the min-gap
+    window. The wrapper now forwards explicit overrides while keeping the
+    legacy 18/45 defaults when none are provided.
+    """
+
+    def test_defaults_match_legacy_thresholds(self):
+        """No overrides → uses legacy MIN/MAX capture thresholds (18/45)."""
+        # A scene change with a gap below the legacy cooldown (18) must stay
+        # blocked when no overrides are supplied — legacy behavior preserved.
+        ref = _make_solid_frame((0, 0, 0))
+        cur = _make_solid_frame((255, 255, 255))
+        trigger, metrics = should_run_detector_by_scene_change(
+            reference_bgr=ref,
+            current_bgr=cur,
+            frames_since_last_detection=5,  # 3 <= 5 < 18
+        )
+        assert metrics["cooldown_ok"] == 0.0
+        assert trigger is False
+        # Sanity: the defaults really are the legacy constants.
+        assert MIN_FRAMES_BETWEEN_CAPTURES == 18
+        assert MAX_FRAMES_WITHOUT_CAPTURE == 45
+
+    def test_override_cooldown_allows_gate_in_min_window(self):
+        """With cooldown=3, a strong scene change fires the gate at gap 5.
+
+        Uses two saturated colors (pure red vs pure green): orb_matches == 0
+        and HSV histogram difference ~1.0 clears both thresholds. A brightness-
+        only change (black vs white) would not — its hue/saturation matches.
+        """
+        ref = _make_solid_frame((0, 0, 255))
+        cur = _make_solid_frame((0, 255, 0))
+        trigger, metrics = should_run_detector_by_scene_change(
+            reference_bgr=ref,
+            current_bgr=cur,
+            frames_since_last_detection=5,
+            cooldown_frames=3,
+            timeout_frames=8,
+        )
+        assert metrics["cooldown_ok"] == 1.0
+        assert trigger is True
+
+    def test_override_no_scene_change_stays_blocked(self):
+        """Same config, but no visual change → blocked (not a timeout force)."""
+        frame = _make_solid_frame((100, 100, 100))
+        trigger, metrics = should_run_detector_by_scene_change(
+            reference_bgr=frame,
+            current_bgr=frame.copy(),
+            frames_since_last_detection=5,
+            cooldown_frames=3,
+            timeout_frames=8,
+        )
+        # Cooldown satisfied but no scene change and not yet timeout → blocked.
+        assert metrics["cooldown_ok"] == 1.0
+        assert metrics["timeout_force"] == 0.0
+        assert trigger is False
+
+    def test_override_timeout_still_forces(self):
+        """At/after the override timeout, a static scene is still forced."""
+        frame = _make_solid_frame((100, 100, 100))
+        trigger, metrics = should_run_detector_by_scene_change(
+            reference_bgr=frame,
+            current_bgr=frame.copy(),
+            frames_since_last_detection=8,
+            cooldown_frames=3,
+            timeout_frames=8,
+        )
+        assert metrics["timeout_force"] == 1.0
+        assert trigger is True

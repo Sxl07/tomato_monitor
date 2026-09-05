@@ -13,7 +13,17 @@ from src.infrastructure.config.settings import DETECTION_MODEL_PATH, DEVICE
 from src.infrastructure.config.thresholds import DETECTION_SCORE_THRESHOLD
 
 
-def build_tomato_detector(model_weights: Path | None = None) -> DefaultPredictor:
+def build_tomato_detector(
+    model_weights: Path | None = None,
+    score_threshold: float = DETECTION_SCORE_THRESHOLD,
+) -> DefaultPredictor:
+    """Build the RetinaNet detector.
+
+    ``score_threshold`` sets ``cfg.MODEL.RETINANET.SCORE_THRESH_TEST``. It
+    defaults to ``DETECTION_SCORE_THRESHOLD`` (0.80) so existing callers
+    (scripts, smoke tests, benchmarks) keep their behavior; the active pipeline
+    passes the profile's ``detection_score_threshold`` explicitly.
+    """
     weights_path = Path(model_weights) if model_weights else DETECTION_MODEL_PATH
 
     cfg = get_cfg()
@@ -28,7 +38,7 @@ def build_tomato_detector(model_weights: Path | None = None) -> DefaultPredictor
 
     cfg.MODEL.RETINANET.NUM_CLASSES = 1
     cfg.MODEL.WEIGHTS = str(weights_path)
-    cfg.MODEL.RETINANET.SCORE_THRESH_TEST = DETECTION_SCORE_THRESHOLD
+    cfg.MODEL.RETINANET.SCORE_THRESH_TEST = score_threshold
     cfg.MODEL.DEVICE = DEVICE
 
     return DefaultPredictor(cfg)

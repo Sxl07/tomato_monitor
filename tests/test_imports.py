@@ -94,6 +94,61 @@ def test_src_infrastructure_modules_importable():
                 raise
 
 
+def test_video_analysis_service_importable_without_cv2_and_detectron2():
+    """VideoAnalysisService must import with cv2 AND detectron2 blocked.
+
+    Spec 019, Task 15.1: the service uses VideoReaderPort (injected) and lazy
+    factories, so it must NOT pull cv2/detectron2 at module import.
+
+    The block is exercised in a SUBPROCESS so poisoning sys.modules (cv2/
+    detectron2/torch = None) cannot pollute the parent test process (other tests
+    rely on the real cv2). The child forces those imports to fail and imports the
+    service module fresh; a clean exit proves the import path is heavy-free.
+    """
+    import subprocess
+
+    code = (
+        "import sys\n"
+        "for _n in ('cv2', 'detectron2', 'torch'):\n"
+        "    sys.modules[_n] = None\n"  # any import of these now raises ImportError
+        "import importlib\n"
+        "mod = importlib.import_module('src.application.services.video_analysis_service')\n"
+        "assert hasattr(mod, 'VideoAnalysisService')\n"
+        "assert getattr(mod, 'cv2', None) is None\n"
+        "assert getattr(mod, 'torch', None) is None\n"
+        "print('OK')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        "video_analysis_service failed to import with cv2/detectron2/torch "
+        f"blocked.\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "OK" in result.stdout
+
+
+def test_video_reader_port_importable_without_cv2():
+    """VideoReaderPort (application interface) must import without cv2/torch/detectron2.
+
+    Spec 019, Task 2.3 (case I): the port defines only the abstract contract and
+    dataclass; the OpenCV dependency lives in the infrastructure adapter.
+    """
+    import importlib
+
+    mod = importlib.import_module("src.application.interfaces.video_reader_port")
+    assert hasattr(mod, "VideoReaderPort")
+    assert hasattr(mod, "VideoMetadata")
+    # VideoReaderError is part of the port contract (application layer).
+    assert hasattr(mod, "VideoReaderError")
+    # The port module must not have pulled in heavy backends as a side effect.
+    assert getattr(mod, "cv2", None) is None
+    assert getattr(mod, "torch", None) is None
+
+
 def test_app_modules_importable():
     """All modules under app/ should be importable."""
     modules = discover_modules("app", PROJECT_ROOT / "app")

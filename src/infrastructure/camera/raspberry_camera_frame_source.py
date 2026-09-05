@@ -25,6 +25,18 @@ try:
 except ImportError:
     PICAMERA2_AVAILABLE = False
 
+# libcamera provides the auto-exposure / AWB control enums used by the VIDEO
+# configuration. It only exists on the Raspberry Pi; keep the module importable
+# on PC/CI by guarding the import. STILL/preview never touch these enums, so
+# they keep working without libcamera. VIDEO fails explicitly if the enums are
+# unavailable (see _build_persistent_configuration).
+try:
+    from libcamera import controls as libcamera_controls
+    LIBCAMERA_AVAILABLE = True
+except ImportError:
+    libcamera_controls = None
+    LIBCAMERA_AVAILABLE = False
+
 # =============================================================================
 # GLOBAL CAMERA LOCK — the single source of truth for camera ownership.
 # Any code path that touches Picamera2 must hold this lock.
@@ -56,10 +68,49 @@ class RaspberryCameraFrameSource(FrameSource):
     This class NEVER creates two Picamera2 instances simultaneously.
     """
 
-    def __init__(self, width: int = 640, height: int = 480, fps: int = 5):
+    #: Supported persistent-mode camera configurations.
+    CAMERA_MODE_STILL = "still"
+    CAMERA_MODE_VIDEO = "video"
+    _VALID_CAMERA_MODES = (CAMERA_MODE_STILL, CAMERA_MODE_VIDEO)
+
+    def __init__(
+        self,
+        width: int = 640,
+        height: int = 480,
+        fps: int = 5,
+        camera_mode: str = CAMERA_MODE_STILL,
+    ):
+        """Initialize the frame source.
+
+        Args:
+            width: Frame width in pixels.
+            height: Frame height in pixels.
+            fps: Requested/configured camera fps. In ``video`` mode this drives
+                the physical cadence via ``FrameDurationLimits``; in ``still``
+                mode it is retained for backward compatibility and does not
+                impose a cadence (existing behavior).
+            camera_mode: ``"still"`` (default, existing capture-first behavior)
+                or ``"video"`` (video-first: explicit video configuration with
+                a physical frame-duration cadence).
+
+        Raises:
+            ValueError: If ``camera_mode`` is unknown, or if ``fps <= 0`` when
+                ``camera_mode == "video"`` (invalid frame duration).
+        """
+        if camera_mode not in self._VALID_CAMERA_MODES:
+            raise ValueError(
+                f"Unknown camera_mode {camera_mode!r}; "
+                f"expected one of {self._VALID_CAMERA_MODES}"
+            )
+        if camera_mode == self.CAMERA_MODE_VIDEO and fps <= 0:
+            raise ValueError(
+                f"fps must be > 0 for video camera_mode, got {fps}"
+            )
+
         self._width = width
         self._height = height
         self._fps = fps
+        self._camera_mode = camera_mode
         self._camera: Optional[Any] = None
         self._started = False
         self._lock_held = False  # True if we're holding _camera_lock in persistent mode
@@ -209,16 +260,73 @@ class RaspberryCameraFrameSource(FrameSource):
 
     def _start_camera(self) -> None:
         """Initialize and start camera. Caller MUST hold _camera_lock."""
-        logger.info("Worker: initializing Picamera2...")
+        logger.info("Worker: initializing Picamera2 (mode=%s)...", self._camera_mode)
         self._camera = Picamera2()
-        config = self._camera.create_still_configuration(
-            main={"size": (self._width, self._height)}
-        )
+        config = self._build_persistent_configuration(self._camera)
         self._camera.configure(config)
         self._camera.start()
         self._started = True
         time.sleep(0.3)  # Initial stabilization
-        logger.info("Worker: camera started successfully (persistent mode).")
+        logger.info(
+            "Worker: camera started successfully (persistent mode=%s).",
+            self._camera_mode,
+        )
+
+    def _build_persistent_configuration(self, cam: Any) -> Any:
+        """Build the Picamera2 configuration for the active persistent mode.
+
+        - ``still`` (default): preserves the existing capture-first behavior
+          exactly (``create_still_configuration`` with only ``main`` size, no
+          ``FrameDurationLimits``).
+        - ``video``: uses ``create_video_configuration`` with an explicit
+          ``FrameDurationLimits`` computed from the configured fps so the
+          camera/pipeline controls the physical cadence (no application-side
+          throttling/sleep).
+        """
+        if self._camera_mode == self.CAMERA_MODE_VIDEO:
+            duration_us = self._frame_duration_us(self._fps)
+            # Auto-exposure / AWB tuning validated on IMX500 (Highlight
+            # constraint + EV -0.7 to protect highlights while the camera keeps
+            # choosing ExposureTime/AnalogueGain automatically). Requires the
+            # real libcamera enums; fail explicitly if unavailable (VIDEO mode
+            # only runs on the Raspberry Pi).
+            if libcamera_controls is None:
+                raise RuntimeError(
+                    "libcamera is required for video camera_mode "
+                    "(exposure/AWB controls) but is not available."
+                )
+            return cam.create_video_configuration(
+                main={"size": (self._width, self._height)},
+                controls={
+                    "FrameDurationLimits": (duration_us, duration_us),
+                    "AeEnable": True,
+                    "AeConstraintMode": (
+                        libcamera_controls.AeConstraintModeEnum.Highlight
+                    ),
+                    "AeExposureMode": (
+                        libcamera_controls.AeExposureModeEnum.Normal
+                    ),
+                    "ExposureValue": -0.7,
+                    "AwbEnable": True,
+                    "AwbMode": libcamera_controls.AwbModeEnum.Auto,
+                },
+            )
+        # Default/still: unchanged from the original behavior.
+        return cam.create_still_configuration(
+            main={"size": (self._width, self._height)}
+        )
+
+    @staticmethod
+    def _frame_duration_us(fps: float) -> int:
+        """Convert a nominal fps to a frame duration in microseconds.
+
+        Uses ``round(1_000_000 / fps)`` (e.g. 10 fps -> 100000, 5 fps -> 200000).
+        Guarded against invalid fps (already validated for video mode in the
+        constructor).
+        """
+        if fps <= 0:
+            raise ValueError(f"fps must be > 0 to compute frame duration, got {fps}")
+        return round(1_000_000 / fps)
 
     def _force_cleanup(self) -> None:
         """Emergency cleanup when read() fails after camera was started."""

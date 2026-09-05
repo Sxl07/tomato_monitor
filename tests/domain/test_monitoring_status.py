@@ -27,6 +27,7 @@ NON_TERMINAL_STATES = [
     MonitoringState.RUNNING,
     MonitoringState.PAUSED,
     MonitoringState.FINISHING,
+    MonitoringState.READY_FOR_ANALYSIS,
     MonitoringState.ANALYZING,
 ]
 
@@ -37,6 +38,7 @@ EXPECTED_TRANSITIONS: dict[MonitoringState, set[MonitoringState]] = {
         MonitoringState.PAUSED,
         MonitoringState.FINISHING,
         MonitoringState.ANALYZING,
+        MonitoringState.READY_FOR_ANALYSIS,
         MonitoringState.COMPLETED,
         MonitoringState.ABORTED,
         MonitoringState.ERROR,
@@ -47,6 +49,11 @@ EXPECTED_TRANSITIONS: dict[MonitoringState, set[MonitoringState]] = {
         MonitoringState.ERROR,
     },
     MonitoringState.FINISHING: {MonitoringState.COMPLETED, MonitoringState.ERROR},
+    MonitoringState.READY_FOR_ANALYSIS: {
+        MonitoringState.ANALYZING,
+        MonitoringState.ABORTED,
+        MonitoringState.ERROR,
+    },
     MonitoringState.ANALYZING: {MonitoringState.COMPLETED, MonitoringState.ERROR},
     MonitoringState.COMPLETED: set(),
     MonitoringState.ABORTED: set(),
@@ -319,5 +326,94 @@ class TestAnalyzingState:
     def test_completed_to_analyzing_raises(self):
         """Terminal state completed cannot transition to analyzing."""
         status = MonitoringStatus(MonitoringState.COMPLETED)
+        with pytest.raises(InvalidTransitionError):
+            status.transition_to(MonitoringState.ANALYZING)
+
+
+# ---------------------------------------------------------------------------
+# Test: READY_FOR_ANALYSIS state — Spec 020 (deferred manual analysis)
+# ---------------------------------------------------------------------------
+
+
+class TestReadyForAnalysisState:
+    """Tests for the new READY_FOR_ANALYSIS state (Spec 020).
+
+    Video-first finalize transitions running -> ready_for_analysis (no auto
+    analysis). ready_for_analysis is a non-terminal, active state that only
+    transitions to analyzing (manual start), aborted (explicit cancel), or
+    error. Added additively without breaking existing transitions.
+    """
+
+    def test_running_to_ready_for_analysis_succeeds(self):
+        """running -> ready_for_analysis is valid (video-first finalize)."""
+        status = MonitoringStatus(MonitoringState.RUNNING)
+        result = status.transition_to(MonitoringState.READY_FOR_ANALYSIS)
+        assert result.state == MonitoringState.READY_FOR_ANALYSIS
+
+    def test_ready_for_analysis_to_analyzing_succeeds(self):
+        """ready_for_analysis -> analyzing is valid (manual start)."""
+        status = MonitoringStatus(MonitoringState.READY_FOR_ANALYSIS)
+        result = status.transition_to(MonitoringState.ANALYZING)
+        assert result.state == MonitoringState.ANALYZING
+
+    def test_ready_for_analysis_to_aborted_succeeds(self):
+        """ready_for_analysis -> aborted is valid (explicit cancellation)."""
+        status = MonitoringStatus(MonitoringState.READY_FOR_ANALYSIS)
+        result = status.transition_to(MonitoringState.ABORTED)
+        assert result.state == MonitoringState.ABORTED
+
+    def test_ready_for_analysis_to_error_succeeds(self):
+        """ready_for_analysis -> error is valid (video missing/corrupt on start)."""
+        status = MonitoringStatus(MonitoringState.READY_FOR_ANALYSIS)
+        result = status.transition_to(MonitoringState.ERROR)
+        assert result.state == MonitoringState.ERROR
+
+    def test_ready_for_analysis_to_running_raises(self):
+        """ready_for_analysis -> running is NOT valid."""
+        status = MonitoringStatus(MonitoringState.READY_FOR_ANALYSIS)
+        with pytest.raises(InvalidTransitionError):
+            status.transition_to(MonitoringState.RUNNING)
+
+    def test_ready_for_analysis_to_completed_raises(self):
+        """ready_for_analysis -> completed is NOT a direct edge (must analyze)."""
+        status = MonitoringStatus(MonitoringState.READY_FOR_ANALYSIS)
+        with pytest.raises(InvalidTransitionError):
+            status.transition_to(MonitoringState.COMPLETED)
+
+    def test_ready_for_analysis_to_paused_raises(self):
+        """ready_for_analysis -> paused is NOT valid (not a pause state)."""
+        status = MonitoringStatus(MonitoringState.READY_FOR_ANALYSIS)
+        with pytest.raises(InvalidTransitionError):
+            status.transition_to(MonitoringState.PAUSED)
+
+    def test_ready_for_analysis_is_not_terminal(self):
+        """READY_FOR_ANALYSIS is an active, non-terminal state."""
+        status = MonitoringStatus(MonitoringState.READY_FOR_ANALYSIS)
+        assert status.is_terminal() is False
+
+    def test_ready_for_analysis_allowed_transitions(self):
+        """READY_FOR_ANALYSIS allows exactly {analyzing, aborted, error}."""
+        status = MonitoringStatus(MonitoringState.READY_FOR_ANALYSIS)
+        assert status.allowed_transitions() == {
+            MonitoringState.ANALYZING,
+            MonitoringState.ABORTED,
+            MonitoringState.ERROR,
+        }
+
+    def test_running_to_analyzing_still_valid_for_legacy(self):
+        """running -> analyzing remains valid (capture-first legacy + reprocess)."""
+        status = MonitoringStatus(MonitoringState.RUNNING)
+        result = status.transition_to(MonitoringState.ANALYZING)
+        assert result.state == MonitoringState.ANALYZING
+
+    def test_completed_to_analyzing_not_an_fsm_edge(self):
+        """No completed -> analyzing FSM edge (reprocess uses controlled reset)."""
+        status = MonitoringStatus(MonitoringState.COMPLETED)
+        with pytest.raises(InvalidTransitionError):
+            status.transition_to(MonitoringState.ANALYZING)
+
+    def test_error_to_analyzing_not_an_fsm_edge(self):
+        """No error -> analyzing FSM edge (reprocess uses controlled reset)."""
+        status = MonitoringStatus(MonitoringState.ERROR)
         with pytest.raises(InvalidTransitionError):
             status.transition_to(MonitoringState.ANALYZING)

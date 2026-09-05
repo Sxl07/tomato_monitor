@@ -7,6 +7,7 @@ import cv2
 from src.infrastructure.config.settings import VIDEOS_DIR, OUTPUTS_DIR
 
 from src.infrastructure.vision.capture_gate import should_run_detector_by_scene_change
+from src.infrastructure.vision.detector_decision import decide_run_detector
 from src.infrastructure.vision.pipeline_orchestrator import build_pipeline_components, process_frame
 from src.infrastructure.vision.visual_tracker import OpticalFlowVisualTracker
 
@@ -289,40 +290,20 @@ def run_video_inspection(
         frame_name = f"{video_path.stem}_frame_{frame_idx:06d}"
         frame_wall_start = time.perf_counter()
 
-        run_detector = False
-        detector_reason = "skipped"
-
-        if not enable_sparse_detection:
-            run_detector = True
-            detector_reason = "full_detection"
-
-        elif frame_idx == 0 and force_detect_on_first_frame:
-            run_detector = True
-            detector_reason = "first_frame"
-
-        elif frames_since_last_detection >= max_frames_without_detection:
-            run_detector = True
-            detector_reason = "max_gap_force"
-
-        elif frames_since_last_detection >= min_frames_between_detections:
-            if use_scene_gate and last_detection_frame is not None:
-                trigger, _ = should_run_detector_by_scene_change(
-                    reference_bgr=last_detection_frame,
-                    current_bgr=frame,
-                    frames_since_last_detection=frames_since_last_detection,
-                )
-                if trigger:
-                    run_detector = True
-                    detector_reason = "scene_gate"
-                else:
-                    run_detector = False
-                    detector_reason = "scene_gate_blocked"
-            else:
-                run_detector = True
-                detector_reason = "min_gap_ready"
-        else:
-            run_detector = False
-            detector_reason = "cooldown"
+        decision = decide_run_detector(
+            frame_idx=frame_idx,
+            frames_since_last_detection=frames_since_last_detection,
+            last_detection_frame=last_detection_frame,
+            current_frame=frame,
+            enable_sparse_detection=enable_sparse_detection,
+            use_scene_gate=use_scene_gate,
+            min_frames_between_detections=min_frames_between_detections,
+            max_frames_without_detection=max_frames_without_detection,
+            force_detect_on_first_frame=force_detect_on_first_frame,
+            scene_gate_fn=should_run_detector_by_scene_change,
+        )
+        run_detector = decision.run_detector
+        detector_reason = decision.reason
 
         detector_reason_counts[detector_reason] += 1
 

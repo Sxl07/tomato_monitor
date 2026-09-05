@@ -23,7 +23,12 @@ def write_csv(rows: list[dict], output_path: Path) -> None:
         writer.writerows(rows)
 
 
-def save_image(image_bgr, output_path: Path) -> None:
+def save_image(image_bgr, output_path: Path) -> bool:
+    """Write an image to disk, creating parent dirs.
+
+    Returns True if the write succeeded, False otherwise. Existing callers may
+    ignore the return value (backward-compatible).
+    """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(output_path), image_bgr)
+    return bool(cv2.imwrite(str(output_path), image_bgr))

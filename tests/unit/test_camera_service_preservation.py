@@ -300,17 +300,19 @@ class TestCapturePreviewFramePreservation:
         assert result is None
 
     def test_returns_none_when_cv2_not_available(self):
-        """Property: When CV2_AVAILABLE is False, capture_preview_frame() returns None.
+        """Property: When cv2 is unavailable, capture_preview_frame() returns None.
 
         **Validates: Requirements 3.1**
 
-        cv2 is still needed for imencode (JPEG encoding utility).
+        JPEG encoding (cv2.imencode) is confined to the infrastructure helper
+        (Spec 019, Task 14); CameraService delegates to it, so the cv2
+        availability flag now lives there.
         """
         mock_source = _create_mock_frame_source_available(
             np.zeros((100, 100, 3), dtype=np.uint8)
         )
 
-        with patch("src.application.services.camera_service.CV2_AVAILABLE", False):
+        with patch("src.infrastructure.camera.jpeg_encoder.CV2_AVAILABLE", False):
             service = CameraService(frame_source=mock_source)
             result = service.capture_preview_frame()
 

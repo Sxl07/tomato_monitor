@@ -768,12 +768,22 @@ def monitoring_start(
     # Construct dependencies for MonitoringService.start_session()
     # 1. Frame source (camera backend — picamera2 on RPi, OpenCV on PC)
     #    Pass camera resolution from ACTIVE_PROFILE for monitoring capture.
+    #    Video-first (Task 10.1): use the VIDEO camera configuration with the
+    #    configured recording fps so the sensor cadence is explicit.
     from src.infrastructure.config.settings import ACTIVE_PROFILE
-    frame_source = create_frame_source(
-        width=ACTIVE_PROFILE.camera_width,
-        height=ACTIVE_PROFILE.camera_height,
-        fps=ACTIVE_PROFILE.camera_fps,
-    )
+    if getattr(ACTIVE_PROFILE, "video_first_enabled", False):
+        frame_source = create_frame_source(
+            width=ACTIVE_PROFILE.camera_width,
+            height=ACTIVE_PROFILE.camera_height,
+            fps=int(ACTIVE_PROFILE.recording_target_fps),
+            camera_mode="video",
+        )
+    else:
+        frame_source = create_frame_source(
+            width=ACTIVE_PROFILE.camera_width,
+            height=ACTIVE_PROFILE.camera_height,
+            fps=ACTIVE_PROFILE.camera_fps,
+        )
     if frame_source is None:
         errors = ["La cámara no está disponible. Verifica la conexión y vuelve a intentar."]
         return templates.TemplateResponse(request, "agricultural/monitoring_setup.html", {
@@ -1009,6 +1019,82 @@ def monitoring_finalize_capture(request: Request, id: int, user=Depends(require_
         return RedirectResponse(
             url=f"/monitoreos/{id}/ejecucion", status_code=303
         )
+
+
+@router.post("/monitoreos/{id}/iniciar-analisis")
+def monitoring_start_analysis(
+    request: Request,
+    id: int,
+    power_source_confirmed: bool = Form(False),
+    user=Depends(require_current_user_html),
+):
+    """Manually start the deferred analysis of a ready_for_analysis monitoring (Spec 020).
+
+    The power-source confirmation is an OPTIONAL form field defaulting to False so
+    that FastAPI does NOT return 422 when it is absent; the application evaluates
+    it. When absent/false the monitoring stays in ready_for_analysis (no thread,
+    no retained claim) and the operator sees a controlled Spanish error. The
+    confirmation is per-attempt: it is never persisted and each retry re-confirms.
+
+    Always redirects to the execution screen (303) with an actionable ?error= on
+    rejection.
+    """
+    from urllib.parse import quote
+
+    from src.application.services.monitoring_service import (
+        MonitoringNotFoundError,
+        NotReadyForAnalysisError,
+        PowerSourceNotConfirmedError,
+        AnalysisPreflightFailedError,
+        AnalysisAlreadyRunningError,
+        DeviceBusyError,
+    )
+    from app.dependencies import _get_request_session
+
+    _logger.info(
+        f"UI start-analysis request for monitoring {id} "
+        f"(power_source_confirmed={power_source_confirmed})"
+    )
+
+    monitoring_service = get_monitoring_service(request)
+    db_session = _get_request_session(request)
+
+    def _redirect_exec(error: str | None = None) -> RedirectResponse:
+        url = f"/monitoreos/{id}/ejecucion"
+        if error:
+            url += f"?error={quote(error)}"
+        return RedirectResponse(url=url, status_code=303)
+
+    try:
+        monitoring = monitoring_service.start_deferred_analysis(
+            id, bool(power_source_confirmed), db_session
+        )
+        _logger.info(
+            f"UI start-analysis accepted for monitoring {id}, status={monitoring.status}"
+        )
+        return _redirect_exec()
+    except MonitoringNotFoundError:
+        _logger.warning(f"UI start-analysis: monitoring {id} not found")
+        return RedirectResponse(
+            url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303
+        )
+    except PowerSourceNotConfirmedError as e:
+        _logger.info(f"UI start-analysis: power source not confirmed for {id}")
+        return _redirect_exec(str(e))
+    except NotReadyForAnalysisError as e:
+        _logger.info(f"UI start-analysis: monitoring {id} not ready for analysis")
+        return _redirect_exec(str(e))
+    except AnalysisPreflightFailedError as e:
+        _logger.info(
+            f"UI start-analysis: preflight failed for {id} ({e.reason_code})"
+        )
+        return _redirect_exec(str(e))
+    except AnalysisAlreadyRunningError as e:
+        _logger.info(f"UI start-analysis: analysis already running for {id}")
+        return _redirect_exec(str(e))
+    except DeviceBusyError as e:
+        _logger.info(f"UI start-analysis: device busy for {id}")
+        return _redirect_exec(str(e))
 
 
 
