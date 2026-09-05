@@ -144,10 +144,14 @@ class TestEdgeVsFullProfileDifferences:
         assert EDGE_PROFILE.skip_maturity is True
         assert FULL_PROFILE.skip_maturity is False
 
-    def test_edge_higher_detection_threshold(self):
+    def test_detection_thresholds(self):
+        # EDGE=0.60 was selected experimentally (threshold sweep on Monitoring 21)
+        # for the current model; FULL keeps the legacy 0.80. This validates the
+        # configured values, not an EDGE>=FULL policy.
         from src.infrastructure.config.settings import EDGE_PROFILE, FULL_PROFILE
 
-        assert EDGE_PROFILE.detection_score_threshold > FULL_PROFILE.detection_score_threshold
+        assert EDGE_PROFILE.detection_score_threshold == 0.60
+        assert FULL_PROFILE.detection_score_threshold == 0.80
 
     def test_edge_lower_thermal_warning(self):
         from src.infrastructure.config.settings import EDGE_PROFILE, FULL_PROFILE
