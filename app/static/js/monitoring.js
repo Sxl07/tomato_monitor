@@ -72,6 +72,8 @@
         "running",
         "paused",
         "finishing",
+        // Spec 020: capture finished, analysis pending, manual start.
+        "ready_for_analysis",
         "analyzing",
         "completed",
         "aborted",

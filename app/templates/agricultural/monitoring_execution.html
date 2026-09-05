@@ -69,6 +69,24 @@
     </div>
 </div>
 
+{# --- Ready for analysis (Spec 020: capture done, analysis pending, manual start) --- #}
+<div id="status-ready_for_analysis" class="execution-status-block {% if monitoring.status != 'ready_for_analysis' %}hidden{% endif %}">
+    <div class="execution-center">
+        <span class="execution-icon execution-icon--success">✓</span>
+        <p class="execution-status-text">Captura finalizada — análisis pendiente</p>
+        <p class="text-secondary" style="font-size: var(--font-size-small); margin-top: 8px;">
+            El video quedó guardado. Conecta el dispositivo a una fuente de energía
+            adecuada y luego inicia el análisis.
+        </p>
+    </div>
+
+    <div class="execution-actions">
+        <button type="button" class="btn btn-primary btn-full" data-monitoring-action onclick="showConfirmDialog('start-analysis-dialog')">
+            Iniciar análisis
+        </button>
+    </div>
+</div>
+
 {# --- Paused --- #}
 <div id="status-paused" class="execution-status-block {% if monitoring.status != 'paused' %}hidden{% endif %}">
     <div class="alert alert--warning">
@@ -133,7 +151,7 @@
 {# --- Finalize capture confirmation dialog --- #}
 <div id="finalize-dialog" class="dialog-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="finalize-dialog-message">
     <div class="dialog">
-        <p id="finalize-dialog-message" class="dialog-message">La grabación finalizará y comenzará el procesamiento del video.</p>
+        <p id="finalize-dialog-message" class="dialog-message">La grabación finalizará y el video quedará listo para analizar. El análisis se inicia después, de forma manual.</p>
         <div class="dialog-actions">
             <button type="button" class="btn btn-secondary" onclick="hideConfirmDialog('finalize-dialog')">Cancelar</button>
             <form id="finalize-form" method="post" action="/monitoreos/{{ monitoring.id }}/finalizar-captura" style="margin:0;">
@@ -156,12 +174,37 @@
     </div>
 </div>
 
+{# --- Start-analysis power-source confirmation dialog (Spec 020) --- #}
+<div id="start-analysis-dialog" class="dialog-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="start-analysis-dialog-message">
+    <div class="dialog">
+        <p id="start-analysis-dialog-message" class="dialog-message">
+            Confirma que el dispositivo está conectado a una fuente de energía
+            adecuada antes de iniciar el análisis.
+        </p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" onclick="hideConfirmDialog('start-analysis-dialog')">Cancelar</button>
+            <form id="start-analysis-form" method="post" action="/monitoreos/{{ monitoring.id }}/iniciar-analisis" style="margin:0;">
+                <input type="hidden" name="power_source_confirmed" value="true">
+                <button type="submit" id="btn-confirm-start-analysis" class="btn btn-primary">Iniciar análisis</button>
+            </form>
+        </div>
+    </div>
+</div>
+
 {# --- Finalizing capture overlay (shown after finalize is submitted) --- #}
 <div id="finalizing-capture-overlay" class="execution-status-block hidden">
     <div class="execution-center">
         <div class="spinner spinner--lg"></div>
         <p class="execution-status-text">Finalizando grabación...</p>
         <p class="text-secondary" style="font-size: var(--font-size-small);">Liberando cámara antes de procesar el video.</p>
+    </div>
+</div>
+
+{# --- Starting-analysis overlay (shown after start-analysis is submitted) --- #}
+<div id="starting-analysis-overlay" class="execution-status-block hidden">
+    <div class="execution-center">
+        <div class="spinner spinner--lg"></div>
+        <p class="execution-status-text">Iniciando análisis...</p>
     </div>
 </div>
 
@@ -208,6 +251,32 @@ document.addEventListener("DOMContentLoaded", function () {
             if (overlay) { overlay.classList.remove("hidden"); }
 
             abortForm.submit();
+        });
+    }
+
+    // --- Start-analysis form submission (Spec 020) ---
+    var startAnalysisForm = document.getElementById("start-analysis-form");
+    if (startAnalysisForm) {
+        startAnalysisForm.addEventListener("submit", function (event) {
+            event.preventDefault();
+            if (startAnalysisForm.dataset.submitting === "true") return;
+            startAnalysisForm.dataset.submitting = "true";
+
+            if (typeof stopMonitoringPolling === "function") {
+                stopMonitoringPolling();
+            }
+
+            var btn = document.getElementById("btn-confirm-start-analysis");
+            if (btn) { btn.disabled = true; btn.textContent = "Iniciando..."; }
+
+            hideConfirmDialog("start-analysis-dialog");
+            var blocks = document.querySelectorAll(".execution-status-block");
+            for (var i = 0; i < blocks.length; i++) { blocks[i].classList.add("hidden"); }
+
+            var overlay = document.getElementById("starting-analysis-overlay");
+            if (overlay) { overlay.classList.remove("hidden"); }
+
+            startAnalysisForm.submit();
         });
     }
 

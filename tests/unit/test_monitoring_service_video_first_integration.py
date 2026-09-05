@@ -336,21 +336,36 @@ def test_10_3_recording_validate_promote_persist_analyze_complete(temp_env, monk
         # 2) finalize_capture → _finalize_video_first → validate/promote/persist →
         #    analyzing → analysis (inline) → completed. This sets finalize and
         #    joins the real recording thread before validating.
+        # 2) finalize_capture -> _finalize_video_first -> validate/promote/persist
+        #    -> ready_for_analysis. Spec 020: NO analysis is launched here.
         service.finalize_capture(mon.id)
 
-    final_rel = MonitoringService._recording_final_path(mon.id)
-    final_abs = env["tmp_path"] / final_rel
+        final_rel = MonitoringService._recording_final_path(mon.id)
+        final_abs = env["tmp_path"] / final_rel
 
-    # monitoring.recording.mp4 gone after os.replace; monitoring.mp4 present.
-    assert not temp_abs.exists(), "temp should have been renamed away"
-    assert final_abs.exists(), "monitoring.mp4 was not promoted under BASE_DIR/outputs"
+        # monitoring.recording.mp4 gone after os.replace; monitoring.mp4 present.
+        assert not temp_abs.exists(), "temp should have been renamed away"
+        assert final_abs.exists(), "monitoring.mp4 was not promoted under BASE_DIR/outputs"
 
-    # Stored video_path is RELATIVE; analysis launched on the final video.
-    persisted = env["mon_repo"].get_by_id(mon.id)
-    assert persisted.video_path == final_rel
+        # Spec 020: after finalize the session is ready_for_analysis, video_path
+        # persisted (RELATIVE), and NO analysis thread was launched.
+        persisted = env["mon_repo"].get_by_id(mon.id)
+        assert persisted.status == MonitoringState.READY_FOR_ANALYSIS.value
+        assert persisted.video_path == final_rel
+        assert "analysis_args" not in captured, "analysis must NOT auto-start on finalize"
+
+        # 3) Manual deferred start (operator confirmed adequate power source):
+        #    start_deferred_analysis -> preflight -> analyzing -> analysis (inline)
+        #    -> completed.
+        service.start_deferred_analysis(
+            mon.id, power_source_confirmed=True, db_session=env["session"]
+        )
+
+    # Analysis launched on the final video during the manual start.
     assert captured["analysis_args"] == (mon.id, final_rel)
 
     # Ends in completed, metrics persisted.
+    persisted = env["mon_repo"].get_by_id(mon.id)
     assert persisted.status == MonitoringState.COMPLETED.value
     assert env["metrics_repo"].get_by_monitoring(mon.id) is not None
 

@@ -101,6 +101,10 @@ def _build_service(registry=None):
     if registry is None:
         registry = MagicMock()
         registry.claim_finalization.return_value = True
+        # Spec 020: device-global guards must report "not busy" by default so the
+        # existing start_session tests exercise the normal (idle-device) path.
+        registry.is_global_analysis_active.return_value = False
+        registry.has_active_capture.return_value = False
     service = MonitoringService(
         monitoring_repo=monitoring_repo,
         snapshot_repo=snapshot_repo,
@@ -318,7 +322,10 @@ def _finalize_setup(worker, registry, monitoring_repo):
 
 
 class TestFinalizeVideoFirst:
-    def test_happy_path_validates_promotes_persists_and_launches_analysis(self):
+    def test_happy_path_validates_promotes_persists_and_goes_ready_for_analysis(self):
+        """Spec 020: video-first finalize validates + promotes + persists
+        video_path, then transitions to ready_for_analysis WITHOUT launching any
+        analysis thread (deferred manual start)."""
         service, monitoring_repo, registry = _build_service()
         worker = FakeVideoRecordingWorker()
         _finalize_setup(worker, registry, monitoring_repo)
@@ -354,11 +361,18 @@ class TestFinalizeVideoFirst:
         args = monitoring_repo.update_video_path.call_args[0]
         assert args[0] == 1
         assert args[1] == "outputs/monitorings/1/video/monitoring.mp4"
-        # Transitioned to analyzing.
-        monitoring_repo.update_status.assert_any_call(1, MonitoringState.ANALYZING.value)
-        # Analysis launched on the FINAL video path.
-        assert launched["target"] == service._run_video_analysis
-        assert launched["args"] == (1, "outputs/monitorings/1/video/monitoring.mp4")
+        # Spec 020: transitioned to ready_for_analysis (NOT analyzing).
+        monitoring_repo.update_status.assert_any_call(
+            1, MonitoringState.READY_FOR_ANALYSIS.value
+        )
+        # It must NOT transition to analyzing at finalize.
+        for call in monitoring_repo.update_status.call_args_list:
+            assert call[0][1] != MonitoringState.ANALYZING.value
+        # NO analysis thread was launched at finalize.
+        assert launched == {}
+        # The recording worker runtime is dropped; finalization claim released.
+        registry.remove_runtime.assert_any_call(1)
+        registry.release_finalization.assert_any_call(1)
 
     def test_invalid_temp_goes_to_error_no_promotion_no_analysis(self):
         service, monitoring_repo, registry = _build_service()
@@ -383,6 +397,42 @@ class TestFinalizeVideoFirst:
         monitoring_repo.update_video_path.assert_not_called()
         monitoring_repo.update_status.assert_any_call(1, MonitoringState.ERROR.value)
         MockThread.assert_not_called()
+
+    def test_finalize_writes_only_capture_completed_at_metadata(self):
+        """Spec 020: at finalize, durable metadata includes capture_completed_at
+        and must NOT include manual_deferred_analysis / deferred_analysis_started_at.
+        """
+        service, monitoring_repo, registry = _build_service()
+        worker = FakeVideoRecordingWorker()
+        _finalize_setup(worker, registry, monitoring_repo)
+
+        captured_metrics = {}
+
+        class _CaptureWriter:
+            def __init__(self, *a, **k):
+                pass
+
+            def write_capture_metrics(self, monitoring_id, capture_metrics, profile_name=None):
+                captured_metrics.update(capture_metrics)
+                return SimpleNamespace(errors=[], paths={})
+
+        with patch(
+            "src.infrastructure.config.settings.ACTIVE_PROFILE", _video_profile()
+        ), patch(
+            "src.infrastructure.camera.raspberry_camera_frame_source.is_camera_locked",
+            return_value=False,
+        ), patch(
+            "src.infrastructure.camera.video_recorder.VideoRecorder"
+        ) as MockRecorder, patch("os.replace"), patch("os.makedirs"), patch(
+            "src.infrastructure.persistence.local.snapshot_analysis_report_writer.SnapshotAnalysisReportWriter",
+            _CaptureWriter,
+        ):
+            MockRecorder.return_value.validate.return_value = True
+            service.finalize_capture(1)
+
+        assert "capture_completed_at" in captured_metrics
+        assert "manual_deferred_analysis" not in captured_metrics
+        assert "deferred_analysis_started_at" not in captured_metrics
 
 
 # --------------------------------------------------------------------------- #

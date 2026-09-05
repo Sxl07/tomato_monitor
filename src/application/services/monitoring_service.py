@@ -42,12 +42,26 @@ from src.domain.value_objects.monitoring_status import MonitoringState, Monitori
 
 logger = logging.getLogger(__name__)
 
+
+def _utcnow_iso() -> str:
+    """Return the current UTC time as an ISO-8601 string (Spec 020 traceability).
+
+    Used for durable capture_completed_at / deferred_analysis_started_at marks in
+    the per-monitoring metrics file. Kept module-level and dependency-free.
+    """
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
 # Statuses considered "active" (non-terminal) for the one-session-per-module rule.
 _ACTIVE_STATUSES = {
     MonitoringState.INITIALIZING.value,
     MonitoringState.RUNNING.value,
     MonitoringState.PAUSED.value,
     MonitoringState.FINISHING.value,
+    # Spec 020: ready_for_analysis is an active, non-terminal state (video-first
+    # capture finished, video validated, camera released, analysis not started).
+    MonitoringState.READY_FOR_ANALYSIS.value,
     MonitoringState.ANALYZING.value,
 }
 
@@ -107,6 +121,54 @@ class DiskSpaceLowError(DomainError):
         super().__init__(f"Espacio en disco bajo ({free_mb} MB).")
 
 
+class DeviceBusyError(DomainError):
+    """A hardware/compute phase (capture or analysis) is active on the device.
+
+    Spec 020 device-global guard: only ONE active capture/analysis phase may run
+    on the single Raspberry Pi at a time. Sessions merely waiting in
+    ready_for_analysis (no worker/thread) do NOT trigger this.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
+class PowerSourceNotConfirmedError(DomainError):
+    """Deferred analysis rejected: the operator did not confirm the power source."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Se requiere confirmar la fuente de energía para continuar."
+        )
+
+
+class AnalysisPreflightFailedError(DomainError):
+    """Deferred analysis rejected by a preflight check (actionable Spanish message)."""
+
+    def __init__(self, reason_code: str, message: str) -> None:
+        self.reason_code = reason_code
+        super().__init__(message)
+
+
+class AnalysisAlreadyRunningError(DomainError):
+    """Deferred analysis rejected: an analysis is already in progress."""
+
+    def __init__(self, monitoring_id: int) -> None:
+        self.monitoring_id = monitoring_id
+        super().__init__("El análisis de este monitoreo ya está en curso.")
+
+
+class NotReadyForAnalysisError(DomainError):
+    """Deferred analysis rejected: monitoring is not in ready_for_analysis."""
+
+    def __init__(self, monitoring_id: int, status: str) -> None:
+        self.monitoring_id = monitoring_id
+        self.status = status
+        super().__init__(
+            "El monitoreo no está listo para análisis."
+        )
+
+
 class ReprocessPreconditionError(DomainError):
     """Reprocess rejected because a precondition is not met."""
 
@@ -131,6 +193,21 @@ class ReprocessInProgressError(DomainError):
         self.monitoring_id = monitoring_id
         super().__init__(
             f"El reprocesamiento del monitoreo {monitoring_id} ya está en curso."
+        )
+
+
+class ReprocessDeviceBusyError(DomainError):
+    """Reprocess rejected: a capture/analysis phase is active on the device.
+
+    Spec 020 device-global guard for reprocess. Raised BEFORE any destructive
+    clear/reset, so no results are cleared and no state is changed when busy.
+    """
+
+    def __init__(self, monitoring_id: int) -> None:
+        self.monitoring_id = monitoring_id
+        super().__init__(
+            "El dispositivo está ocupado (captura o análisis en curso). "
+            "Espera a que termine para reprocesar."
         )
 
 
@@ -227,37 +304,79 @@ class MonitoringService:
         except ImportError:
             pass  # Non-RPi environment, no lock to check
 
-        # Video-first: block start if disk space is insufficient (before creating
-        # the session), with an actionable message.
-        from src.infrastructure.config.settings import ACTIVE_PROFILE
-        if getattr(ACTIVE_PROFILE, "video_first_enabled", False):
-            self._check_disk_space_or_raise()
+        # Spec 020 device-global guard: a heavy deferred analysis and a capture
+        # must not run at the same time on the single Raspberry Pi. Reserve the
+        # capture phase ATOMICALLY via the single coordinator (registry). The
+        # reservation contends with claim_global_analysis in one atomic decision,
+        # so a simultaneous capture-start and analysis-start can never both win.
+        # This is the ONLY new constraint on the capture-first flow; an
+        # already-admitted session is otherwise unchanged (Requirements 15.1, 21.3).
+        # A bare MagicMock registry (legacy unit tests) returns a truthy Mock, so
+        # we only reject on an explicit ``is False`` result from the real registry.
+        if self._registry.reserve_capture(module_id) is False:
+            raise DeviceBusyError(
+                "Hay un análisis en curso en el dispositivo. "
+                "Espera a que termine para iniciar una nueva captura."
+            )
 
-        # Create monitoring entity with initializing status.
-        monitoring = Monitoring(
-            module_id=module_id,
-            width_m=width_m,
-            length_m=length_m,
-            notes=notes,
-        )
-        monitoring = self._monitoring_repo.create(module_id, monitoring)
-
-        # Commit the monitoring record so the background thread (which creates
-        # its own DB session) can see it when it tries to update status.
         try:
-            db_session.commit()
+            # Video-first: block start if disk space is insufficient (before
+            # creating the session), with an actionable message.
+            from src.infrastructure.config.settings import ACTIVE_PROFILE
+            if getattr(ACTIVE_PROFILE, "video_first_enabled", False):
+                self._check_disk_space_or_raise()
+
+            # Create monitoring entity with initializing status.
+            monitoring = Monitoring(
+                module_id=module_id,
+                width_m=width_m,
+                length_m=length_m,
+                notes=notes,
+            )
+            monitoring = self._monitoring_repo.create(module_id, monitoring)
+
+            # Commit the monitoring record so the background thread (which creates
+            # its own DB session) can see it when it tries to update status.
+            try:
+                db_session.commit()
+            except Exception:
+                pass  # If session auto-commits or is already flushed, this is fine
+
+            # The PROVISIONAL module_id reservation is held for the ENTIRE start
+            # (no release→reserve gap). The worker start below registers the
+            # monitoring, marks its capture active (keyed by monitoring id) and
+            # starts the thread. Because the provisional reservation is never
+            # released until AFTER the worker is running, there is no window in
+            # which claim_global_analysis could win — has_active_capture stays
+            # True continuously (provisional reservation → then live active mark).
+            if getattr(ACTIVE_PROFILE, "video_first_enabled", False):
+                self._start_video_first(
+                    monitoring, frame_source, db_session, log_service
+                )
+            else:
+                self._start_capture_first(
+                    monitoring, frame_source, db_session, log_service
+                )
+
+            # Worker started OK and mark_capture_active(monitoring.id) is now in
+            # effect. Release the provisional module_id reservation; the device
+            # remains covered by the worker's own active-capture mark.
+            self._registry.release_capture_reservation(module_id)
         except Exception:
-            pass  # If session auto-commits or is already flushed, this is fine
-
-        # Route to the video-first recording flow when enabled by the profile;
-        # otherwise keep the preserved capture-first flow (unchanged for
-        # regression/benchmark).
-        from src.infrastructure.config.settings import ACTIVE_PROFILE
-
-        if getattr(ACTIVE_PROFILE, "video_first_enabled", False):
-            self._start_video_first(monitoring, frame_source, db_session, log_service)
-        else:
-            self._start_capture_first(monitoring, frame_source, db_session, log_service)
+            # Any failure before/at worker launch: release the provisional
+            # reservation AND (defensively) any per-monitoring capture phase so
+            # the device-global capture slot is freed.
+            try:
+                self._registry.release_capture_reservation(module_id)
+            except Exception:
+                pass
+            try:
+                mid = getattr(locals().get("monitoring", None), "id", None)
+                if mid is not None:
+                    self._registry.clear_capture_active(mid)
+            except Exception:
+                pass
+            raise
 
         return monitoring
 
@@ -299,6 +418,9 @@ class MonitoringService:
             name=f"capture-worker-{monitoring.id}",
         )
         self._registry.register(monitoring.id, worker, thread)
+        # Spec 020: mark this as an ACTIVE capture for device-global coordination
+        # (has_active_capture()); cleared when the worker thread finishes.
+        self._registry.mark_capture_active(monitoring.id)
         thread.start()
 
     def _start_video_first(self, monitoring, frame_source, db_session, log_service):
@@ -352,6 +474,9 @@ class MonitoringService:
             name=f"video-recording-worker-{monitoring.id}",
         )
         self._registry.register(monitoring.id, worker, thread)
+        # Spec 020: mark this as an ACTIVE capture for device-global coordination
+        # (has_active_capture()); cleared when the recording thread finishes.
+        self._registry.mark_capture_active(monitoring.id)
         thread.start()
 
     #: Minimum free disk space (MB) required to start a video-first recording.
@@ -543,7 +668,15 @@ class MonitoringService:
         """
         monitoring = self._get_monitoring_or_raise(monitoring_id)
 
-        # Validate transition (don't persist yet)
+        # Spec 020 idempotency: finalizing a monitoring that already reached
+        # ready_for_analysis is a safe no-op (video already promoted, camera
+        # released, no analysis launched). Return the current entity unchanged.
+        if monitoring.status == MonitoringState.READY_FOR_ANALYSIS.value:
+            return monitoring
+
+        # Validate transition (don't persist yet). ANALYZING is a valid target
+        # from running for both flows; the video-first branch will instead
+        # transition to ready_for_analysis inside _finalize_video_first.
         status = MonitoringStatus(MonitoringState(monitoring.status))
         status.transition_to(MonitoringState.ANALYZING)
 
@@ -564,6 +697,153 @@ class MonitoringService:
             self._registry.release_finalization(monitoring_id)
             monitoring = self._monitoring_repo.get_by_id(monitoring_id)
             return monitoring
+
+    def start_deferred_analysis(
+        self,
+        monitoring_id: int,
+        power_source_confirmed: bool,
+        db_session: Session,
+    ) -> Monitoring:
+        """Manually start the deferred analysis of a ready_for_analysis monitoring.
+
+        Spec 020 flow:
+          1. Monitoring must exist and be in ``ready_for_analysis`` (else reject,
+             state unchanged).
+          2. ``power_source_confirmed`` must be truthy (per-attempt confirmation;
+             absent/false is handled here, NOT via a framework 422).
+          3. Run AnalysisPreflight (video present/safe/readable, no concurrent
+             analysis, no module conflict, no device capture/analysis active,
+             temperature ok, no current undervoltage).
+          4. Acquire the device-global analysis slot AND the per-monitoring
+             analysis claim atomically. If either is taken -> already running.
+          5. ONLY after the claims are held: write durable traceability
+             (manual_deferred_analysis=true, deferred_analysis_started_at,
+             preflight temperature), transition ready_for_analysis -> analyzing,
+             register + launch the analysis thread (reusing _run_video_analysis
+             unchanged). If the thread fails to launch -> release both claims and
+             roll back to ready_for_analysis (NO false start metadata persisted).
+
+        Raises:
+            MonitoringNotFoundError, NotReadyForAnalysisError,
+            PowerSourceNotConfirmedError, AnalysisPreflightFailedError,
+            AnalysisAlreadyRunningError, DeviceBusyError.
+        """
+        from src.infrastructure.config.settings import ACTIVE_PROFILE, BASE_DIR
+        from src.application.services.analysis_preflight import AnalysisPreflight
+
+        monitoring = self._get_monitoring_or_raise(monitoring_id)
+
+        # 1) state gate (reject without modifying anything)
+        if monitoring.status != MonitoringState.READY_FOR_ANALYSIS.value:
+            raise NotReadyForAnalysisError(monitoring_id, monitoring.status)
+
+        # 2) per-attempt power confirmation (application-level; never a 422)
+        if not power_source_confirmed:
+            raise PowerSourceNotConfirmedError()
+
+        # 3) preflight (reuses ACTIVE_PROFILE analysis pause threshold; no new value)
+        preflight = AnalysisPreflight(
+            base_dir=BASE_DIR,
+            monitoring_repo=self._monitoring_repo,
+            runtime_registry=self._registry,
+            thermal_pause_threshold_c=ACTIVE_PROFILE.analysis_thermal_pause_threshold,
+        )
+        result = preflight.run(monitoring)
+        if not result.ok:
+            raise AnalysisPreflightFailedError(result.reason_code, str(result.message))
+
+        # 4) atomic exclusion: device-global slot + per-monitoring analysis claim.
+        if not self._registry.claim_global_analysis(monitoring_id):
+            raise AnalysisAlreadyRunningError(monitoring_id)
+        if not self._registry.claim_analysis(monitoring_id):
+            # Another start for THIS monitoring already holds the per-monitoring
+            # claim; release the global slot we just took and reject.
+            self._registry.release_global_analysis(monitoring_id)
+            raise AnalysisAlreadyRunningError(monitoring_id)
+
+        try:
+            # 5) ready_for_analysis -> analyzing
+            self._monitoring_repo.update_status(
+                monitoring_id, MonitoringState.ANALYZING.value
+            )
+            try:
+                db_session.commit()
+            except Exception:
+                pass
+
+            # Register + launch the analysis thread (reuse _run_video_analysis).
+            analysis_thread = threading.Thread(
+                target=self._run_video_analysis,
+                args=(monitoring_id, monitoring.video_path),
+                daemon=True,
+                name=f"video-analysis-worker-{monitoring_id}",
+            )
+            self._registry.register(monitoring_id, None, analysis_thread)
+            analysis_thread.start()
+
+            # Durable traceability written ONLY after the analysis thread has
+            # actually started (claims held). Writing it here — never before a
+            # possible launch failure — guarantees a rolled-back attempt leaves NO
+            # metadata falsely asserting the analysis began.
+            self._write_deferred_analysis_metadata(
+                monitoring_id, preflight_temperature_c=result.temperature_c
+            )
+        except Exception as e:
+            # Launch failed BEFORE analysis started -> release claims and roll
+            # back to ready_for_analysis. Do NOT leave false start metadata's
+            # effect on state (video preserved; monitoring stays reprocessable).
+            logger.error(
+                f"Failed to launch deferred analysis for {monitoring_id}: {e}"
+            )
+            self._registry.remove_runtime(monitoring_id)
+            self._registry.release_analysis(monitoring_id)
+            self._registry.release_global_analysis(monitoring_id)
+            self._rollback_request_session_best_effort()
+            try:
+                self._monitoring_repo.update_status(
+                    monitoring_id, MonitoringState.READY_FOR_ANALYSIS.value
+                )
+                db_session.commit()
+            except Exception:
+                pass
+            monitoring = self._monitoring_repo.get_by_id(monitoring_id)
+            return monitoring
+
+        return self._monitoring_repo.get_by_id(monitoring_id)
+
+    def _write_deferred_analysis_metadata(
+        self, monitoring_id: int, preflight_temperature_c: Optional[float]
+    ) -> None:
+        """Persist durable manual-deferred-analysis traceability (Spec 020).
+
+        Writes a non-destructive 'deferred_analysis' section into the per-monitoring
+        pipeline_metrics.json (merging, never truncating existing sections). Called
+        ONLY after the analysis claims are held (never at finalize, never on a
+        failed launch). Best-effort: errors are logged, not raised.
+        """
+        try:
+            from src.infrastructure.persistence.local.snapshot_analysis_report_writer import (
+                SnapshotAnalysisReportWriter,
+            )
+            from src.infrastructure.config.settings import ACTIVE_PROFILE, OUTPUTS_DIR
+
+            writer = SnapshotAnalysisReportWriter(
+                base_outputs_dir=OUTPUTS_DIR / "monitorings"
+            )
+            section = {
+                "manual_deferred_analysis": True,
+                "deferred_analysis_started_at": _utcnow_iso(),
+                "preflight_temperature_c": preflight_temperature_c,
+            }
+            writer.write_deferred_analysis_metadata(
+                monitoring_id=monitoring_id,
+                deferred_metadata=section,
+                profile_name=ACTIVE_PROFILE.name,
+            )
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(
+                f"Failed to write deferred-analysis metadata for {monitoring_id}: {e}"
+            )
 
     def _mark_monitoring_error_best_effort(self, monitoring_id: int) -> None:
         """Best-effort transition to error. Never raises."""
@@ -747,12 +1027,17 @@ class MonitoringService:
         return hasattr(worker, "recording_metrics") and hasattr(worker, "get_last_frame")
 
     def _finalize_video_first(self, monitoring_id: int, worker) -> Monitoring:
-        """Validate + atomically promote the recorded video, then start analysis.
+        """Validate + atomically promote the recorded video, then STOP (Spec 020).
 
-        Order (Task 10.2): worker already finalized/released camera ->
-        validate temp -> os.replace to monitoring.mp4 -> persist video_path ->
-        write recording metrics -> running → analyzing -> launch VideoAnalysisService.
-        Invalid/unreadable temp -> keep temp, transition to error.
+        Order: worker already finalized/released camera -> validate temp ->
+        os.replace to monitoring.mp4 -> persist video_path -> write recording
+        metrics + capture_completed_at -> running -> ready_for_analysis.
+
+        Spec 020: finalize NO LONGER auto-launches analysis. The monitoring is
+        left in ready_for_analysis with the camera released and ZERO analysis
+        threads; the operator starts analysis explicitly later via
+        start_deferred_analysis. Invalid/unreadable temp -> keep temp,
+        transition to error.
         """
         import dataclasses
         import os
@@ -820,7 +1105,10 @@ class MonitoringService:
             self._registry.release_finalization(monitoring_id)
             return monitoring
 
-        # Write recording metrics (recoverable — errors do not block flow).
+        # Write recording metrics + capture_completed_at (recoverable -- errors do
+        # not block flow). Spec 020: at finalize we persist ONLY capture_completed_at.
+        # manual_deferred_analysis / deferred_analysis_started_at are written ONLY
+        # on a successful manual analysis start (never here).
         try:
             from src.infrastructure.persistence.local.snapshot_analysis_report_writer import (
                 SnapshotAnalysisReportWriter,
@@ -828,6 +1116,7 @@ class MonitoringService:
             from src.infrastructure.config.settings import ACTIVE_PROFILE, OUTPUTS_DIR
 
             recording_data = dataclasses.asdict(worker.recording_metrics)
+            recording_data["capture_completed_at"] = _utcnow_iso()
             writer = SnapshotAnalysisReportWriter(
                 base_outputs_dir=OUTPUTS_DIR / "monitorings"
             )
@@ -843,20 +1132,18 @@ class MonitoringService:
         except Exception as e:
             logger.warning(f"Failed to write recording metrics for {monitoring_id}: {e}")
 
-        # running → analyzing, then launch deferred analysis on the FINAL video.
+        # Spec 020: running -> ready_for_analysis and STOP. Do NOT launch analysis,
+        # do NOT register any analysis thread. Camera is already released by the
+        # VideoRecordingWorker. The operator starts analysis explicitly later.
         monitoring = self._monitoring_repo.update_status(
-            monitoring_id, MonitoringState.ANALYZING.value
+            monitoring_id, MonitoringState.READY_FOR_ANALYSIS.value
         )
 
-        analysis_thread = threading.Thread(
-            target=self._run_video_analysis,
-            args=(monitoring_id, final_rel),
-            daemon=True,
-            name=f"video-analysis-worker-{monitoring_id}",
-        )
-        self._registry.register(monitoring_id, None, analysis_thread)
-        analysis_thread.start()
-
+        # Spec 020: capture phase is over — clear the device-global capture mark
+        # so other modules can start recording while this one waits for analysis.
+        self._registry.clear_capture_active(monitoring_id)
+        # Drop the recording worker runtime (no analysis runtime is created).
+        self._registry.remove_runtime(monitoring_id)
         self._registry.release_finalization(monitoring_id)
         return monitoring
 
@@ -1120,6 +1407,16 @@ class MonitoringService:
         if not self._registry.claim_finalization(monitoring_id):
             raise ReprocessInProgressError(monitoring_id)
 
+        # Spec 020: reprocess is a heavy analysis on the device. Acquire the
+        # device-global analysis slot BEFORE any destructive clear/reset. If the
+        # device is busy (a capture is active/reserved, or another analysis owns
+        # the slot), REJECT here — do NOT clear results, do NOT change state, do
+        # NOT launch a thread. A bare MagicMock registry returns a truthy Mock, so
+        # we only reject on an explicit ``is False`` result.
+        if self._registry.claim_global_analysis(monitoring_id) is False:
+            self._registry.release_finalization(monitoring_id)
+            raise ReprocessDeviceBusyError(monitoring_id)
+
         try:
             # Clear previous derived results (NOT the video). Guard already passed.
             self._monitoring_repo.clear_analysis_results(monitoring_id)
@@ -1128,7 +1425,8 @@ class MonitoringService:
             # Controlled reset to analyzing (audited, not a FSM edge).
             self._monitoring_repo.reset_for_reprocess(monitoring_id)
 
-            # Launch analysis on the SAME video with the given config.
+            # Launch analysis on the SAME video with the given config. The global
+            # slot is released by _run_video_analysis's finally (registry.remove).
             analysis_thread = threading.Thread(
                 target=self._run_video_analysis,
                 args=(monitoring_id, monitoring.video_path, config),
@@ -1137,6 +1435,14 @@ class MonitoringService:
             )
             self._registry.register(monitoring_id, None, analysis_thread)
             analysis_thread.start()
+        except Exception:
+            # Launch failed before analysis ran: release the device-global slot
+            # so the device is not left blocked.
+            try:
+                self._registry.release_global_analysis(monitoring_id)
+            except Exception:
+                pass
+            raise
         finally:
             self._registry.release_finalization(monitoring_id)
 
@@ -1399,6 +1705,13 @@ class MonitoringService:
             if m.status not in _ACTIVE_STATUSES:
                 continue
 
+            # Spec 020: ready_for_analysis is the ONE active state that may
+            # legitimately exist WITHOUT a live runtime thread (capture finished,
+            # video validated, camera released, analysis not yet started). It
+            # survives reboot and must NOT be reconciled to error.
+            if m.status == MonitoringState.READY_FOR_ANALYSIS.value:
+                continue
+
             # Check if we have a live worker for this session in the shared registry.
             thread = self._registry.get_thread(m.id)
 
@@ -1444,6 +1757,13 @@ class MonitoringService:
             return
 
         for m in active:
+            # Spec 020: ready_for_analysis legitimately has no live thread after
+            # reboot (capture done, video validated, camera released, analysis not
+            # started). Keep it — it is recoverable and the operator starts the
+            # analysis explicitly later. It is NOT an orphan.
+            if m.status == MonitoringState.READY_FOR_ANALYSIS.value:
+                continue
+
             # Defensive: a live worker could exist if reconciliation is ever
             # invoked outside the empty-registry startup path.
             thread = self._registry.get_thread(m.id)
@@ -1551,6 +1871,8 @@ class MonitoringService:
         except Exception:
             pass
 
+        # Spec 020: this capture is no longer active for device-global coordination.
+        self._registry.clear_capture_active(monitoring_id)
         # Clean up from the shared registry (preserve finalization claims).
         self._registry.remove_runtime(monitoring_id)
 
@@ -1626,6 +1948,10 @@ class MonitoringService:
         except Exception:
             pass
 
+        # Spec 020: this capture is no longer active for device-global coordination.
+        # (finalize's success path already cleared it; this covers error/exhausted
+        # exits where finalize does not run.)
+        self._registry.clear_capture_active(monitoring_id)
         self._registry.remove_runtime(monitoring_id)
 
     def _run_analysis(self, monitoring_id: int) -> None:

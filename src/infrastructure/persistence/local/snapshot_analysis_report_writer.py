@@ -210,6 +210,37 @@ class SnapshotAnalysisReportWriter:
 
         return result
 
+    def write_deferred_analysis_metadata(
+        self,
+        monitoring_id: int,
+        deferred_metadata: dict,
+        profile_name: Optional[str] = None,
+    ) -> AnalysisReportWriteResult:
+        """Write manual-deferred-analysis traceability to pipeline_metrics.json (Spec 020).
+
+        Merges a 'deferred_analysis' section (manual_deferred_analysis,
+        deferred_analysis_started_at, preflight_temperature_c) WITHOUT truncating
+        the existing 'capture'/'analysis' sections or other keys. Atomic write.
+        Called only on an ACCEPTED manual analysis start (never at finalize, never
+        on a failed launch).
+        """
+        result = AnalysisReportWriteResult()
+        metrics_path = self._base_dir / str(monitoring_id) / "pipeline_metrics.json"
+
+        try:
+            path = self._write_pipeline_metrics_section(
+                metrics_path,
+                monitoring_id,
+                "deferred_analysis",
+                deferred_metadata,
+                profile_name,
+            )
+            result.paths["pipeline_metrics_json"] = str(path)
+        except Exception as e:
+            result.errors.append(f"pipeline_metrics.json: {e}")
+
+        return result
+
     def _write_pipeline_metrics_section(
         self,
         target_path: Path,

@@ -80,7 +80,7 @@
                 <p><strong>Estado:</strong> {{ last_monitoring.status }}</p>
                 {% if last_monitoring.status == 'completed' %}
                 <a href="/monitoreos/{{ last_monitoring.id }}/reporte" class="btn btn-primary" style="margin-top: 8px;">Ver reporte</a>
-                {% elif last_monitoring.status in ('running', 'paused', 'finishing', 'analyzing', 'initializing') %}
+                {% elif last_monitoring.status in ('running', 'paused', 'finishing', 'ready_for_analysis', 'analyzing', 'initializing') %}
                 <a href="/monitoreos/{{ last_monitoring.id }}/ejecucion" class="btn btn-primary" style="margin-top: 8px;">Ver ejecución</a>
                 {% endif %}
             </div>

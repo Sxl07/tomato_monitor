@@ -1,4 +1,4 @@
-﻿"""Concrete SQLAlchemy implementation of MonitoringRepository.
+"""Concrete SQLAlchemy implementation of MonitoringRepository.
 
 Persists Monitoring entities to the SQLite database, converting between
 domain dataclasses and ORM models internally. Uses the MonitoringStatus
@@ -76,6 +76,8 @@ class SqlMonitoringRepository(MonitoringRepository):
             MonitoringState.RUNNING.value,
             MonitoringState.PAUSED.value,
             MonitoringState.FINISHING.value,
+            # Spec 020: ready_for_analysis is active (recoverable after reboot).
+            MonitoringState.READY_FOR_ANALYSIS.value,
             MonitoringState.ANALYZING.value,
         ]
         models = (

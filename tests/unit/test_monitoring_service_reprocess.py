@@ -29,6 +29,7 @@ from src.application.services.monitoring_service import (
     ReprocessPreconditionError,
     ReprocessBlockedBySyncError,
     ReprocessInProgressError,
+    ReprocessDeviceBusyError,
     ActiveSessionError,
 )
 from src.domain.entities.monitoring import Monitoring
@@ -291,3 +292,70 @@ def test_reprocess_rejected_when_reprocess_in_progress(env, monkeypatch):
     env["service"]._registry.claim_finalization(mon_id)
     with pytest.raises(ReprocessInProgressError):
         env["service"].reprocess_monitoring(mon_id)
+
+
+# --------------------------------------------------------------------------- #
+# Spec 020: device-global guard — reprocess rejected when device busy
+# --------------------------------------------------------------------------- #
+
+def test_reprocess_rejected_when_global_analysis_active_no_data_change(env, monkeypatch):
+    """A heavy analysis owning the device-global slot must block reprocess BEFORE
+    any destructive clear/reset: no results deleted, state unchanged, no thread."""
+    mon_id, snap_id, rel, abs_path = _seed_completed_with_children(env)
+
+    # Simulate another heavy analysis owning the device-global slot.
+    env["service"]._registry.claim_global_analysis(999)
+
+    launched = _intercept_analysis(monkeypatch)
+
+    with pytest.raises(ReprocessDeviceBusyError):
+        env["service"].reprocess_monitoring(mon_id, config="CFG")
+
+    # Nothing launched; results intact; state still completed; video preserved.
+    assert launched.get("started") is None
+    assert len(env["snap_repo"].get_by_monitoring(mon_id)) == 1
+    assert env["metrics_repo"].get_by_monitoring(mon_id) is not None
+    assert env["mon_repo"].get_by_id(mon_id).status == MonitoringState.COMPLETED.value
+    assert abs_path.exists()
+    # The finalization claim must not be left retained after rejection.
+    assert env["service"]._registry.is_finalization_claimed(mon_id) is False
+
+
+def test_reprocess_rejected_when_capture_active_no_data_change(env, monkeypatch):
+    """A capture reservation active on the device blocks reprocess (atomic
+    contention) without touching data."""
+    mon_id, snap_id, rel, abs_path = _seed_completed_with_children(env)
+
+    env["service"]._registry.reserve_capture(555)
+
+    launched = _intercept_analysis(monkeypatch)
+
+    with pytest.raises(ReprocessDeviceBusyError):
+        env["service"].reprocess_monitoring(mon_id, config="CFG")
+
+    assert launched.get("started") is None
+    assert len(env["snap_repo"].get_by_monitoring(mon_id)) == 1
+    assert env["mon_repo"].get_by_id(mon_id).status == MonitoringState.COMPLETED.value
+    assert abs_path.exists()
+
+
+def test_reprocess_releases_global_slot_when_thread_launch_fails(env, monkeypatch):
+    """If the analysis thread fails to start, the device-global slot is released."""
+    mon_id, snap_id, rel, abs_path = _seed_completed_with_children(env)
+
+    class _BoomThread:
+        def __init__(self, *a, **k):
+            pass
+        def start(self):
+            raise RuntimeError("cannot start thread")
+        def is_alive(self):
+            return False
+
+    monkeypatch.setattr("threading.Thread", _BoomThread)
+
+    with pytest.raises(RuntimeError):
+        env["service"].reprocess_monitoring(mon_id, config="CFG")
+
+    # Slot released so the device is not left blocked; finalization released too.
+    assert env["service"]._registry.is_global_analysis_active() is False
+    assert env["service"]._registry.is_finalization_claimed(mon_id) is False
