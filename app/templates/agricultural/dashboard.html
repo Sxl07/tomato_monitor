@@ -77,7 +77,7 @@
                 <p><strong>Fecha:</strong> {{ last_monitoring.started_at | to_bogota }}</p>
                 <p><strong>Snapshots:</strong> {{ last_monitoring.total_snapshots }}</p>
                 <p><strong>Detecciones:</strong> {{ last_monitoring.total_detections }}</p>
-                <p><strong>Estado:</strong> {{ last_monitoring.status }}</p>
+                <p><strong>Estado:</strong> {% if last_monitoring.status == 'ready_for_analysis' %}Pendiente de análisis{% else %}{{ last_monitoring.status }}{% endif %}</p>
                 {% if last_monitoring.status == 'completed' %}
                 <a href="/monitoreos/{{ last_monitoring.id }}/reporte" class="btn btn-primary" style="margin-top: 8px;">Ver reporte</a>
                 {% elif last_monitoring.status in ('running', 'paused', 'finishing', 'ready_for_analysis', 'analyzing', 'initializing') %}

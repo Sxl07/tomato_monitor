@@ -121,6 +121,41 @@ class TestMonitoringItems:
         assert item["url"] == "/monitoreos/7/ejecucion"
         assert item["action_label"] == "Ver ejecución"
 
+    def test_analyzing_monitoring_badge_and_subtitle(self):
+        # Spec 020 hotfix: analyzing shows "Análisis en curso".
+        service = HistoryService()
+        m = _make_monitoring(7, "analyzing")
+        result = service.build_combined_history([m], {}, [], [])
+        item = result[0]
+        assert item["badge_label"] == "Análisis en curso"
+        assert item["subtitle"] == "Análisis en curso"
+
+    def test_ready_for_analysis_url_and_action(self):
+        # Spec 020 hotfix: ready_for_analysis reuses the EXISTING execution screen.
+        service = HistoryService()
+        m = _make_monitoring(9, "ready_for_analysis", total_snapshots=0)
+        result = service.build_combined_history([m], {}, [], [])
+        item = result[0]
+        assert item["url"] == "/monitoreos/9/ejecucion"
+        assert item["action_label"] == "Ver ejecución"
+
+    def test_ready_for_analysis_badge_label(self):
+        service = HistoryService()
+        m = _make_monitoring(9, "ready_for_analysis", total_snapshots=0)
+        result = service.build_combined_history([m], {}, [], [])
+        item = result[0]
+        assert item["badge_label"] == "Captura finalizada · análisis pendiente"
+        assert item["badge_class"] == "badge-info"
+
+    def test_ready_for_analysis_subtitle_not_zero_snapshots(self):
+        # Must NOT show "0 snapshots capturados"; indicate captured video pending.
+        service = HistoryService()
+        m = _make_monitoring(9, "ready_for_analysis", total_snapshots=0)
+        result = service.build_combined_history([m], {}, [], [])
+        item = result[0]
+        assert "snapshots capturados" not in item["subtitle"]
+        assert item["subtitle"] == "Video capturado · pendiente de análisis"
+
     def test_running_monitoring_url(self):
         service = HistoryService()
         m = _make_monitoring(3, "running")

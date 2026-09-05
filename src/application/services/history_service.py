@@ -14,7 +14,9 @@ from src.application.utils.timezone import format_bogota
 
 _MONITORING_BADGES = {
     "completed": ("Completado", "badge-success"),
-    "analyzing": ("Analizando", "badge-info"),
+    # Spec 020: video-first capture finished, analysis pending (deferred manual).
+    "ready_for_analysis": ("Captura finalizada · análisis pendiente", "badge-info"),
+    "analyzing": ("Análisis en curso", "badge-info"),
     "running": ("En ejecución", "badge-info"),
     "paused": ("Pausado", "badge-warning"),
     "finishing": ("Finalizando", "badge-info"),
@@ -91,8 +93,15 @@ class HistoryService:
             monitoring.status, ("", "")
         )
 
-        # Subtitle from metrics or fallback
-        if metrics and hasattr(metrics, "total_tomatoes"):
+        # Subtitle from metrics or fallback.
+        # Spec 020: a ready_for_analysis monitoring has a captured video pending
+        # analysis (no snapshots/detections yet) — never show "0 snapshots
+        # capturados"; make it clear the video is captured and pending analysis.
+        if monitoring.status == "ready_for_analysis":
+            subtitle = "Video capturado · pendiente de análisis"
+        elif monitoring.status == "analyzing":
+            subtitle = "Análisis en curso"
+        elif metrics and hasattr(metrics, "total_tomatoes"):
             subtitle = (
                 f"{metrics.total_tomatoes} tomates — "
                 f"{metrics.pct_healthy:.0f}% sanos"
@@ -102,11 +111,15 @@ class HistoryService:
         else:
             subtitle = f"{monitoring.total_snapshots} snapshots capturados"
 
-        # URL and action label based on status
+        # URL and action label based on status. ready_for_analysis and analyzing
+        # both reuse the EXISTING execution screen (no duplicate start / power
+        # confirmation / preflight).
         if monitoring.status == "completed":
             url = f"/monitoreos/{monitoring.id}/reporte"
             action_label = "Ver reporte"
-        elif monitoring.status in ("running", "paused", "finishing", "analyzing"):
+        elif monitoring.status in (
+            "running", "paused", "finishing", "ready_for_analysis", "analyzing",
+        ):
             url = f"/monitoreos/{monitoring.id}/ejecucion"
             action_label = "Ver ejecución"
         else:
