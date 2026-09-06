@@ -1,8 +1,11 @@
 """RemoteSyncService: orchestrates entity synchronization to Supabase.
 
-Processes entities in strict hierarchical order (parents before children),
-reserves UUIDs before remote writes for crash recovery, and continues
-past individual failures without aborting the entire sync.
+Runs a durable-deletion phase (FASE 0) at the start of each sync, before the
+upsert phases, to propagate locally-completed deletions from the
+Deletion_Outbox (anti-resurrection ordering). It then processes entities in
+strict hierarchical order (parents before children), reserves UUIDs before
+remote writes for crash recovery, and continues past individual failures
+without aborting the entire sync.
 
 Ownership:
 - The sync_api route owns try_acquire()/release() on SyncRuntimeState.
@@ -22,6 +25,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from src.application.interfaces.deletion_outbox_port import (
+    DeletionOutboxEntry,
+    DeletionOutboxPort,
+)
 from src.application.interfaces.remote_data_port import RemoteDataPort
 from src.application.interfaces.remote_storage_port import RemoteStoragePort
 from src.application.interfaces.sync_state_port import SyncStatePort
@@ -35,7 +42,12 @@ from src.application.services.sync_runtime_state import SyncRuntimeState
 
 @dataclass
 class SyncResult:
-    """Summary of a sync execution."""
+    """Summary of a sync execution.
+
+    The deletion counters (deletions_synced / deletions_failed) summarize the
+    FASE 0 durable-deletion propagation phase that runs before the upsert
+    phases. They are additive and do not alter the existing contract fields.
+    """
 
     success: bool
     entities_synced: int
@@ -44,6 +56,8 @@ class SyncResult:
     images_failed: int
     errors: list[str] = field(default_factory=list)
     duration_seconds: float = 0.0
+    deletions_synced: int = 0
+    deletions_failed: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -145,11 +159,16 @@ class RemoteSyncService:
         remote_storage: RemoteStoragePort,
         sync_state: SyncStatePort,
         runtime_state: SyncRuntimeState,
+        deletion_outbox: Optional[DeletionOutboxPort] = None,
     ) -> None:
         self._remote_data = remote_data
         self._remote_storage = remote_storage
         self._sync_state = sync_state
         self._runtime_state = runtime_state
+        # Optional to keep existing constructor call sites/tests working.
+        # When None, FASE 0 (durable-deletion propagation) is a no-op.
+        # A later wiring task injects the real DeletionOutboxRepository.
+        self._deletion_outbox = deletion_outbox
 
     def execute_sync(
         self,
@@ -185,6 +204,15 @@ class RemoteSyncService:
         images_failed = 0
         errors: list[str] = []
 
+        # FASE 0 — Durable deletions (BEFORE the upsert phases).
+        # Propagating deletions first guarantees anti-resurrection: since the
+        # Local_Cascade already removed the local records, the later upsert
+        # phases never find the deleted entities and cannot re-upload them.
+        deletions_synced, deletions_failed, del_errors = self._propagate_deletions(
+            access_token
+        )
+        errors.extend(del_errors)
+
         for entity_type, remote_table in _PHASES:
             if entity_type == "snapshot":
                 s, f, iu, im, errs = self._sync_snapshots(
@@ -204,7 +232,11 @@ class RemoteSyncService:
                 errors.extend(errs)
 
         duration = time.monotonic() - start
-        success = entities_failed == 0 and images_failed == 0
+        success = (
+            entities_failed == 0
+            and images_failed == 0
+            and deletions_failed == 0
+        )
 
         return SyncResult(
             success=success,
@@ -214,7 +246,217 @@ class RemoteSyncService:
             images_failed=images_failed,
             errors=errors,
             duration_seconds=duration,
+            deletions_synced=deletions_synced,
+            deletions_failed=deletions_failed,
         )
+
+    # ------------------------------------------------------------------
+    # FASE 0 — Durable deletion propagation (before upsert phases)
+    # ------------------------------------------------------------------
+
+    def _propagate_deletions(
+        self,
+        access_token: str,
+    ) -> tuple[int, int, list[str]]:
+        """Propagate durable local deletions to the remote backend (FASE 0).
+
+        Runs BEFORE the upsert phases. Processes Deletion_Outbox entries that
+        represent locally-completed deletions, emitting an idempotent root
+        DELETE per entry (remote ON DELETE CASCADE removes descendants).
+
+        Selection and gating are delegated to the port: only entries with
+        local_delete_status='completed' whose remote status is
+        pending/error/(persisted) syncing are returned, ordered by
+        created_at ASC. Entries in 'prepared'/'failed' are NEVER returned and
+        therefore NEVER propagated (Req 4.10, 9.3).
+
+        Unidirectional local -> remote (Req 9.2): no remote -> local
+        propagation is introduced. Token/lock ownership stays in sync_api.
+
+        Returns:
+            (deletions_synced, deletions_failed, errors)
+        """
+        synced = 0
+        failed = 0
+        errors: list[str] = []
+
+        # No outbox wired (default None) -> FASE 0 is a no-op.
+        if self._deletion_outbox is None:
+            return synced, failed, errors
+
+        entries = self._deletion_outbox.get_pending_for_propagation()
+        total = len(entries)
+        processed = 0
+
+        # Per-entry processing is wrapped so a failure on ONE entry never aborts
+        # the whole FASE 0 (Req 9.5): a failed or unexpectedly-raising entry is
+        # recorded (error + retry increment) and the loop proceeds to the
+        # remaining entries. No entry is ever removed from the outbox (Req 9.4).
+        for entry in entries:
+            try:
+                ok, err_detail = self._propagate_deletion_entry(entry, access_token)
+                if ok:
+                    synced += 1
+                else:
+                    # Failure detail already recorded (error + retry) inside the
+                    # entry helper; only accumulate the summary error here.
+                    failed += 1
+                    if err_detail:
+                        errors.append(
+                            f"deletion outbox_id={entry.id} "
+                            f"({entry.remote_table}): {err_detail}"
+                        )
+            except Exception as exc:
+                # Unexpected exception on this entry: record it as error + retry
+                # so retry tracking is consistent with the data/storage failure
+                # paths, then continue with the remaining entries (Req 9.5).
+                failed += 1
+                err_msg = (
+                    f"deletion outbox_id={getattr(entry, 'id', None)}: "
+                    f"{type(exc).__name__}"
+                )
+                errors.append(err_msg)
+                entry_id = getattr(entry, "id", None)
+                if entry_id is not None:
+                    try:
+                        self._deletion_outbox.mark_error(entry_id, err_msg)
+                        self._deletion_outbox.increment_retry_count(entry_id)
+                    except Exception:
+                        pass
+
+            processed += 1
+            self._runtime_state.update_progress("deletions", processed, total)
+
+        return synced, failed, errors
+
+    def _propagate_deletion_entry(
+        self,
+        entry: DeletionOutboxEntry,
+        access_token: str,
+    ) -> tuple[bool, Optional[str]]:
+        """Propagate a single durable-deletion outbox entry.
+
+        Emits the idempotent root data DELETE (already-absent = success, relying
+        on remote ON DELETE CASCADE). An entry without a remote_id was never
+        synced, so no remote row exists and the data DELETE is skipped.
+
+        On data-delete success (or no remote_id), finalization is delegated to
+        _propagate_storage_and_finalize, which removes the entry's Storage
+        objects and marks the entry 'synced' only when the data DELETE and ALL
+        storage paths are 'removed' (no orphaned objects). If any storage path
+        cannot be removed, that helper marks the entry 'error' (retryable) and
+        the entry is NOT marked 'synced'.
+
+        On a retryable data-delete failure (connectivity / remote-unavailable /
+        RLS), marks the entry 'error' (which records last_error with a UTC
+        timestamp) AND increments retry_count, then returns WITHOUT removing the
+        outbox entry (Req 9.4) and WITHOUT re-uploading the entity (Req 10.3).
+        The entry stays retryable and is retried on the next manual sync because
+        get_pending_for_propagation returns pending/error/(recovered) syncing
+        entries (Req 11.1, 11.2). It is never marked 'synced' while incomplete.
+
+        Anti-resurrection (Req 10.3): FASE 0 runs before the upsert phases and
+        the Local_Cascade already removed the local rows, so a failed deletion
+        cannot fall through to an upsert of the same entity (the upsert phases
+        never find it). No re-creation / re-upload path is introduced here, and
+        no remote -> local propagation exists.
+
+        Returns:
+            (success, error_detail) where error_detail is set only on failure.
+        """
+        self._deletion_outbox.mark_syncing(entry.id)
+
+        if entry.remote_id:
+            result = self._remote_data.delete_by_id(
+                access_token, entry.remote_table, entry.remote_id
+            )
+            if not result.success:
+                detail = _remote_error_detail(
+                    result.error_type, result.error_message
+                )
+                # Record the failure: mark_error persists last_error with a UTC
+                # timestamp; increment_retry_count tracks the failed attempt.
+                # The entry is NEVER removed from the outbox (Req 9.4) and the
+                # entity is NEVER re-uploaded (Req 10.3) -- it stays retryable
+                # for the next sync (Req 11.1, 11.2, 11.3).
+                self._deletion_outbox.mark_error(entry.id, detail)
+                self._deletion_outbox.increment_retry_count(entry.id)
+                return False, detail
+        # If remote_id is None the entity was never synced remotely: there is
+        # no remote row to remove, so the data DELETE is skipped and we proceed
+        # straight to finalization.
+
+        return self._propagate_storage_and_finalize(entry, access_token)
+
+    def _propagate_storage_and_finalize(
+        self,
+        entry: DeletionOutboxEntry,
+        access_token: str,
+    ) -> tuple[bool, Optional[str]]:
+        """Remove the entry's Storage objects, then finalize (FASE 0).
+
+        Runs AFTER a successful data DELETE. Removes every remote Storage object
+        associated with the entry so no Orphaned_Storage_Object remains, and
+        only then marks the entry 'synced' (Req 8.4/8.5).
+
+        Processing (Req 8.1-8.5):
+          - Reads the entry's Storage-path rows. Both 'pending' AND 'error' rows
+            are processed; an 'error' row from a previous run is retried here.
+            'removed' is the only terminal state and is left untouched.
+          - For each non-removed row, calls remove_object. Success or
+            already-absent (idempotent) -> mark the row 'removed'. A retryable
+            (non-not-found) failure -> mark the row 'error' and remember that
+            not all rows are removed.
+          - If ALL Storage-path rows are 'removed' (nothing left non-removed),
+            mark the entry 'synced' (no orphans). Otherwise mark the entry
+            'error' so it stays retryable and is NOT marked 'synced'.
+
+        An entry with no Storage paths (never-synced or no snapshots) has nothing
+        to clean and is marked 'synced'.
+
+        Returns:
+            (success, error_detail) where error_detail is set only on failure.
+        """
+        rows = self._deletion_outbox.get_storage_paths_for_entry(entry.id)
+
+        all_removed = True
+        last_detail: Optional[str] = None
+
+        for row in rows:
+            if row.status == "removed":
+                # Terminal state: nothing to do, already clean.
+                continue
+
+            # Process both 'pending' and 'error' rows (an 'error' path is retried).
+            result = self._remote_storage.remove_object(
+                access_token, row.storage_path
+            )
+            if result.success:
+                # Deleted now or already absent (idempotent) -> terminal 'removed'.
+                self._deletion_outbox.mark_storage_path_status(row.id, "removed")
+            else:
+                # Retryable failure (non-not-found): keep the row retryable and
+                # remember that the entry still has an orphaned object.
+                all_removed = False
+                last_detail = _remote_error_detail(
+                    result.error_type, result.error_message
+                )
+                self._deletion_outbox.mark_storage_path_status(row.id, "error")
+
+        if all_removed:
+            # Data DELETE done and every Storage path removed -> no orphans.
+            self._deletion_outbox.mark_synced(entry.id)
+            return True, None
+
+        # A Storage-path failure keeps the entry retryable: record the error
+        # (mark_error persists last_error with a UTC timestamp) and increment
+        # retry_count, consistently with the data-delete failure path. The entry
+        # is NOT marked 'synced' and is NEVER removed from the outbox (Req 9.4);
+        # it is retried on the next sync (Req 11.1, 11.2, 11.3).
+        detail = f"storage cleanup incomplete: {last_detail or 'UNKNOWN'}"
+        self._deletion_outbox.mark_error(entry.id, detail)
+        self._deletion_outbox.increment_retry_count(entry.id)
+        return False, detail
 
     # ------------------------------------------------------------------
     # Generic entity phase

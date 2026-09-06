@@ -200,6 +200,63 @@ def get_monitoring_runtime_registry(request: Request) -> "MonitoringRuntimeRegis
     return request.app.state.monitoring_runtime_registry
 
 
+def get_deletion_outbox_repository(request: Request) -> "DeletionOutboxRepository":
+    """Provide a DeletionOutboxRepository using the db_manager session factory.
+
+    Mirrors get_sync_state_repository: the repository owns short-lived sessions
+    created via db_manager.get_session so its durable checkpoints commit
+    independently of the request-scoped session.
+    """
+    from src.infrastructure.persistence.deletion_outbox_repository import (
+        DeletionOutboxRepository,
+    )
+
+    db_manager = request.app.state.db_manager
+    return DeletionOutboxRepository(session_factory=db_manager.get_session)
+
+
+# ---------------------------------------------------------------------------
+# Deletion dependencies (Spec 021)
+# ---------------------------------------------------------------------------
+
+
+def get_deletion_service(request: Request) -> "DeletionService":
+    """Provide a DeletionService wired for durable entity deletion.
+
+    Wires the application-layer DeletionService with:
+        - the request-scoped session for the read-only domain repositories
+          (monitoring/snapshot/module), sharing the single per-request session
+          to avoid SQLite "database is locked" errors;
+        - the shared MonitoringRuntimeRegistry from app.state so worker/thread
+          state is consistent across requests (no-interference check);
+        - the durable outbox / local-cascade / sync-state adapters, which manage
+          their own transactions via the db_manager session factory (same
+          pattern as get_sync_state_repository).
+    """
+    from src.application.services.deletion_service import DeletionService
+    from src.infrastructure.persistence.deletion_outbox_repository import (
+        DeletionOutboxRepository,
+    )
+    from src.infrastructure.persistence.local_cascade_repository import (
+        LocalCascadeRepository,
+    )
+    from src.infrastructure.persistence.sync_state_repository import SyncStateRepository
+
+    session = _get_request_session(request)
+    db_manager = request.app.state.db_manager
+    registry = request.app.state.monitoring_runtime_registry
+
+    return DeletionService(
+        monitoring_repository=SqlMonitoringRepository(session),
+        runtime_registry=registry,
+        sync_state=SyncStateRepository(session_factory=db_manager.get_session),
+        snapshot_repository=SqlSnapshotRepository(session),
+        module_repository=SqlModuleRepository(session),
+        deletion_outbox=DeletionOutboxRepository(session_factory=db_manager.get_session),
+        local_cascade=LocalCascadeRepository(session_factory=db_manager.get_session),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Monitoring UX service dependencies
 # ---------------------------------------------------------------------------

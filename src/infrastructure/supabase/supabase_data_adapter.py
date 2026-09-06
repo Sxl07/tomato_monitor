@@ -18,7 +18,10 @@ from typing import Any, Optional
 
 import httpx
 
-from src.application.interfaces.remote_data_port import RemoteUpsertResult
+from src.application.interfaces.remote_data_port import (
+    RemoteDeleteResult,
+    RemoteUpsertResult,
+)
 from src.infrastructure.supabase.supabase_config import SupabaseConfig
 
 
@@ -78,6 +81,40 @@ def _classify_error(response: httpx.Response) -> RemoteUpsertResult:
     )
 
 
+def _classify_delete_error(response: httpx.Response) -> RemoteDeleteResult:
+    """Classify an HTTP error response for a delete into the error taxonomy.
+
+    Mirrors the upsert error taxonomy so that RemoteSyncService can apply a
+    consistent retry policy. Connectivity and remote-unavailability failures
+    are retryable and never mark the resource as deleted.
+    """
+    status = response.status_code
+    error_msg = _extract_error_message(response)
+
+    # 5xx → REMOTE_UNAVAILABLE (retryable)
+    if status in (500, 502, 503):
+        return RemoteDeleteResult(
+            success=False,
+            error_type="REMOTE_UNAVAILABLE",
+            error_message=error_msg,
+        )
+
+    # 401/403 → RLS_DENIED (permission / row-level security)
+    if status in (401, 403):
+        return RemoteDeleteResult(
+            success=False,
+            error_type="RLS_DENIED",
+            error_message=error_msg,
+        )
+
+    # All other errors
+    return RemoteDeleteResult(
+        success=False,
+        error_type="UNKNOWN",
+        error_message=error_msg,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
@@ -116,6 +153,25 @@ class SupabaseDataAdapter:
                 "Authorization": f"Bearer {access_token}",
                 "Content-Type": "application/json",
                 "Prefer": "resolution=merge-duplicates",
+            },
+        }
+        if self._transport is not None:
+            kwargs["transport"] = self._transport
+        return httpx.Client(**kwargs)
+
+    def _build_delete_client(self, access_token: str) -> httpx.Client:
+        """Create a configured httpx Client with auth headers for delete.
+
+        Uses the same auth headers as upsert but omits the upsert-specific
+        Prefer: resolution=merge-duplicates header, which has no meaning for
+        a DELETE request.
+        """
+        kwargs: dict[str, Any] = {
+            "timeout": self._timeout_seconds,
+            "headers": {
+                "apikey": self._config.publishable_key,
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
             },
         }
         if self._transport is not None:
@@ -177,3 +233,84 @@ class SupabaseDataAdapter:
             success=True,
             remote_id=record_id,
         )
+
+    def delete_by_id(
+        self,
+        access_token: str,
+        table: str,
+        remote_id: str,
+    ) -> RemoteDeleteResult:
+        """Delete a record from Supabase PostgREST idempotently.
+
+        Issues a PostgREST DELETE filtered by ``id=eq.{remote_id}``. Both a
+        successful removal (HTTP 204) and an absent resource (HTTP 404 or an
+        empty 200 result set) are treated as success, so consecutive calls on
+        the same remote_id yield identical successful results (idempotency).
+
+        Deleting a parent row relies on the remote store's existing
+        ON DELETE CASCADE relationships to remove dependent child rows; only
+        the root row is deleted here.
+
+        Args:
+            access_token: Ephemeral JWT for authenticating the request.
+            table: Target table name (e.g., "greenhouses", "monitorings").
+            remote_id: Identifier (UUID string) of the record to delete.
+
+        Returns:
+            RemoteDeleteResult with success=True on removal or when the record
+            was already absent (already_absent=True), or success=False with a
+            retryable error classification when the delete fails.
+        """
+        # Validate inputs before any network call.
+        if not isinstance(access_token, str) or not access_token.strip():
+            return RemoteDeleteResult(
+                success=False,
+                error_type="UNKNOWN",
+                error_message="Missing or blank access token",
+            )
+        if not isinstance(table, str) or not table.strip():
+            return RemoteDeleteResult(
+                success=False,
+                error_type="UNKNOWN",
+                error_message="Missing or blank table name",
+            )
+        if not isinstance(remote_id, str) or not remote_id.strip():
+            return RemoteDeleteResult(
+                success=False,
+                error_type="UNKNOWN",
+                error_message="Missing or blank remote_id",
+            )
+
+        url = f"{self._config.rest_url}/{table}"
+        params = {"id": f"eq.{remote_id}"}
+
+        try:
+            with self._build_delete_client(access_token) as client:
+                response = client.delete(url, params=params)
+        except httpx.TimeoutException:
+            return RemoteDeleteResult(
+                success=False,
+                error_type="CONNECTIVITY",
+                error_message="Request timed out",
+            )
+        except httpx.RequestError as exc:
+            return RemoteDeleteResult(
+                success=False,
+                error_type="CONNECTIVITY",
+                error_message=f"Connection failed: {type(exc).__name__}",
+            )
+
+        # 404 → resource already absent: idempotent success.
+        if response.status_code == 404:
+            return RemoteDeleteResult(success=True, already_absent=True)
+
+        if not response.is_success:
+            return _classify_delete_error(response)
+
+        # PostgREST returns 204 (No Content) when a filtered DELETE succeeds,
+        # regardless of how many rows matched. A 200 with an empty body/array
+        # (e.g., Prefer: return=representation) also indicates nothing was
+        # present. Both are idempotent successes; we cannot reliably tell an
+        # already-absent 204 from a real deletion, so already_absent stays
+        # False for 2xx to avoid over-claiming.
+        return RemoteDeleteResult(success=True)

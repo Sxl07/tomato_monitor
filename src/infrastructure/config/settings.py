@@ -220,6 +220,39 @@ else:
     )
     ACTIVE_PROFILE = EDGE_PROFILE
 
+# --- Local physical cleanup (Spec 021, Task 11) ---
+# Retention window (hours) that local artifacts under OUTPUTS_DIR are kept after
+# a monitoring/module/greenhouse deletion before the deferred physical cleanup
+# removes them. Configurable via RETENTION_WINDOW_HOURS; invalid/non-numeric
+# values fall back to the default (24) with a warning.
+_DEFAULT_RETENTION_WINDOW_HOURS = 24
+_RETENTION_ENV_VAR = "RETENTION_WINDOW_HOURS"
+
+
+def _load_retention_window_hours() -> int:
+    raw = os.environ.get(_RETENTION_ENV_VAR, "").strip()
+    if raw == "":
+        return _DEFAULT_RETENTION_WINDOW_HOURS
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        _profile_logger.warning(
+            f"Invalid {_RETENTION_ENV_VAR}='{raw}'. Using default "
+            f"{_DEFAULT_RETENTION_WINDOW_HOURS} hours."
+        )
+        return _DEFAULT_RETENTION_WINDOW_HOURS
+    if value <= 0:
+        _profile_logger.warning(
+            f"Invalid {_RETENTION_ENV_VAR}='{raw}' (must be > 0). Using default "
+            f"{_DEFAULT_RETENTION_WINDOW_HOURS} hours."
+        )
+        return _DEFAULT_RETENTION_WINDOW_HOURS
+    return value
+
+
+RETENTION_WINDOW_HOURS = _load_retention_window_hours()
+
+
 # --- Validation Limits ---
 MAX_GREENHOUSE_NAME_LENGTH = 100
 MAX_MODULE_NAME_LENGTH = 100

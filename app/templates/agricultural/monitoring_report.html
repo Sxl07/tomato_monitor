@@ -5,6 +5,10 @@
 {% block content %}
 <section class="report-screen">
 
+    {% if error %}
+    <div class="alert alert-error" role="alert" style="margin-bottom: 16px;">{{ error }}</div>
+    {% endif %}
+
     {% if metrics and metrics.total_tomatoes > 0 %}
     {# --- Metric cards --- #}
     <div class="metric-cards-grid">
@@ -55,7 +59,17 @@
     {# --- Back navigation --- #}
     <div class="report-actions">
         <a href="/modulos/{{ module.id }}" class="btn btn-primary">Volver al Módulo</a>
+        {% if can_delete %}
+        <button type="button" class="btn btn-danger" onclick="showConfirmDialog('confirm-dialog')">Eliminar monitoreo</button>
+        {% endif %}
     </div>
 
 </section>
+
+{% if can_delete %}
+{% set dialog_message = "¿Seguro que deseas eliminar este monitoreo? Se eliminarán sus snapshots, resultados y métricas." %}
+{% set confirm_url = "/monitoreos/" ~ monitoring.id ~ "/eliminar" %}
+{% set confirm_text = "Eliminar" %}
+{% include "agricultural/partials/confirm_dialog.html" %}
+{% endif %}
 {% endblock %}

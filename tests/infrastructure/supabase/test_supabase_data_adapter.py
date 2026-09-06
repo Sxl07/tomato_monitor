@@ -432,3 +432,235 @@ class TestNoTokenPersistence:
         adapter = _make_adapter(config, handler)
         adapter.upsert(_DUMMY_JWT, "greenhouses", _PAYLOAD)
         assert not hasattr(adapter, "_access_token")
+
+
+# ===========================================================================
+# delete_by_id — idempotent DELETE (Spec 021, Task 7.3)
+# Requirements: 14.4, 14.5, 7.3, 7.4, 8.2
+# ===========================================================================
+
+
+from src.application.interfaces.remote_data_port import RemoteDeleteResult
+
+
+class TestDeleteByIdSuccess:
+    """DELETE success and idempotent already-absent behavior."""
+
+    def test_204_success_not_already_absent(self, config):
+        def handler(req):
+            return httpx.Response(204, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+
+        assert isinstance(result, RemoteDeleteResult)
+        assert result.success is True
+        assert result.already_absent is False
+        assert result.error_type is None
+
+    def test_404_success_already_absent(self, config):
+        def handler(req):
+            return httpx.Response(404, json={"message": "not found"})
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+
+        assert result.success is True
+        assert result.already_absent is True
+        assert result.error_type is None
+
+    def test_two_consecutive_calls_identical_results(self, config):
+        # First call deletes (204), second finds it absent (404). Both are
+        # idempotent successes.
+        responses = iter([httpx.Response(204, content=b""), httpx.Response(404, json={})])
+
+        def handler(req):
+            return next(responses)
+
+        adapter = _make_adapter(config, handler)
+        first = adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+        second = adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+
+        assert first.success is True
+        assert second.success is True
+        assert first.error_type is None
+        assert second.error_type is None
+
+    def test_repeated_404_yields_identical_results(self, config):
+        def handler(req):
+            return httpx.Response(404, json={})
+
+        adapter = _make_adapter(config, handler)
+        first = adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+        second = adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+
+        assert (first.success, first.already_absent, first.error_type) == (
+            second.success,
+            second.already_absent,
+            second.error_type,
+        )
+        assert first.success is True
+        assert first.already_absent is True
+
+
+class TestDeleteByIdRequestFormat:
+    """DELETE targets .../{table}?id=eq.{remote_id}."""
+
+    def test_method_is_delete(self, config):
+        captured = {}
+
+        def handler(req):
+            captured["method"] = req.method
+            return httpx.Response(204, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+        assert captured["method"] == "DELETE"
+
+    def test_url_path(self, config):
+        captured = {}
+
+        def handler(req):
+            captured["url"] = req.url
+            return httpx.Response(204, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+        assert captured["url"].path == "/rest/v1/monitorings"
+
+    def test_id_filter_param(self, config):
+        captured = {}
+
+        def handler(req):
+            captured["params"] = dict(req.url.params)
+            return httpx.Response(204, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+        assert captured["params"]["id"] == f"eq.{_DUMMY_UUID}"
+
+    def test_authorization_header(self, config):
+        captured = {}
+
+        def handler(req):
+            captured["auth"] = req.headers.get("authorization")
+            return httpx.Response(204, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+        assert captured["auth"] == f"Bearer {_DUMMY_JWT}"
+
+    def test_apikey_header(self, config):
+        captured = {}
+
+        def handler(req):
+            captured["apikey"] = req.headers.get("apikey")
+            return httpx.Response(204, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+        assert captured["apikey"] == _DUMMY_KEY
+
+
+class TestDeleteByIdValidation:
+    """Empty/blank inputs are rejected without any network call."""
+
+    @pytest.mark.parametrize("bad_token", ["", "   ", None, 123])
+    def test_blank_access_token_no_network(self, config, bad_token):
+        calls = [0]
+
+        def handler(req):
+            calls[0] += 1
+            return httpx.Response(204, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.delete_by_id(bad_token, "monitorings", _DUMMY_UUID)
+
+        assert result.success is False
+        assert result.error_type == "UNKNOWN"
+        assert calls[0] == 0
+
+    @pytest.mark.parametrize("bad_table", ["", "   ", None, 123])
+    def test_blank_table_no_network(self, config, bad_table):
+        calls = [0]
+
+        def handler(req):
+            calls[0] += 1
+            return httpx.Response(204, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.delete_by_id(_DUMMY_JWT, bad_table, _DUMMY_UUID)
+
+        assert result.success is False
+        assert result.error_type == "UNKNOWN"
+        assert calls[0] == 0
+
+    @pytest.mark.parametrize("bad_id", ["", "   ", None, 123])
+    def test_blank_remote_id_no_network(self, config, bad_id):
+        calls = [0]
+
+        def handler(req):
+            calls[0] += 1
+            return httpx.Response(204, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.delete_by_id(_DUMMY_JWT, "monitorings", bad_id)
+
+        assert result.success is False
+        assert result.error_type == "UNKNOWN"
+        assert calls[0] == 0
+
+
+class TestDeleteByIdConnectivity:
+    """Transport errors → CONNECTIVITY (retryable) with last_error message."""
+
+    def test_connect_error(self, config):
+        def handler(req):
+            raise httpx.ConnectError("refused")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+
+        assert result.success is False
+        assert result.error_type == "CONNECTIVITY"
+        assert result.error_message
+
+    def test_timeout(self, config):
+        def handler(req):
+            raise httpx.ReadTimeout("timed out")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+
+        assert result.success is False
+        assert result.error_type == "CONNECTIVITY"
+        assert result.error_message
+
+
+class TestDeleteByIdRemoteUnavailable:
+    """HTTP 5xx → REMOTE_UNAVAILABLE (retryable)."""
+
+    @pytest.mark.parametrize("status", [500, 502, 503])
+    def test_5xx(self, config, status):
+        def handler(req):
+            return httpx.Response(status, json={"message": "Server error"})
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+
+        assert result.success is False
+        assert result.error_type == "REMOTE_UNAVAILABLE"
+
+
+class TestDeleteByIdRlsDenied:
+    """HTTP 403 → RLS_DENIED."""
+
+    def test_403(self, config):
+        def handler(req):
+            return httpx.Response(403, json={"message": "permission denied"})
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.delete_by_id(_DUMMY_JWT, "monitorings", _DUMMY_UUID)
+
+        assert result.success is False
+        assert result.error_type == "RLS_DENIED"

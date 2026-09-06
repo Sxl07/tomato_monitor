@@ -9,6 +9,10 @@
 {% endblock %}
 
 {% block content %}
+{% if error %}
+<div class="alert alert-error" role="alert">{{ error }}</div>
+{% endif %}
+
 <div class="info-panel">
     <div class="info-row">
         <span class="info-label">Tipo de cultivo</span>

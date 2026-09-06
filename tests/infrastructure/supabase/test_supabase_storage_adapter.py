@@ -554,3 +554,150 @@ class TestObjectPathRelative:
         assert not result.object_path.startswith("http://")
         assert not result.object_path.startswith("https://")
         assert result.object_path == _REMOTE_PATH
+
+
+# ===========================================================================
+# remove_object — idempotent Storage delete (Spec 021, Task 7.3)
+# Requirements: 14.4, 14.5, 7.3, 7.4, 8.2
+# ===========================================================================
+
+
+from src.application.interfaces.remote_storage_port import RemoteStorageDeleteResult
+
+_OBJECT_PATH = _REMOTE_PATH
+
+
+class TestRemoveObjectSuccess:
+    """Deletion success and idempotent already-absent behavior."""
+
+    @pytest.mark.parametrize("status", [200, 204])
+    def test_2xx_success(self, config, status):
+        def handler(req):
+            return httpx.Response(status, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.remove_object(_DUMMY_JWT, _OBJECT_PATH)
+
+        assert isinstance(result, RemoteStorageDeleteResult)
+        assert result.success is True
+        assert result.already_absent is False
+        assert result.error_type is None
+
+    def test_404_success_already_absent(self, config):
+        def handler(req):
+            return httpx.Response(404, json={"message": "not found"})
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.remove_object(_DUMMY_JWT, _OBJECT_PATH)
+
+        assert result.success is True
+        assert result.already_absent is True
+        assert result.error_type is None
+
+    def test_repeated_404_identical_results(self, config):
+        def handler(req):
+            return httpx.Response(404, json={})
+
+        adapter = _make_adapter(config, handler)
+        first = adapter.remove_object(_DUMMY_JWT, _OBJECT_PATH)
+        second = adapter.remove_object(_DUMMY_JWT, _OBJECT_PATH)
+
+        assert (first.success, first.already_absent) == (second.success, second.already_absent)
+        assert first.success is True
+        assert first.already_absent is True
+
+
+class TestRemoveObjectRequestFormat:
+    """Deletion issues DELETE against the bucket object path."""
+
+    def test_method_is_delete(self, config):
+        captured = {}
+
+        def handler(req):
+            captured["method"] = req.method
+            return httpx.Response(200, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        adapter.remove_object(_DUMMY_JWT, _OBJECT_PATH)
+        assert captured["method"] == "DELETE"
+
+    def test_endpoint_path(self, config):
+        captured = {}
+
+        def handler(req):
+            captured["path"] = req.url.path
+            return httpx.Response(200, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        adapter.remove_object(_DUMMY_JWT, _OBJECT_PATH)
+        assert captured["path"] == f"/storage/v1/object/dummy-bucket/{_OBJECT_PATH}"
+
+    def test_authorization_header(self, config):
+        captured = {}
+
+        def handler(req):
+            captured["auth"] = req.headers.get("authorization")
+            return httpx.Response(200, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        adapter.remove_object(_DUMMY_JWT, _OBJECT_PATH)
+        assert captured["auth"] == f"Bearer {_DUMMY_JWT}"
+
+
+class TestRemoveObjectValidation:
+    """Empty path is rejected without any network call."""
+
+    @pytest.mark.parametrize("bad_path", ["", None, 123])
+    def test_empty_path_no_network(self, config, bad_path):
+        calls = [0]
+
+        def handler(req):
+            calls[0] += 1
+            return httpx.Response(200, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.remove_object(_DUMMY_JWT, bad_path)
+
+        assert result.success is False
+        assert result.error_type == "STORAGE_ERROR"
+        assert calls[0] == 0
+
+
+class TestRemoveObjectConnectivity:
+    """Transport errors → CONNECTIVITY (retryable)."""
+
+    def test_connect_error(self, config):
+        def handler(req):
+            raise httpx.ConnectError("refused")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.remove_object(_DUMMY_JWT, _OBJECT_PATH)
+
+        assert result.success is False
+        assert result.error_type == "CONNECTIVITY"
+        assert result.error_message
+
+    def test_timeout(self, config):
+        def handler(req):
+            raise httpx.ReadTimeout("timed out")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.remove_object(_DUMMY_JWT, _OBJECT_PATH)
+
+        assert result.success is False
+        assert result.error_type == "CONNECTIVITY"
+
+
+class TestRemoveObjectRemoteUnavailable:
+    """HTTP 5xx → REMOTE_UNAVAILABLE (retryable)."""
+
+    @pytest.mark.parametrize("status", [500, 502, 503])
+    def test_5xx(self, config, status):
+        def handler(req):
+            return httpx.Response(status, json={"message": "Server error"})
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.remove_object(_DUMMY_JWT, _OBJECT_PATH)
+
+        assert result.success is False
+        assert result.error_type == "REMOTE_UNAVAILABLE"

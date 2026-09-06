@@ -1,0 +1,569 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Extender `RemoteDataPort` con `delete_by_id` y `RemoteDeleteResult`": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633209193
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633221424
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633724340
+      }
+    ],
+    "1.2 Extender `RemoteStoragePort` con `remove_object` y `RemoteStorageDeleteResult`": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633209851
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633222829
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633725775
+      }
+    ],
+    "1.3 Definir puertos `DeletionOutboxPort` y `LocalCascadePort`": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633209889
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633224096
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633726836
+      }
+    ],
+    "2.1 Crear modelos ORM `DeletionOutboxModel`, `DeletionOutboxStoragePathModel` y `DeletionOutboxLocalArtifactModel`": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633209923
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633732974
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634019967
+      }
+    ],
+    "2.2 Cablear la creación de tablas en `DatabaseManager` (`create_all`)": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633209955
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634035820
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634169759
+      }
+    ],
+    "2.3 Implementar `DeletionOutboxRepository` (commit sincrónico)": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633209991
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634175998
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634351178
+      }
+    ],
+    "2.4 Tests de durabilidad del outbox (incluye reinicio)": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210022
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634355847
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634518006
+      }
+    ],
+    "3.1 Implementar `LocalCascadeRepository` (transaccional, ON DELETE CASCADE local)": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210048
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634177207
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634349910
+      }
+    ],
+    "3.2 Tests de integración del Local_Cascade": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210076
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634357328
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634519442
+      }
+    ],
+    "4.1 Autorización por estado FSM y verificación de existencia": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210104
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634358350
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634520588
+      }
+    ],
+    "4.2 Chequeo de no interferencia vía `MonitoringRuntimeRegistry`": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210154
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634526267
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634690500
+      }
+    ],
+    "4.3 Captura de `remote_id`, rutas de Storage y artefactos locales antes del cascade": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210217
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634691997
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634967720
+      }
+    ],
+    "4.4 Protocolo de dos transacciones: TX1 outbox `prepared` (commit) → TX2 cascade + `completed`": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210247
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634969003
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788635184822
+      }
+    ],
+    "4.5 Tests unitarios de autorización y no interferencia": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210279
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788635185613
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788635343106
+      }
+    ],
+    "5.1 Validar todos los monitoreos descendientes antes de TX1": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210307
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788635345412
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788635571959
+      }
+    ],
+    "5.2 Generar entradas de outbox para jerarquía módulo/invernadero": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210335
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788635570773
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788635737116
+      }
+    ],
+    "5.3 Tests de cascade, validación de descendientes y captura de rutas para módulo/invernadero": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210366
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788635736166
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788635870208
+      }
+    ],
+    "6.1 Endpoints de borrado con acción \"Eliminar\" visible, confirmación explícita y retorno inmediato": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210402
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788635871251
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788636168724
+      }
+    ],
+    "6.2 Tests de las rutas de eliminación con `DeletionService` fake": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210445
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788636167381
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788636368684
+      }
+    ],
+    "7.1 `SupabaseDataAdapter.delete_by_id` idempotente": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210476
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633734419
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634017447
+      }
+    ],
+    "7.2 `SupabaseStorageAdapter.remove_object` idempotente": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210508
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633735464
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634018800
+      }
+    ],
+    "7.3 Tests unitarios con transporte httpx fake / mocks": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210536
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634036857
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634168445
+      }
+    ],
+    "8.1 Añadir FASE 0 de eliminación al inicio de `execute_sync`": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210562
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788636369815
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788636534477
+      }
+    ],
+    "8.2 Limpieza de Storage sin huérfanos por entrada": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210589
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788636533406
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788636718941
+      }
+    ],
+    "8.3 Manejo de fallos, continuación y anti-resurrección": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210616
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788636719806
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788636859729
+      }
+    ],
+    "8.4 Tests de integración de la fase de eliminación con fakes": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210643
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788636860744
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788637006389
+      }
+    ],
+    "9. Checkpoint — Ejecutar las pruebas dirigidas acumuladas": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210670
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788637007564
+      },
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788637034021
+      }
+    ],
+    "10.1 Escribir artefacto SQL de migración + nota de revisión humana": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210701
+      }
+    ],
+    "11.1 Añadir `RETENTION_WINDOW_HOURS` en `settings.py`": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210730
+      }
+    ],
+    "11.2 Implementar `CleanupProcess` (limpieza física diferida)": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210772
+      }
+    ],
+    "11.3 Cablear trigger de `CleanupProcess`": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210801
+      }
+    ],
+    "11.4 Tests de retención y limpieza duradera": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210830
+      }
+    ],
+    "12.1 Consolidar/verificar cobertura del Requirement 14": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210859
+      }
+    ],
+    "12.2 Ejecutar la suite completa como verificación final": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633210888
+      }
+    ],
+    "1. Extender puertos de aplicación y DTOs de eliminación": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788633726872
+      }
+    ],
+    "7. Adaptadores Supabase idempotentes": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634168487
+      }
+    ],
+    "2. Persistencia del Deletion_Outbox": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634518071
+      }
+    ],
+    "3. Implementar el LocalCascadeRepository": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788634519486
+      }
+    ],
+    "4. Implementar DeletionService (autorización + protocolo de dos transacciones)": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788635343150
+      }
+    ],
+    "5. Eliminación de módulos e invernaderos por el mismo camino duradero": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788635870277
+      }
+    ],
+    "6. Rutas de eliminación en la UI (`agricultural_ui.py`)": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788636368756
+      }
+    ],
+    "8. Fase de eliminación en `RemoteSyncService` (antes de upsert)": [
+      {
+        "executionId": "5a0380b3-eba4-4c1d-8bf7-6b68610350c0",
+        "chatSessionId": "sess_d85792b3-0c26-468c-a3a9-d6f9c3cd2a28",
+        "timestamp": 1788637006471
+      }
+    ]
+  }
+}
