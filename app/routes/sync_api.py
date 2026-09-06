@@ -51,6 +51,8 @@ class SyncTriggerResponse(BaseModel):
     entities_failed: int
     images_uploaded: int
     images_failed: int
+    deletions_synced: int
+    deletions_failed: int
     errors: list[str]
     duration_seconds: float
 
@@ -206,6 +208,8 @@ async def trigger_sync(
             "entities_failed": sync_result.entities_failed,
             "images_uploaded": sync_result.images_uploaded,
             "images_failed": sync_result.images_failed,
+            "deletions_synced": sync_result.deletions_synced,
+            "deletions_failed": sync_result.deletions_failed,
             "duration_seconds": sync_result.duration_seconds,
         }
 
@@ -215,6 +219,8 @@ async def trigger_sync(
             entities_failed=sync_result.entities_failed,
             images_uploaded=sync_result.images_uploaded,
             images_failed=sync_result.images_failed,
+            deletions_synced=sync_result.deletions_synced,
+            deletions_failed=sync_result.deletions_failed,
             errors=sync_result.errors,
             duration_seconds=sync_result.duration_seconds,
         )
@@ -247,6 +253,7 @@ async def get_sync_status(
     current_user: User = Depends(require_current_user_api),
     runtime_state=Depends(get_sync_runtime_state),
     sync_state_repo=Depends(get_sync_state_repository),
+    deletion_outbox_repo=Depends(get_deletion_outbox_repository),
 ):
     """Return current sync status, readiness indicators, and progress."""
     # Supabase configuration check
@@ -272,6 +279,16 @@ async def get_sync_status(
     # Counts from persistent state
     counts = sync_state_repo.get_sync_status_counts()
 
+    # Include Deletion_Outbox entries actually eligible for propagation
+    # (get_pending_for_propagation already filters local_delete_status=='completed'
+    # AND status in pending/error/syncing). We do NOT sum the whole durable
+    # synced outbox history, which would grow unbounded.
+    pending_deletions = deletion_outbox_repo.get_pending_for_propagation()
+    deletion_pending_count = len(pending_deletions)
+    deletion_error_count = sum(
+        1 for entry in pending_deletions if entry.status == "error"
+    )
+
     # Format last_sync_at as ISO string with explicit UTC
     last_sync_at_str = None
     if counts.last_sync_at is not None:
@@ -290,9 +307,9 @@ async def get_sync_status(
         supabase_configured=supabase_configured,
         user_has_remote_id=user_has_remote_id,
         is_syncing=is_syncing,
-        pending_count=counts.pending_count,
+        pending_count=counts.pending_count + deletion_pending_count,
         synced_count=counts.synced_count,
-        error_count=counts.error_count,
+        error_count=counts.error_count + deletion_error_count,
         last_sync_at=last_sync_at_str,
         current_progress=current_progress,
     )

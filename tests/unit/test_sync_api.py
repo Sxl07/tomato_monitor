@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.dependencies import (
+    get_deletion_outbox_repository,
     get_sync_runtime_state,
     get_sync_state_repository,
     get_monitoring_runtime_registry,
@@ -27,6 +28,57 @@ from app.dependencies import (
 from src.application.interfaces.sync_state_port import SyncStatusCounts
 from src.application.services.sync_runtime_state import SyncRuntimeState
 from src.domain.entities.user import User
+
+
+class _FakeDeletionOutbox:
+    """Minimal DeletionOutboxPort stub exposing get_pending_for_propagation."""
+
+    def __init__(self, pending=None):
+        self._pending = list(pending or [])
+
+    def get_pending_for_propagation(self):
+        return list(self._pending)
+
+
+def _outbox_entry(entry_id, status):
+    """Build a DeletionOutboxEntry-like object with the fields the route reads."""
+    from datetime import datetime, timezone
+
+    from src.application.interfaces.deletion_outbox_port import DeletionOutboxEntry
+
+    return DeletionOutboxEntry(
+        id=entry_id,
+        entity_type="monitoring",
+        entity_local_id=entry_id,
+        remote_table="monitorings",
+        remote_id="remote-uuid-%d" % entry_id,
+        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        status=status,
+        local_delete_status="completed",
+        cleanup_status="pending",
+        deleted_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        last_error=None,
+        retry_count=0,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _default_empty_deletion_outbox():
+    """By default, the GET /status route sees NO pending deletions.
+
+    The status route now depends on get_deletion_outbox_repository. Without an
+    override it would build a real repository against app.state.db_manager,
+    making existing status tests depend on durable outbox history. Overriding
+    with an empty fake keeps those tests deterministic; A/B tests below set
+    their own override explicitly.
+    """
+    app.dependency_overrides[get_deletion_outbox_repository] = (
+        lambda: _FakeDeletionOutbox([])
+    )
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(get_deletion_outbox_repository, None)
 
 
 # ---------------------------------------------------------------------------
@@ -1065,3 +1117,119 @@ class TestSyncLogging:
         assert "SUPER_SECRET_PASSWORD_DO_NOT_LOG" not in caplog.text
         assert "SUPER_SECRET_JWT_DO_NOT_LOG" not in caplog.text
         assert "SUPER_SECRET_KEY_DO_NOT_LOG" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Spec 021 hotfix — Deletion_Outbox reflected in sync status / trigger response
+# ---------------------------------------------------------------------------
+
+
+class TestSyncStatusIncludesDeletionOutbox:
+    """GET /api/sync/status folds pending/error deletions into the counts."""
+
+    def test_pending_deletion_counted_when_entities_zero(
+        self, sync_runtime, mock_registry, user_with_remote_id
+    ):
+        """A entity pending=0, but 1 completed+pending outbox -> pending_count == 1."""
+        from unittest.mock import MagicMock
+
+        state_repo = MagicMock()
+        state_repo.get_sync_status_counts.return_value = SyncStatusCounts(
+            pending_count=0, synced_count=0, error_count=0, last_sync_at=None
+        )
+        outbox = _FakeDeletionOutbox([_outbox_entry(1, "pending")])
+
+        app.dependency_overrides[get_sync_runtime_state] = lambda: sync_runtime
+        app.dependency_overrides[get_monitoring_runtime_registry] = lambda: mock_registry
+        app.dependency_overrides[get_sync_state_repository] = lambda: state_repo
+        app.dependency_overrides[require_current_user_api] = lambda: user_with_remote_id
+        app.dependency_overrides[get_deletion_outbox_repository] = lambda: outbox
+
+        with TestClient(app) as client:
+            app.state.supabase_config = _make_supabase_config()
+            response = client.get("/api/sync/status")
+
+        app.dependency_overrides.pop(get_sync_runtime_state, None)
+        app.dependency_overrides.pop(get_monitoring_runtime_registry, None)
+        app.dependency_overrides.pop(get_sync_state_repository, None)
+        app.dependency_overrides.pop(require_current_user_api, None)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["pending_count"] == 1
+        assert data["error_count"] == 0
+
+    def test_error_deletion_counted_in_pending_and_error(
+        self, sync_runtime, mock_registry, user_with_remote_id
+    ):
+        """A completed+error outbox increments BOTH pending_count and error_count."""
+        from unittest.mock import MagicMock
+
+        state_repo = MagicMock()
+        state_repo.get_sync_status_counts.return_value = SyncStatusCounts(
+            pending_count=2, synced_count=4, error_count=1, last_sync_at=None
+        )
+        outbox = _FakeDeletionOutbox([_outbox_entry(1, "error")])
+
+        app.dependency_overrides[get_sync_runtime_state] = lambda: sync_runtime
+        app.dependency_overrides[get_monitoring_runtime_registry] = lambda: mock_registry
+        app.dependency_overrides[get_sync_state_repository] = lambda: state_repo
+        app.dependency_overrides[require_current_user_api] = lambda: user_with_remote_id
+        app.dependency_overrides[get_deletion_outbox_repository] = lambda: outbox
+
+        with TestClient(app) as client:
+            app.state.supabase_config = _make_supabase_config()
+            response = client.get("/api/sync/status")
+
+        app.dependency_overrides.pop(get_sync_runtime_state, None)
+        app.dependency_overrides.pop(get_monitoring_runtime_registry, None)
+        app.dependency_overrides.pop(get_sync_state_repository, None)
+        app.dependency_overrides.pop(require_current_user_api, None)
+
+        assert response.status_code == 200
+        data = response.json()
+        # entity pending(2) + 1 error deletion == 3; entity error(1) + 1 == 2.
+        assert data["pending_count"] == 3
+        assert data["error_count"] == 2
+
+
+class TestSyncTriggerReturnsDeletionCounters:
+    """POST /api/sync/trigger surfaces deletions_synced / deletions_failed."""
+
+    @patch("src.application.services.remote_sync_service.RemoteSyncService.execute_sync")
+    @patch("src.infrastructure.supabase.supabase_auth_adapter.SupabaseAuthAdapter.sign_in")
+    def test_trigger_response_includes_deletion_counters(
+        self, mock_sign_in, mock_execute_sync, sync_client
+    ):
+        """A DELETE-only sync (0 entities, 1 deletion) is reflected in the JSON."""
+        from src.application.interfaces.remote_auth_port import RemoteAuthResult
+        from src.application.services.remote_sync_service import SyncResult
+
+        app.state.supabase_config = _make_supabase_config()
+        mock_sign_in.return_value = RemoteAuthResult(
+            success=True,
+            user_id="remote-uuid-123",
+            access_token="ephemeral-jwt-token",
+            email="operator@example.com",
+        )
+        mock_execute_sync.return_value = SyncResult(
+            success=True,
+            entities_synced=0,
+            entities_failed=0,
+            images_uploaded=0,
+            images_failed=0,
+            errors=[],
+            duration_seconds=0.2,
+            deletions_synced=1,
+            deletions_failed=0,
+        )
+
+        response = sync_client.post(
+            "/api/sync/trigger", json={"password": "correct_password"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["deletions_synced"] == 1
+        assert data["deletions_failed"] == 0
+        assert data["entities_synced"] == 0

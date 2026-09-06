@@ -180,6 +180,18 @@
                     if (d.entities_failed > 0) {
                         msg += ", " + d.entities_failed + " con error";
                     }
+                    if (d.deletions_synced > 0) {
+                        msg += ", " + d.deletions_synced +
+                            (d.deletions_synced === 1
+                                ? " eliminación sincronizada"
+                                : " eliminaciones sincronizadas");
+                    }
+                    if (d.deletions_failed > 0) {
+                        msg += ", " + d.deletions_failed +
+                            (d.deletions_failed === 1
+                                ? " eliminación con error"
+                                : " eliminaciones con error");
+                    }
                     if (d.images_uploaded > 0) {
                         msg += ", " + d.images_uploaded + " imágenes subidas";
                     }
