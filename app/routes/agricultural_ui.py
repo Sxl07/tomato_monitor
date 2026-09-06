@@ -42,6 +42,7 @@ from app.dependencies import (
     get_activity_type_repository,
     get_activity_log_repository,
     get_export_package_repository,
+    get_deletion_service,
     require_current_user_html,
 )
 from src.application.services.model_service import ModelService
@@ -65,6 +66,20 @@ def _is_supabase_configured(request: Request) -> bool:
 import logging as _logging
 
 _logger = _logging.getLogger(__name__)
+
+
+def _deletion_error_message(exc: Exception) -> str:
+    """Map a DeletionService exception to a user-facing Spanish message.
+
+    The DeletionService domain errors already carry actionable Spanish
+    messages; this helper simply surfaces them (with a safe fallback) so the
+    route stays free of business logic — it only translates the rejection into
+    a flash-style ``?error=`` redirect.
+    """
+    message = str(exc).strip()
+    if message:
+        return message
+    return "No se pudo completar la eliminación."
 
 
 def _parse_monitoring_frequency(value: str) -> int | None:
@@ -272,10 +287,14 @@ async def greenhouse_detail(request: Request, id: int, user=Depends(require_curr
 
     cards = build_module_cards(modules, monitorings_by_module)
 
+    # Support error query param for flash-style messages (deletion rejection).
+    error = request.query_params.get("error")
+
     return templates.TemplateResponse(request, "agricultural/greenhouse_detail.html", {
         "title": greenhouse.name,
         "greenhouse": greenhouse,
         "modules": cards,
+        "error": error,
         "show_back": True,
         "back_url": "/invernaderos",
     })
@@ -345,12 +364,24 @@ def greenhouse_edit(request: Request, id: int, name: str = Form(...), location: 
 
 @router.post("/invernaderos/{id}/eliminar")
 def greenhouse_delete(request: Request, id: int, user=Depends(require_current_user_html)):
-    """Delete greenhouse (with confirmation handled client-side)."""
-    repo = get_greenhouse_repository(request)
-    greenhouse = repo.get_by_id(id)
-    if greenhouse is None:
-        return RedirectResponse(url="/invernaderos?error=Invernadero+no+encontrado", status_code=303)
-    repo.delete(id)
+    """Delete greenhouse via DeletionService (confirmation handled client-side).
+
+    Delegates the durable deletion to DeletionService and returns immediately
+    after the local delete (Req 2.4). The backend re-validates every descendant
+    monitoring's state and worker even if the UI hid the button (Req 2.7). On
+    rejection/failure no records are deleted; the operator is redirected back
+    with a Spanish ``?error=`` message. On success the greenhouse and its
+    children stop being shown (redirect to the greenhouse list).
+    """
+    from src.application.services.deletion_service import DeletionError
+
+    service = get_deletion_service(request)
+    try:
+        service.delete_greenhouse(id)
+    except DeletionError as exc:
+        from urllib.parse import quote
+        message = quote(_deletion_error_message(exc))
+        return RedirectResponse(url=f"/invernaderos/{id}?error={message}", status_code=303)
     return RedirectResponse(url="/invernaderos", status_code=303)
 
 
@@ -533,6 +564,9 @@ async def module_detail(request: Request, id: int, user=Depends(require_current_
             else:
                 monitoring_due_status = "up_to_date"
 
+    # Support error query param for flash-style messages (deletion rejection).
+    error = request.query_params.get("error")
+
     return templates.TemplateResponse(request, "agricultural/module_detail.html", {
         "title": module.name,
         "module": module,
@@ -541,6 +575,7 @@ async def module_detail(request: Request, id: int, user=Depends(require_current_
         "combined_history": combined_history,
         "active_monitoring": active_monitoring,
         "monitoring_due_status": monitoring_due_status,
+        "error": error,
         "show_back": True,
         "back_url": f"/invernaderos/{module.greenhouse_id}",
     })
@@ -662,14 +697,31 @@ def module_edit(
 
 @router.post("/modulos/{id}/eliminar")
 def module_delete(request: Request, id: int, user=Depends(require_current_user_html)):
-    """Delete module (with confirmation handled client-side)."""
-    repo = get_module_repository(request)
-    module = repo.get_by_id(id)
+    """Delete module via DeletionService (confirmation handled client-side).
+
+    Captures the parent greenhouse id for the success redirect, then delegates
+    the durable deletion to DeletionService and returns immediately after the
+    local delete (Req 2.4). The backend re-validates every descendant
+    monitoring's state and worker even if the UI hid the button (Req 2.7). On
+    rejection/failure no records are deleted and the operator is redirected back
+    to the module detail with a Spanish ``?error=`` message; on success the
+    module and its children stop being shown (redirect to the greenhouse).
+    """
+    from src.application.services.deletion_service import DeletionError
+
+    module_repo = get_module_repository(request)
+    module = module_repo.get_by_id(id)
     if module is None:
         return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
 
     greenhouse_id = module.greenhouse_id
-    repo.delete(id)
+    service = get_deletion_service(request)
+    try:
+        service.delete_module(id)
+    except DeletionError as exc:
+        from urllib.parse import quote
+        message = quote(_deletion_error_message(exc))
+        return RedirectResponse(url=f"/modulos/{id}?error={message}", status_code=303)
     return RedirectResponse(url=f"/invernaderos/{greenhouse_id}", status_code=303)
 
 
@@ -878,10 +930,17 @@ async def monitoring_execution(request: Request, id: int, user=Depends(require_c
     module_repo = get_module_repository(request)
     module = module_repo.get_by_id(monitoring.module_id)
 
+    # A monitoring is deletable in a safe FSM state. The UI only shows the
+    # delete action in these states; the backend re-validates regardless
+    # (Req 2.5-2.7).
+    deletable_states = {"ready_for_analysis", "completed", "error", "aborted"}
+    can_delete = monitoring.status in deletable_states
+
     return templates.TemplateResponse(request, "agricultural/monitoring_execution.html", {
         "title": f"Monitoreando — {module.name}",
         "monitoring": monitoring,
         "module": module,
+        "can_delete": can_delete,
         "show_back": True,
         "back_url": f"/modulos/{module.id}",
     })
@@ -913,6 +972,14 @@ async def monitoring_report(request: Request, id: int, user=Depends(require_curr
     date_str = _format_date_spanish(monitoring.started_at)
     time_str = _format_time(monitoring.started_at)
 
+    # Support error query param for flash-style messages (deletion rejection).
+    error = request.query_params.get("error")
+
+    # A monitoring is deletable in a safe FSM state. The UI only shows the
+    # button in these states; the backend re-validates regardless (Req 2.5-2.7).
+    deletable_states = {"ready_for_analysis", "completed", "error", "aborted"}
+    can_delete = monitoring.status in deletable_states
+
     return templates.TemplateResponse(request, "agricultural/monitoring_report.html", {
         "title": f"{module.name} — {date_str} {time_str}",
         "monitoring": monitoring,
@@ -921,9 +988,45 @@ async def monitoring_report(request: Request, id: int, user=Depends(require_curr
         "gallery": gallery,
         "date_str": date_str,
         "time_str": time_str,
+        "error": error,
+        "can_delete": can_delete,
         "show_back": True,
         "back_url": f"/modulos/{module.id}",
     })
+
+
+@router.post("/monitoreos/{id}/eliminar")
+def monitoring_delete(request: Request, id: int, user=Depends(require_current_user_html)):
+    """Delete a monitoring via DeletionService (confirmation handled client-side).
+
+    Fetches the parent module id BEFORE the delete so the success redirect can
+    return to the module detail, then delegates the durable deletion to
+    DeletionService and returns immediately after the local delete (Req 2.4).
+    The backend re-validates the monitoring's state and active worker even if
+    the UI hid the button (Req 2.7). On rejection/failure (prohibited state,
+    active worker, not found, durable-registration or cascade failure) no
+    records are deleted and the operator is redirected back to the report with
+    a Spanish ``?error=`` message; on success the monitoring stops being shown
+    (redirect to the module detail).
+    """
+    from src.application.services.deletion_service import DeletionError
+
+    monitoring_repo = get_monitoring_repository(request)
+    monitoring = monitoring_repo.get_by_id(id)
+    if monitoring is None:
+        return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
+
+    module_id = monitoring.module_id
+    service = get_deletion_service(request)
+    try:
+        service.delete_monitoring(id)
+    except DeletionError as exc:
+        from urllib.parse import quote
+        message = quote(_deletion_error_message(exc))
+        return RedirectResponse(
+            url=f"/monitoreos/{id}/reporte?error={message}", status_code=303
+        )
+    return RedirectResponse(url=f"/modulos/{module_id}", status_code=303)
 
 
 @router.post("/monitoreos/{id}/abortar")

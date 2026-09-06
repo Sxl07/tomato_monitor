@@ -12,6 +12,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from src.infrastructure.persistence.exceptions import DatabaseInitError
 from src.infrastructure.persistence.models.base import Base
 
+# Import the models package so all ORM models attach to Base.metadata before
+# create_all() runs. Without this, table creation would depend on import
+# ordering elsewhere. Importing the package registers every model, including
+# the deletion outbox tables (deletion_outbox, deletion_outbox_storage_path,
+# deletion_outbox_local_artifact). Migration-safe: create_all(checkfirst=True)
+# only creates missing tables and never alters existing ones.
+import src.infrastructure.persistence.models  # noqa: F401
+
 
 # Initial activity type catalog definition
 INITIAL_ACTIVITY_TYPES = [

@@ -84,6 +84,11 @@
         <button type="button" class="btn btn-primary btn-full" data-monitoring-action onclick="showConfirmDialog('start-analysis-dialog')">
             Iniciar análisis
         </button>
+        {% if can_delete %}
+        <button type="button" class="btn btn-danger btn-full" onclick="showConfirmDialog('delete-dialog')" style="margin-top: 8px;">
+            Eliminar monitoreo
+        </button>
+        {% endif %}
     </div>
 </div>
 
@@ -116,6 +121,11 @@
         <span class="execution-icon execution-icon--success">✓</span>
         <p class="execution-status-text">Monitoreo completado</p>
     </div>
+    {% if can_delete %}
+    <div class="execution-actions">
+        <button type="button" class="btn btn-danger btn-full" onclick="showConfirmDialog('delete-dialog')" style="margin-top: 8px;">Eliminar monitoreo</button>
+    </div>
+    {% endif %}
 </div>
 
 {# --- Aborted --- #}
@@ -124,6 +134,11 @@
         <span class="execution-icon execution-icon--warning">⊘</span>
         <p class="execution-status-text">Monitoreo cancelado</p>
     </div>
+    {% if can_delete %}
+    <div class="execution-actions">
+        <button type="button" class="btn btn-danger btn-full" onclick="showConfirmDialog('delete-dialog')" style="margin-top: 8px;">Eliminar monitoreo</button>
+    </div>
+    {% endif %}
 </div>
 
 {# --- Error --- #}
@@ -132,6 +147,11 @@
         <span class="execution-icon execution-icon--error">✕</span>
         <p id="error-message" class="execution-status-text">Ocurrió un error durante el monitoreo.</p>
     </div>
+    {% if can_delete %}
+    <div class="execution-actions">
+        <button type="button" class="btn btn-danger btn-full" onclick="showConfirmDialog('delete-dialog')" style="margin-top: 8px;">Eliminar monitoreo</button>
+    </div>
+    {% endif %}
 </div>
 
 {# --- Temperature warning banner (hidden by default, shown by JS) --- #}
@@ -190,6 +210,21 @@
         </div>
     </div>
 </div>
+
+{# --- Delete monitoring confirmation dialog (Spec 021, deletable states) --- #}
+{% if can_delete %}
+<div id="delete-dialog" class="dialog-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-message">
+    <div class="dialog">
+        <p id="delete-dialog-message" class="dialog-message">¿Seguro que deseas eliminar este monitoreo? Se eliminarán sus snapshots, resultados y métricas.</p>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-secondary" onclick="hideConfirmDialog('delete-dialog')">Cancelar</button>
+            <form method="post" action="/monitoreos/{{ monitoring.id }}/eliminar" style="margin:0;">
+                <button type="submit" class="btn btn-danger">Eliminar</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 {# --- Finalizing capture overlay (shown after finalize is submitted) --- #}
 <div id="finalizing-capture-overlay" class="execution-status-block hidden">

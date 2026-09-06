@@ -15,6 +15,11 @@ from src.infrastructure.persistence.models.activity_log_model import ActivityLog
 from src.infrastructure.persistence.models.export_package_model import (
     ExportPackageModel,
 )
+from src.infrastructure.persistence.models.deletion_outbox_model import (
+    DeletionOutboxModel,
+    DeletionOutboxStoragePathModel,
+    DeletionOutboxLocalArtifactModel,
+)
 
 __all__ = [
     "Base",
@@ -28,4 +33,7 @@ __all__ = [
     "ActivityTypeModel",
     "ActivityLogModel",
     "ExportPackageModel",
+    "DeletionOutboxModel",
+    "DeletionOutboxStoragePathModel",
+    "DeletionOutboxLocalArtifactModel",
 ]

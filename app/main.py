@@ -70,6 +70,37 @@ def _recover_abrupt_recordings(db_manager, runtime_registry) -> None:
         session.close()
 
 
+def _run_deferred_cleanup(db_manager) -> None:
+    """Wire the deferred physical cleanup (Spec 021, Task 11) at startup.
+
+    Builds a CleanupService with a DeletionOutboxRepository over a fresh session
+    factory and runs one pass. Pure wiring — best-effort: never raises, never
+    blocks startup, no network, does not touch vision/camera/inference.
+    """
+    try:
+        from src.application.services.cleanup_service import CleanupService
+        from src.infrastructure.config.settings import (
+            OUTPUTS_DIR,
+            RETENTION_WINDOW_HOURS,
+        )
+        from src.infrastructure.persistence.deletion_outbox_repository import (
+            DeletionOutboxRepository,
+        )
+        from src.infrastructure.security.path_sanitizer import validate_safe_path
+
+        outbox = DeletionOutboxRepository(session_factory=db_manager.get_session)
+        service = CleanupService(
+            deletion_outbox=outbox,
+            outputs_dir=OUTPUTS_DIR,
+            retention_window_hours=RETENTION_WINDOW_HOURS,
+            validate_safe_path=validate_safe_path,
+        )
+        service.run()
+    except Exception as e:  # pragma: no cover - defensive, must not block startup
+        _cleanup_logger = _logging.getLogger("app.cleanup")
+        _cleanup_logger.warning(f"Deferred cleanup failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize logging and database on startup."""
@@ -111,6 +142,11 @@ async def lifespan(app: FastAPI):
         _bootstrap_logger.warning(f"Bootstrap admin failed: {e}")
     finally:
         bootstrap_session.close()
+
+    # Deferred physical cleanup of local artifacts (Spec 021, Task 11).
+    # Lightweight, best-effort filesystem operation — never blocks/crashes
+    # startup, never touches vision/camera/inference, no network.
+    _run_deferred_cleanup(db_manager)
 
     yield
     # No persistent camera to release — preview uses single-frame capture

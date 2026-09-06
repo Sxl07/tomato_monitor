@@ -20,7 +20,10 @@ from typing import Any, Optional
 
 import httpx
 
-from src.application.interfaces.remote_storage_port import RemoteUploadResult
+from src.application.interfaces.remote_storage_port import (
+    RemoteStorageDeleteResult,
+    RemoteUploadResult,
+)
 from src.infrastructure.supabase.supabase_config import SupabaseConfig
 
 
@@ -82,6 +85,48 @@ def _classify_error(response: httpx.Response) -> RemoteUploadResult:
 
     # Default fallback
     return RemoteUploadResult(
+        success=False,
+        error_type="UNKNOWN",
+        error_message=error_msg,
+    )
+
+
+def _classify_delete_error(response: httpx.Response) -> RemoteStorageDeleteResult:
+    """Classify an HTTP error response for a Storage delete operation.
+
+    Not-found responses are handled by the caller as idempotent success and
+    never reach this function. All classifications here are retryable errors
+    (the object is not marked as removed).
+    """
+    status = response.status_code
+    error_msg = _extract_error_message(response)
+
+    # 5xx → REMOTE_UNAVAILABLE
+    if status in (500, 502, 503):
+        return RemoteStorageDeleteResult(
+            success=False,
+            error_type="REMOTE_UNAVAILABLE",
+            error_message=error_msg,
+        )
+
+    # 401/403 → RLS_DENIED (permission / RLS)
+    if status in (401, 403):
+        return RemoteStorageDeleteResult(
+            success=False,
+            error_type="RLS_DENIED",
+            error_message=error_msg,
+        )
+
+    # Other 4xx that are clearly storage-specific
+    if status in (400, 409, 413, 422):
+        return RemoteStorageDeleteResult(
+            success=False,
+            error_type="STORAGE_ERROR",
+            error_message=error_msg,
+        )
+
+    # Default fallback
+    return RemoteStorageDeleteResult(
         success=False,
         error_type="UNKNOWN",
         error_message=error_msg,
@@ -202,6 +247,67 @@ class SupabaseStorageAdapter:
             object_path=remote_path,
         )
 
+    def remove_object(
+        self,
+        access_token: str,
+        path: str,
+    ) -> RemoteStorageDeleteResult:
+        """Delete a single object from Supabase Storage.
+
+        Idempotent behavior: if the object does not exist remotely (404), the
+        deletion is treated as success with already_absent=True. Any other
+        failure is a retryable error and does NOT mark the object as removed.
+
+        Args:
+            access_token: Ephemeral JWT for authenticating the request.
+            path: Object path within the configured bucket.
+
+        Returns:
+            RemoteStorageDeleteResult with success=True on deletion or when the
+            object was already absent, or success=False with a retryable error
+            classification on failure.
+        """
+        # Validate path presence before network call
+        if not isinstance(path, str) or not path:
+            return RemoteStorageDeleteResult(
+                success=False,
+                error_type="STORAGE_ERROR",
+                error_message="Empty object path",
+            )
+
+        url = (
+            f"{self._config.storage_url}/object/"
+            f"{self._config.storage_bucket}/{path}"
+        )
+
+        try:
+            with self._build_delete_client(access_token) as client:
+                response = client.delete(url)
+        except httpx.TimeoutException:
+            return RemoteStorageDeleteResult(
+                success=False,
+                error_type="CONNECTIVITY",
+                error_message="Request timed out",
+            )
+        except httpx.RequestError as exc:
+            return RemoteStorageDeleteResult(
+                success=False,
+                error_type="CONNECTIVITY",
+                error_message=f"Connection failed: {type(exc).__name__}",
+            )
+
+        # Idempotent: object already absent → success
+        if response.status_code == 404:
+            return RemoteStorageDeleteResult(
+                success=True,
+                already_absent=True,
+            )
+
+        if not response.is_success:
+            return _classify_delete_error(response)
+
+        return RemoteStorageDeleteResult(success=True)
+
     def _build_client(self, access_token: str) -> httpx.Client:
         """Create a configured httpx Client for a single upload."""
         kwargs: dict[str, Any] = {
@@ -211,6 +317,23 @@ class SupabaseStorageAdapter:
                 "Authorization": f"Bearer {access_token}",
                 "Content-Type": "image/jpeg",
                 "x-upsert": "true",
+            },
+        }
+        if self._transport is not None:
+            kwargs["transport"] = self._transport
+        return httpx.Client(**kwargs)
+
+    def _build_delete_client(self, access_token: str) -> httpx.Client:
+        """Create a configured httpx Client for a single object deletion.
+
+        Unlike the upload client, this does not set upload-specific headers
+        (Content-Type: image/jpeg, x-upsert).
+        """
+        kwargs: dict[str, Any] = {
+            "timeout": self._timeout_seconds,
+            "headers": {
+                "apikey": self._config.publishable_key,
+                "Authorization": f"Bearer {access_token}",
             },
         }
         if self._transport is not None:

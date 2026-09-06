@@ -19,6 +19,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from app.dependencies import (
+    get_deletion_outbox_repository,
     get_monitoring_runtime_registry,
     get_sync_runtime_state,
     get_sync_state_repository,
@@ -80,6 +81,7 @@ async def trigger_sync(
     runtime_state=Depends(get_sync_runtime_state),
     registry=Depends(get_monitoring_runtime_registry),
     sync_state_repo=Depends(get_sync_state_repository),
+    deletion_outbox_repo=Depends(get_deletion_outbox_repository),
 ):
     """Trigger a manual sync operation to Supabase.
 
@@ -173,6 +175,7 @@ async def trigger_sync(
             remote_storage=storage_adapter,
             sync_state=sync_state_repo,
             runtime_state=runtime_state,
+            deletion_outbox=deletion_outbox_repo,
         )
 
         sync_result = await run_in_threadpool(
