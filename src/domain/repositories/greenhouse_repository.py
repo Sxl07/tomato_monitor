@@ -36,6 +36,26 @@ class GreenhouseRepository(ABC):
         ...
 
     @abstractmethod
+    def get_all_by_owner(self, owner_user_id: int) -> list[Greenhouse]:
+        """Return only the greenhouses owned by the given user (Spec 022).
+
+        Local multiuser isolation: authenticated flows must list only the
+        current user's own greenhouses. Returns an empty list if none.
+        """
+        ...
+
+    @abstractmethod
+    def get_by_id_for_owner(
+        self, id: int, owner_user_id: int
+    ) -> Optional[Greenhouse]:
+        """Return the greenhouse only if it belongs to the given owner.
+
+        Returns None when the greenhouse does not exist OR is owned by a
+        different user. Used to prevent access to another user's hierarchy.
+        """
+        ...
+
+    @abstractmethod
     def update(self, id: int, name: str, location: Optional[str]) -> Greenhouse:
         """Update a greenhouse's name and location. Return the updated entity."""
         ...
@@ -46,5 +66,16 @@ class GreenhouseRepository(ABC):
 
         Cascade path: Greenhouse → Module → Monitoring → Snapshot →
         InspectionResult, and Monitoring → MonitoringMetrics.
+        """
+        ...
+
+    @abstractmethod
+    def find_owner_remote_id(self, greenhouse_id: int) -> Optional[str]:
+        """Resolve a greenhouse's owner to the owner User's remote_user_id.
+
+        Correlation: ``greenhouse.owner_user_id -> users.id ->
+        users.remote_user_id`` (the Supabase Auth user id / ``auth.uid()``).
+        Returns None if the greenhouse is missing, has no local owner, or the
+        owner has no ``remote_user_id``.
         """
         ...

@@ -16,6 +16,7 @@ class Greenhouse:
 
     name: str
     id: Optional[int] = None
+    owner_user_id: Optional[int] = None
     location: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

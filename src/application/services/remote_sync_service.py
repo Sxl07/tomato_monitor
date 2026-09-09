@@ -198,6 +198,26 @@ class RemoteSyncService:
                 duration_seconds=time.monotonic() - start,
             )
 
+        # Resolve the session's LOCAL user id ONCE (Spec 022). Fail closed: if
+        # the remote identity maps to no local user, abort BEFORE FASE 0 and the
+        # upsert phases without touching any row.
+        session_local_user_id = self._sync_state.get_local_user_id_by_remote_id(
+            user_remote_id
+        )
+        if session_local_user_id is None:
+            return SyncResult(
+                success=False,
+                entities_synced=0,
+                entities_failed=0,
+                images_uploaded=0,
+                images_failed=0,
+                errors=[
+                    "Could not resolve the local user for the remote identity; "
+                    "synchronization aborted."
+                ],
+                duration_seconds=time.monotonic() - start,
+            )
+
         entities_synced = 0
         entities_failed = 0
         images_uploaded = 0
@@ -208,8 +228,11 @@ class RemoteSyncService:
         # Propagating deletions first guarantees anti-resurrection: since the
         # Local_Cascade already removed the local records, the later upsert
         # phases never find the deleted entities and cannot re-upload them.
+        # Scoped to the session's local user: only that user's outbox entries
+        # are propagated; other users' and legacy NULL-owner entries are
+        # untouched (no status change, no retry increment, no remote DELETE).
         deletions_synced, deletions_failed, del_errors = self._propagate_deletions(
-            access_token
+            access_token, session_local_user_id
         )
         errors.extend(del_errors)
 
@@ -257,6 +280,7 @@ class RemoteSyncService:
     def _propagate_deletions(
         self,
         access_token: str,
+        owner_user_id: int,
     ) -> tuple[int, int, list[str]]:
         """Propagate durable local deletions to the remote backend (FASE 0).
 
@@ -284,7 +308,7 @@ class RemoteSyncService:
         if self._deletion_outbox is None:
             return synced, failed, errors
 
-        entries = self._deletion_outbox.get_pending_for_propagation()
+        entries = self._deletion_outbox.get_pending_for_propagation(owner_user_id)
         total = len(entries)
         processed = 0
 
@@ -538,6 +562,28 @@ class RemoteSyncService:
         """
         local_id = entity["id"]
 
+        # User-scope guard (Spec 022): a sync processes ONLY the current user's
+        # hierarchy. Resolve the entity's effective owner via its root
+        # Greenhouse; if it belongs to a DIFFERENT user, skip silently
+        # (no-touch): no UUID reserve, no mark_syncing, no error, no remote
+        # write. A NULL/unresolved owner (effective is None) is NOT skipped here
+        # so the greenhouse OWNER_MISSING/OWNER_NOT_SYNCED reporting still
+        # applies to the user's own non-syncable rows. Likewise, if the
+        # session's local user id cannot be resolved, we cannot positively
+        # assert a DIFFERENT owner, so we do not skip on that basis.
+        session_local_user_id = self._sync_state.get_local_user_id_by_remote_id(
+            user_remote_id
+        )
+        effective_owner = self._sync_state.get_effective_owner_local_user_id(
+            entity_type, local_id
+        )
+        if (
+            effective_owner is not None
+            and session_local_user_id is not None
+            and effective_owner != session_local_user_id
+        ):
+            return "skipped", None
+
         # Check parent dependency
         parent_remote_id: Optional[str] = None
         if parent_type is not None and parent_fk is not None and parent_pending_ids is not None:
@@ -547,6 +593,26 @@ class RemoteSyncService:
             parent_remote_id = self._sync_state.get_remote_id(parent_type, parent_local_id)
             if parent_remote_id is None or parent_local_id in parent_pending_ids:
                 return "skipped", None
+
+        # Greenhouse ownership gate (Spec 022, Tasks 6.1/6.2): resolve the
+        # owner's remote identity BEFORE any state mutation or remote write.
+        # The remote payload must carry the owner's remote_user_id (UUID =
+        # auth.uid()), never the local integer id. A greenhouse without a local
+        # owner, or whose owner has no remote_user_id, cannot be synced: it is
+        # reported via the existing error mechanism and skipped, letting the
+        # existing per-entity fault isolation continue with other entities.
+        owner_remote_uuid: Optional[str] = None
+        if entity_type == "greenhouse":
+            owner_local_id = entity.get("owner_user_id")
+            if owner_local_id is None:
+                err = "OWNER_MISSING: greenhouse has no local owner (owner_user_id is NULL)"
+                self._sync_state.mark_error(entity_type, local_id, err)
+                return "failed", err
+            owner_remote_uuid = self._sync_state.get_user_remote_id(owner_local_id)
+            if owner_remote_uuid is None:
+                err = "OWNER_NOT_SYNCED: owner user has no remote_user_id"
+                self._sync_state.mark_error(entity_type, local_id, err)
+                return "failed", err
 
         # Get or reserve UUID
         remote_id = self._sync_state.get_remote_id(entity_type, local_id)
@@ -559,6 +625,9 @@ class RemoteSyncService:
         payload = self._build_payload(
             entity_type, entity, remote_id, user_remote_id, parent_remote_id
         )
+        if entity_type == "greenhouse":
+            # Owner mapped local owner_user_id -> users.remote_user_id (UUID).
+            payload["owner_user_id"] = owner_remote_uuid
 
         # Remote upsert
         result = self._remote_data.upsert(access_token, remote_table, payload)
@@ -600,7 +669,7 @@ class RemoteSyncService:
         for snap in pending:
             try:
                 result = self._process_snapshot(
-                    snap, access_token, remote_table, mon_pending_ids
+                    snap, access_token, remote_table, mon_pending_ids, user_remote_id
                 )
                 # Always accumulate image counters regardless of entity status
                 img_uploaded += result[1]
@@ -632,10 +701,28 @@ class RemoteSyncService:
         access_token: str,
         remote_table: str,
         mon_pending_ids: set,
+        user_remote_id: str,
     ) -> tuple[str, int, int, str]:
         """Process one snapshot. Returns (status, imgs_up, imgs_fail, error_msg)."""
         local_id = snap["id"]
         monitoring_local_id = snap.get("monitoring_id")
+
+        # User-scope guard (Spec 022): skip snapshots that belong to another
+        # user's hierarchy BEFORE reserving a UUID or uploading any file. Skip
+        # only when a DIFFERENT local owner can be positively determined; an
+        # unresolved effective owner or session user id does not trigger a skip.
+        session_local_user_id = self._sync_state.get_local_user_id_by_remote_id(
+            user_remote_id
+        )
+        effective_owner = self._sync_state.get_effective_owner_local_user_id(
+            "snapshot", local_id
+        )
+        if (
+            effective_owner is not None
+            and session_local_user_id is not None
+            and effective_owner != session_local_user_id
+        ):
+            return ("skipped", 0, 0, "")
 
         # Parent check
         if monitoring_local_id is None:

@@ -147,6 +147,111 @@ class SyncStateRepository:
         finally:
             session.close()
 
+    def get_user_remote_id(self, local_user_id: int) -> Optional[str]:
+        """Return the remote_user_id (UUID) for a local user, or None.
+
+        Resolves ``users.id -> users.remote_user_id`` (the Supabase Auth user
+        id / ``auth.uid()``). Returns None if the user is missing or has no
+        remote identity assigned.
+        """
+        from src.infrastructure.persistence.models.user_model import UserModel
+
+        session = self._session_factory()
+        try:
+            model = session.get(UserModel, local_user_id)
+            if model is None:
+                return None
+            return model.remote_user_id
+        finally:
+            session.close()
+
+    def get_effective_owner_local_user_id(
+        self, entity_type: str, local_id: int
+    ) -> Optional[int]:
+        """Resolve the effective owner's LOCAL user id via the Greenhouse root.
+
+        Walks the FK chain up to the owning greenhouse and returns its
+        ``owner_user_id`` (local ``users.id``). Returns None when any link is
+        missing or the greenhouse has no local owner (legacy NULL). Does NOT
+        depend on ``users.remote_user_id``.
+        """
+        session = self._session_factory()
+        try:
+            greenhouse = self._resolve_owning_greenhouse(session, entity_type, local_id)
+            if greenhouse is None:
+                return None
+            return greenhouse.owner_user_id
+        finally:
+            session.close()
+
+    def get_local_user_id_by_remote_id(self, user_remote_id: str) -> Optional[int]:
+        """Return the local users.id whose remote_user_id matches, or None."""
+        from src.infrastructure.persistence.models.user_model import UserModel
+
+        if not user_remote_id:
+            return None
+        session = self._session_factory()
+        try:
+            model = (
+                session.query(UserModel)
+                .filter(UserModel.remote_user_id == user_remote_id)
+                .first()
+            )
+            return None if model is None else model.id
+        finally:
+            session.close()
+
+    def _resolve_owning_greenhouse(
+        self, session: Session, entity_type: str, local_id: int
+    ) -> Optional[GreenhouseModel]:
+        """Return the root GreenhouseModel that owns the given entity, or None."""
+        if entity_type == "greenhouse":
+            return session.get(GreenhouseModel, local_id)
+
+        if entity_type == "module":
+            module = session.get(ModuleModel, local_id)
+            if module is None:
+                return None
+            return session.get(GreenhouseModel, module.greenhouse_id)
+
+        if entity_type == "monitoring":
+            monitoring = session.get(MonitoringModel, local_id)
+            if monitoring is None:
+                return None
+            return self._resolve_owning_greenhouse(session, "module", monitoring.module_id)
+
+        if entity_type == "monitoring_metrics":
+            metrics = session.get(MonitoringMetricsModel, local_id)
+            if metrics is None:
+                return None
+            return self._resolve_owning_greenhouse(
+                session, "monitoring", metrics.monitoring_id
+            )
+
+        if entity_type == "snapshot":
+            snapshot = session.get(SnapshotModel, local_id)
+            if snapshot is None:
+                return None
+            return self._resolve_owning_greenhouse(
+                session, "monitoring", snapshot.monitoring_id
+            )
+
+        if entity_type == "inspection_result":
+            result = session.get(InspectionResultModel, local_id)
+            if result is None:
+                return None
+            return self._resolve_owning_greenhouse(
+                session, "snapshot", result.snapshot_id
+            )
+
+        if entity_type == "activity_log":
+            log = session.get(ActivityLogModel, local_id)
+            if log is None:
+                return None
+            return self._resolve_owning_greenhouse(session, "module", log.module_id)
+
+        return None
+
     def get_storage_paths(self, snapshot_id: int) -> StoragePaths:
         """Return remote storage paths for a snapshot.
 

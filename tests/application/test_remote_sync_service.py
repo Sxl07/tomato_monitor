@@ -41,6 +41,14 @@ class FakeSyncState:
         self._rows: dict[str, list[dict]] = {}
         self._storage_paths: dict[int, tuple] = {}
         self.call_log: list[tuple] = []
+        # local_user_id -> remote_user_id (auth.uid()); missing owners fall back
+        # to _USER_REMOTE_ID in get_user_remote_id.
+        self.user_remote_ids: dict[int, Optional[str]] = {}
+        # (entity_type, local_id) -> effective owner LOCAL user id; unset
+        # entries default to 99 (the seeded current user).
+        self.effective_owners: dict[tuple, Optional[int]] = {}
+        # user_remote_id -> local user id (besides the default 99/_USER_REMOTE_ID).
+        self.local_user_ids: dict[str, Optional[int]] = {}
 
     def add_entity(self, entity_type: str, row: dict) -> None:
         """Seed an entity row for testing."""
@@ -63,6 +71,26 @@ class FakeSyncState:
         if row is None:
             return None
         return row.get("remote_id")
+
+    def get_user_remote_id(self, local_user_id: int) -> Optional[str]:
+        # Map a local owner id -> remote_user_id (auth.uid()). Configurable via
+        # user_remote_ids; defaults to _USER_REMOTE_ID for any known/seeded owner.
+        if local_user_id in self.user_remote_ids:
+            return self.user_remote_ids[local_user_id]
+        return _USER_REMOTE_ID
+
+    def get_effective_owner_local_user_id(
+        self, entity_type: str, local_id: int
+    ) -> Optional[int]:
+        # Configurable per (entity_type, local_id) via effective_owners; when
+        # unset, seeded entities belong to the current local user (id 99).
+        return self.effective_owners.get((entity_type, local_id), 99)
+
+    def get_local_user_id_by_remote_id(self, user_remote_id: str) -> Optional[int]:
+        # The default seeded owner (local id 99) maps to _USER_REMOTE_ID.
+        if user_remote_id == _USER_REMOTE_ID:
+            return 99
+        return self.local_user_ids.get(user_remote_id)
 
     def reserve_remote_id(self, entity_type: str, local_id: int, remote_id: str) -> None:
         row = self._find(entity_type, local_id)
@@ -145,7 +173,7 @@ def full_tree(tmp_path):
     now = datetime(2025, 6, 1, 12, 0, 0)
 
     state.add_entity("greenhouse", {
-        "id": 1, "name": "GH1", "location": "Norte",
+        "id": 1, "owner_user_id": 99, "name": "GH1", "location": "Norte",
         "created_at": now, "updated_at": now,
         "remote_id": None, "remote_sync_status": "pending",
     })
@@ -322,7 +350,7 @@ class TestRemoteIdNotSufficient:
     def test_module_blocked_when_greenhouse_has_id_but_error(self):
         state = FakeSyncState()
         state.add_entity("greenhouse", {
-            "id": 1, "name": "GH", "remote_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+            "id": 1, "owner_user_id": 99, "name": "GH", "remote_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
             "remote_sync_status": "error",
         })
         state.add_entity("module", {
@@ -357,7 +385,7 @@ class TestParentFailureChildPending:
     def test_child_not_failed(self):
         state = FakeSyncState()
         state.add_entity("greenhouse", {
-            "id": 1, "name": "GH", "remote_id": None, "remote_sync_status": "pending",
+            "id": 1, "owner_user_id": 99, "name": "GH", "remote_id": None, "remote_sync_status": "pending",
         })
         state.add_entity("module", {
             "id": 2, "greenhouse_id": 1, "name": "Mod",
@@ -659,7 +687,7 @@ class TestNetworkErrorPreservesRemoteId:
     def test_remote_id_preserved_after_failure(self):
         state = FakeSyncState()
         state.add_entity("greenhouse", {
-            "id": 1, "name": "GH", "location": None,
+            "id": 1, "owner_user_id": 99, "name": "GH", "location": None,
             "remote_id": None, "remote_sync_status": "pending",
         })
         for t in ["module", "monitoring", "monitoring_metrics", "snapshot", "inspection_result", "activity_log"]:
@@ -678,7 +706,7 @@ class TestNetworkErrorPreservesRemoteId:
     def test_call_order_reserve_before_error(self):
         state = FakeSyncState()
         state.add_entity("greenhouse", {
-            "id": 1, "name": "GH",
+            "id": 1, "owner_user_id": 99, "name": "GH",
             "remote_id": None, "remote_sync_status": "pending",
         })
 
@@ -707,7 +735,7 @@ class TestPreexistingRemoteIdReused:
         known_uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
         state = FakeSyncState()
         state.add_entity("greenhouse", {
-            "id": 1, "name": "GH Retry",
+            "id": 1, "owner_user_id": 99, "name": "GH Retry",
             "remote_id": known_uuid, "remote_sync_status": "error",
         })
 
@@ -1049,7 +1077,7 @@ class TestUnrelatedEntityIntegrity:
         state = FakeSyncState()
         # Greenhouse A: will fail
         state.add_entity("greenhouse", {
-            "id": 1, "name": "GH Failing",
+            "id": 1, "owner_user_id": 99, "name": "GH Failing",
             "remote_id": None, "remote_sync_status": "pending",
         })
         # Greenhouse B: already synced, should be untouched
@@ -1084,7 +1112,7 @@ class TestRetryReusesExactUuid:
         known_uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
         state = FakeSyncState()
         state.add_entity("greenhouse", {
-            "id": 1, "name": "GH Retry",
+            "id": 1, "owner_user_id": 99, "name": "GH Retry",
             "remote_id": known_uuid, "remote_sync_status": stale_status,
         })
 
@@ -1129,7 +1157,7 @@ class TestCrashRecoveryBetweenUpsertAndMarkSynced:
     def test_uuid_preserved_across_crash_and_retry(self):
         state = CrashOnMarkSyncedState("greenhouse", 1)
         state.add_entity("greenhouse", {
-            "id": 1, "name": "GH Crash",
+            "id": 1, "owner_user_id": 99, "name": "GH Crash",
             "remote_id": None, "remote_sync_status": "pending",
         })
 

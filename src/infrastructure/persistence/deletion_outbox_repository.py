@@ -69,6 +69,7 @@ def _to_entry(model: DeletionOutboxModel) -> DeletionOutboxEntry:
         deleted_at=model.deleted_at,
         last_error=model.last_error,
         retry_count=model.retry_count,
+        owner_user_id=model.owner_user_id,
     )
 
 
@@ -119,6 +120,36 @@ class DeletionOutboxRepository:
                 .first()
             )
             if existing is not None:
+                # Safe owner reconciliation when reutilizing a prepared/failed entry
+                # (Spec 022 microfix). The entity hierarchy still exists so the
+                # owner resolved by build_deletion_payload() is authoritative.
+                #
+                # A — legacy NULL → known owner: backfill the owner so FASE 0 can
+                #     scope the propagation correctly.
+                # B — known owner → NULL input: never erase a durably persisted owner.
+                # C — same owner: no-op.
+                # D — owner conflict: fail closed; do NOT reasign ownership.
+                if (
+                    existing.owner_user_id is not None
+                    and entry.owner_user_id is not None
+                    and existing.owner_user_id != entry.owner_user_id
+                ):
+                    raise ValueError(
+                        f"Owner conflict for deletion outbox entry "
+                        f"(entity_type={entry.entity_type!r}, "
+                        f"entity_local_id={entry.entity_local_id}): "
+                        f"existing owner_user_id={existing.owner_user_id} "
+                        f"differs from retry owner_user_id={entry.owner_user_id}. "
+                        f"Ownership must not be reassigned."
+                    )
+                if (
+                    existing.owner_user_id is None
+                    and entry.owner_user_id is not None
+                ):
+                    # Case A: backfill the now-known owner on the legacy entry.
+                    existing.owner_user_id = entry.owner_user_id
+                    session.commit()
+                    session.refresh(existing)
                 return _to_entry(existing)
 
             model = DeletionOutboxModel(
@@ -126,6 +157,7 @@ class DeletionOutboxRepository:
                 entity_local_id=entry.entity_local_id,
                 remote_table=entry.remote_table,
                 remote_id=entry.remote_id,
+                owner_user_id=entry.owner_user_id,
                 status="pending",
                 local_delete_status="prepared",
                 cleanup_status="pending",
@@ -159,18 +191,26 @@ class DeletionOutboxRepository:
         finally:
             session.close()
 
-    def get_pending_for_propagation(self) -> List[DeletionOutboxEntry]:
+    def get_pending_for_propagation(
+        self, owner_user_id: int
+    ) -> List[DeletionOutboxEntry]:
         """Return entries eligible for remote propagation, oldest first.
 
-        Selects entries whose remote status is pending/error/syncing (persisted
-        'syncing' is treated as retryable) AND whose local_delete_status is
-        'completed'. Ordered by created_at ASC.
+        User-scoped (Spec 022): only entries owned by ``owner_user_id`` are
+        returned. Legacy entries with a NULL ``owner_user_id`` are never
+        returned for any user (they are never propagated, never change status,
+        never increment retry_count).
+
+        Among the owner's entries, selects those whose remote status is
+        pending/error/syncing (persisted 'syncing' is retryable) AND whose
+        local_delete_status is 'completed'. Ordered by created_at ASC.
         """
         session = self._session_factory()
         try:
             models = (
                 session.query(DeletionOutboxModel)
                 .filter(
+                    DeletionOutboxModel.owner_user_id == owner_user_id,
                     DeletionOutboxModel.local_delete_status == "completed",
                     DeletionOutboxModel.status.in_(_RETRYABLE_REMOTE_STATUSES),
                 )

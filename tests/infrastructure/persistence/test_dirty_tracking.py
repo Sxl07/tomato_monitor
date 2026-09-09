@@ -191,6 +191,18 @@ class FakeSyncStateForDirty:
             return self._entity.get("remote_id")
         return None
 
+    def get_user_remote_id(self, local_user_id):
+        # The greenhouse belongs to the syncing user.
+        return "user-uuid"
+
+    def get_effective_owner_local_user_id(self, entity_type, local_id):
+        # Effective local owner matches the session user (own hierarchy).
+        return 1
+
+    def get_local_user_id_by_remote_id(self, user_remote_id):
+        # Maps the session's remote id back to its local user id.
+        return 1
+
     def reserve_remote_id(self, entity_type, local_id, remote_id):
         self._entity["remote_id"] = remote_id
 
@@ -230,7 +242,7 @@ class TestDirtyEntitySyncsWithSameUuid:
 
     def test_same_uuid_in_payload(self):
         entity = {
-            "id": 1, "name": "GH Edited", "location": None,
+            "id": 1, "owner_user_id": 1, "name": "GH Edited", "location": None,
             "remote_id": "gh-uuid-known",
             "remote_sync_status": "pending",
             "created_at": datetime(2025, 1, 1),

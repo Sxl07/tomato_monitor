@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Integer, String, DateTime, Text
+from sqlalchemy import Integer, String, DateTime, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.infrastructure.persistence.models.base import Base
@@ -17,9 +17,15 @@ class GreenhouseModel(Base):
     """ORM model mapping the Greenhouse entity to the 'greenhouses' table."""
 
     __tablename__ = "greenhouses"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "name", name="uq_greenhouse_owner_name"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    owner_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True, default=None
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
     location: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow

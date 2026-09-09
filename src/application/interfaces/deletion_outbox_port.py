@@ -76,6 +76,8 @@ class DeletionOutboxEntryInput:
         entity_local_id: Local id of the deleted root entity.
         remote_table: Target remote table for the root DELETE (e.g. ``monitorings``).
         remote_id: Remote UUID of the root entity; None if never synced.
+        owner_user_id: Local id of the user who owns the deleted entity; None
+            when ownership is unknown or not applicable.
         storage_paths: Descendant remote Storage object paths to remove.
         local_artifacts: Local physical artifact paths (relative to OUTPUTS_DIR).
     """
@@ -84,6 +86,7 @@ class DeletionOutboxEntryInput:
     entity_local_id: int
     remote_table: str
     remote_id: Optional[str] = None
+    owner_user_id: Optional[int] = None
     storage_paths: Sequence[OutboxStoragePathInput] = field(default_factory=list)
     local_artifacts: Sequence[OutboxLocalArtifactInput] = field(default_factory=list)
 
@@ -166,6 +169,7 @@ class DeletionOutboxEntry:
     deleted_at: Optional[datetime]
     last_error: Optional[str]
     retry_count: int
+    owner_user_id: Optional[int] = None
 
 
 class DeletionOutboxPort(Protocol):
@@ -208,17 +212,25 @@ class DeletionOutboxPort(Protocol):
         """
         ...
 
-    def get_pending_for_propagation(self) -> List[DeletionOutboxEntry]:
+    def get_pending_for_propagation(
+        self, owner_user_id: int
+    ) -> List[DeletionOutboxEntry]:
         """Return entries eligible for remote propagation, oldest first.
 
-        Selects entries whose remote status is ``pending``, ``error``, or a
-        ``syncing`` recovered after a crash/restart (persisted ``syncing`` is
-        retriable), AND whose local_delete_status is ``completed``. Entries with
-        local_delete_status ``prepared`` or ``failed`` are never returned.
-        Ordered by created_at ASC.
+        User-scoped (Spec 022): only entries whose ``owner_user_id`` equals the
+        given ``owner_user_id`` are returned. Legacy entries with a NULL
+        ``owner_user_id`` are NEVER returned for any user, so they are never
+        propagated, never change status, and never increment retry_count.
+
+        Among the owner's entries, selects those whose remote status is
+        ``pending``, ``error``, or a ``syncing`` recovered after a crash/restart
+        (persisted ``syncing`` is retriable), AND whose local_delete_status is
+        ``completed``. Entries with local_delete_status ``prepared`` or
+        ``failed`` are never returned. Ordered by created_at ASC.
 
         Returns:
-            Retriable, locally-completed outbox entries ordered by created_at ASC.
+            Retriable, locally-completed outbox entries owned by
+            ``owner_user_id``, ordered by created_at ASC.
         """
         ...
 

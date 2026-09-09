@@ -58,6 +58,13 @@ class DeletionOutboxModel(Base):
     entity_local_id: Mapped[int] = mapped_column(Integer, nullable=False)
     remote_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     remote_table: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Durable LOCAL owner of the deleted hierarchy's root greenhouse (Spec 022).
+    # Captured BEFORE the Local_Cascade so ownership survives the cascade and
+    # FASE 0 can scope propagation per user. Nullable for legacy rows; never
+    # inferred/backfilled.
+    owner_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True, default=None
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow
     )
