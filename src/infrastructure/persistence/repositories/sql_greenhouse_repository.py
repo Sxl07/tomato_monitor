@@ -9,8 +9,12 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from src.domain.entities.greenhouse import Greenhouse
+from src.domain.exceptions import RecoveredEntityAlreadyExistsError
 from src.domain.repositories.greenhouse_repository import GreenhouseRepository
-from src.infrastructure.persistence.models.greenhouse_model import GreenhouseModel
+from src.infrastructure.persistence.models.greenhouse_model import (
+    GreenhouseModel,
+    utcnow,
+)
 from src.infrastructure.persistence.models.user_model import UserModel
 
 
@@ -133,3 +137,67 @@ class SqlGreenhouseRepository(GreenhouseRepository):
         if owner is None:
             return None
         return owner.remote_user_id
+
+    # --- Recovery primitives (Spec 022, block D1) ---
+
+    def find_by_remote_id(self, remote_id: str) -> Optional[Greenhouse]:
+        """Return the greenhouse mapped to the given remote_id, or None."""
+        model = (
+            self._session.query(GreenhouseModel)
+            .filter(GreenhouseModel.remote_id == remote_id)
+            .first()
+        )
+        if model is None:
+            return None
+        return self._to_entity(model)
+
+    def find_by_owner_and_name(
+        self, owner_user_id: int, name: str
+    ) -> Optional[Greenhouse]:
+        """Return the greenhouse matching (owner_user_id, name), or None."""
+        model = (
+            self._session.query(GreenhouseModel)
+            .filter(
+                GreenhouseModel.owner_user_id == owner_user_id,
+                GreenhouseModel.name == name,
+            )
+            .first()
+        )
+        if model is None:
+            return None
+        return self._to_entity(model)
+
+    def insert_preserving_remote_id(
+        self, entity: Greenhouse, remote_id: str
+    ) -> Greenhouse:
+        """Insert a recovered greenhouse, mapping remote_id -> local remote_id.
+
+        Import-missing-only: guards against duplicate remote_id, assigns a new
+        autoincrement id, and marks the row synced. Mirrors create()'s
+        commit-based transactional pattern.
+        """
+        if self._find_model_by_remote_id(remote_id) is not None:
+            raise RecoveredEntityAlreadyExistsError("Greenhouse", remote_id)
+
+        model = GreenhouseModel(
+            owner_user_id=entity.owner_user_id,
+            name=entity.name,
+            location=entity.location,
+            remote_id=remote_id,
+            remote_sync_status="synced",
+            remote_sync_error=None,
+            last_synced_at=utcnow(),
+        )
+        self._session.add(model)
+        self._session.flush()
+        self._session.commit()
+        self._session.refresh(model)
+        return self._to_entity(model)
+
+    def _find_model_by_remote_id(self, remote_id: str) -> Optional[GreenhouseModel]:
+        """Return the ORM model with the given remote_id, or None."""
+        return (
+            self._session.query(GreenhouseModel)
+            .filter(GreenhouseModel.remote_id == remote_id)
+            .first()
+        )

@@ -37,3 +37,37 @@ class SnapshotRepository(ABC):
     def update_has_detections(self, id: int, has_detections: bool) -> Snapshot:
         """Update the has_detections field on a snapshot. Return updated entity."""
         ...
+
+    # --- Recovery primitives (Spec 022, block D1) ---
+
+    @abstractmethod
+    def find_by_remote_id(self, remote_id: str) -> Optional[Snapshot]:
+        """Return the snapshot mapped to the given remote_id, or None.
+
+        The remote UUID is stored in the local ``remote_id`` column; the local
+        primary key remains an integer autoincrement value.
+        """
+        ...
+
+    @abstractmethod
+    def insert_preserving_remote_id(
+        self,
+        monitoring_id: int,
+        entity: Snapshot,
+        remote_id: str,
+        raw_storage_path: Optional[str] = None,
+        annotated_storage_path: Optional[str] = None,
+    ) -> Snapshot:
+        """Insert a recovered snapshot under the LOCAL parent monitoring id.
+
+        Import-missing-only: builds a NEW local row with a fresh autoincrement
+        id under ``monitoring_id`` (the local parent id), sets remote sync
+        metadata to a synced state, records the remote storage paths as given
+        (without downloading anything), and never modifies an existing local
+        row.
+
+        Raises:
+            RecoveredEntityAlreadyExistsError: if a local snapshot already
+                exists with the given remote_id.
+        """
+        ...

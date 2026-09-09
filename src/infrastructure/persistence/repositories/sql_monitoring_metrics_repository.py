@@ -9,12 +9,17 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from src.domain.entities.monitoring_metrics import MonitoringMetrics
-from src.domain.exceptions import MetricsNotAllowedError, ParentNotFoundError
+from src.domain.exceptions import (
+    MetricsNotAllowedError,
+    ParentNotFoundError,
+    RecoveredEntityAlreadyExistsError,
+)
 from src.domain.repositories.monitoring_metrics_repository import (
     MonitoringMetricsRepository,
 )
 from src.infrastructure.persistence.models.monitoring_metrics_model import (
     MonitoringMetricsModel,
+    utcnow,
 )
 from src.infrastructure.persistence.models.monitoring_model import MonitoringModel
 
@@ -89,6 +94,56 @@ class SqlMonitoringMetricsRepository(MonitoringMetricsRepository):
         )
         if model is None:
             return None
+        return self._to_entity(model)
+
+    def find_by_remote_id(self, remote_id: str) -> Optional[MonitoringMetrics]:
+        """Return the metrics mapped to the given remote_id, or None."""
+        model = (
+            self._session.query(MonitoringMetricsModel)
+            .filter(MonitoringMetricsModel.remote_id == remote_id)
+            .first()
+        )
+        if model is None:
+            return None
+        return self._to_entity(model)
+
+    def insert_preserving_remote_id(
+        self, monitoring_id: int, entity: MonitoringMetrics, remote_id: str
+    ) -> MonitoringMetrics:
+        """Insert recovered metrics under the LOCAL parent monitoring id.
+
+        Import-missing-only: guards against duplicate remote_id, assigns a new
+        autoincrement id, and marks the row synced. Does NOT validate the
+        monitoring status. Unlike create() (flush-only), this commits so the
+        recovered row is a durable local checkpoint that survives a later
+        remote failure; rolls back and re-raises on error.
+        """
+        existing = (
+            self._session.query(MonitoringMetricsModel)
+            .filter(MonitoringMetricsModel.remote_id == remote_id)
+            .first()
+        )
+        if existing is not None:
+            raise RecoveredEntityAlreadyExistsError("MonitoringMetrics", remote_id)
+
+        model = self._to_model(monitoring_id, entity)
+        if entity.computed_at is not None:
+            model.computed_at = entity.computed_at
+        model.remote_id = remote_id
+        model.remote_sync_status = "synced"
+        model.remote_sync_error = None
+        model.last_synced_at = utcnow()
+        # Recovery is a durable LOCAL checkpoint: commit so the recovered row
+        # survives even if a later remote request fails. Distinct transactional
+        # context from create() (which only flushes); create() is unchanged.
+        try:
+            self._session.add(model)
+            self._session.flush()
+            self._session.commit()
+        except Exception:
+            self._session.rollback()
+            raise
+        self._session.refresh(model)
         return self._to_entity(model)
 
     def _to_model(self, monitoring_id: int, metrics: MonitoringMetrics) -> MonitoringMetricsModel:

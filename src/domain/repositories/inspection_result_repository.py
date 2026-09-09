@@ -5,6 +5,7 @@ Implementations reside in the infrastructure layer.
 """
 
 from abc import ABC, abstractmethod
+from typing import Optional
 
 from src.domain.entities.inspection_result import DetectionInspectionResult
 
@@ -43,5 +44,34 @@ class InspectionResultRepository(ABC):
 
         This aggregates results from all snapshots belonging to the monitoring.
         Returns an empty list if none exist.
+        """
+        ...
+
+    # --- Recovery primitives (Spec 022, block D1) ---
+
+    @abstractmethod
+    def find_by_remote_id(
+        self, remote_id: str
+    ) -> Optional[DetectionInspectionResult]:
+        """Return the inspection result mapped to the given remote_id, or None.
+
+        The remote UUID is stored in the local ``remote_id`` column; the local
+        primary key remains an integer autoincrement value.
+        """
+        ...
+
+    @abstractmethod
+    def insert_preserving_remote_id(
+        self, snapshot_id: int, entity: DetectionInspectionResult, remote_id: str
+    ) -> DetectionInspectionResult:
+        """Insert a recovered inspection result under the LOCAL parent snapshot id.
+
+        Import-missing-only: builds a NEW local row with a fresh autoincrement
+        id under ``snapshot_id`` (the local parent id), sets remote sync
+        metadata to a synced state, and never modifies an existing local row.
+
+        Raises:
+            RecoveredEntityAlreadyExistsError: if a local inspection result
+                already exists with the given remote_id.
         """
         ...

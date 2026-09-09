@@ -79,3 +79,41 @@ class GreenhouseRepository(ABC):
         owner has no ``remote_user_id``.
         """
         ...
+
+    # --- Recovery primitives (Spec 022, block D1) ---
+
+    @abstractmethod
+    def find_by_remote_id(self, remote_id: str) -> Optional[Greenhouse]:
+        """Return the greenhouse mapped to the given remote_id, or None.
+
+        The remote UUID is stored in the local ``remote_id`` column; the local
+        primary key remains an integer autoincrement value.
+        """
+        ...
+
+    @abstractmethod
+    def find_by_owner_and_name(
+        self, owner_user_id: int, name: str
+    ) -> Optional[Greenhouse]:
+        """Return the greenhouse matching the natural key (owner_user_id, name).
+
+        ``owner_user_id`` is the LOCAL users.id (int). Returns None if no such
+        greenhouse exists. The unique constraint is (owner_user_id, name).
+        """
+        ...
+
+    @abstractmethod
+    def insert_preserving_remote_id(
+        self, entity: Greenhouse, remote_id: str
+    ) -> Greenhouse:
+        """Insert a recovered greenhouse, mapping remote_id -> local remote_id.
+
+        Import-missing-only: builds a NEW local row with a fresh autoincrement
+        id, sets remote sync metadata to a synced state, and never modifies an
+        existing local row.
+
+        Raises:
+            RecoveredEntityAlreadyExistsError: if a local greenhouse already
+                exists with the given remote_id.
+        """
+        ...

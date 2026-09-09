@@ -122,3 +122,32 @@ class MonitoringRepository(ABC):
     def update_sync_status(self, ids: list[int], status: str) -> None:
         """Update sync_status for the given monitoring ids."""
         ...
+
+    # --- Recovery primitives (Spec 022, block D1) ---
+
+    @abstractmethod
+    def find_by_remote_id(self, remote_id: str) -> Optional[Monitoring]:
+        """Return the monitoring mapped to the given remote_id, or None.
+
+        The remote UUID is stored in the local ``remote_id`` column; the local
+        primary key remains an integer autoincrement value.
+        """
+        ...
+
+    @abstractmethod
+    def insert_preserving_remote_id(
+        self, module_id: int, entity: Monitoring, remote_id: str
+    ) -> Monitoring:
+        """Insert a recovered monitoring under the LOCAL parent module id.
+
+        Import-missing-only: builds a NEW local row with a fresh autoincrement
+        id under ``module_id`` (the local parent id), sets remote sync metadata
+        to a synced state, and never modifies an existing local row. The
+        recovered status/timestamps are taken from the entity as-is (this is
+        not a normal FSM transition).
+
+        Raises:
+            RecoveredEntityAlreadyExistsError: if a local monitoring already
+                exists with the given remote_id.
+        """
+        ...

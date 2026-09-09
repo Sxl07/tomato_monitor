@@ -47,3 +47,31 @@ class ActivityLogRepository(ABC):
     def update_sync_status(self, ids: list[int], status: str) -> None:
         """Update sync_status for the given activity log ids."""
         ...
+
+    # --- Recovery primitives (Spec 022, block D1) ---
+
+    @abstractmethod
+    def find_by_remote_id(self, remote_id: str) -> Optional[ActivityLog]:
+        """Return the activity log mapped to the given remote_id, or None.
+
+        The remote UUID is stored in the local ``remote_id`` column; the local
+        primary key remains an integer autoincrement value.
+        """
+        ...
+
+    @abstractmethod
+    def insert_preserving_remote_id(
+        self, entity: ActivityLog, remote_id: str
+    ) -> ActivityLog:
+        """Insert a recovered activity log, mapping remote_id -> local remote_id.
+
+        Import-missing-only: builds a NEW local row with a fresh autoincrement
+        id (the entity carries module_id, activity_type_id, user_id and the
+        business fields), sets remote sync metadata to a synced state, and never
+        modifies an existing local row.
+
+        Raises:
+            RecoveredEntityAlreadyExistsError: if a local activity log already
+                exists with the given remote_id.
+        """
+        ...
