@@ -134,6 +134,88 @@
             </div>
         </div>
     </section>
+
+    <!-- Cloud recovery section (nube -> este dispositivo) -->
+    <section class="dashboard-section" id="cloud-recovery-section">
+        <h2 class="section-header">Recuperación desde la nube</h2>
+        <div class="card">
+            <div class="card-body">
+                <p class="text-secondary" id="cloud-recovery-description" style="margin-bottom: 12px;">
+                    Recupera en este dispositivo los datos históricos disponibles
+                    en tu cuenta en la nube. Los datos locales existentes no
+                    serán sobrescritos.
+                </p>
+
+                <div id="cloud-recovery-result" style="display: none; margin-top: 12px;"></div>
+
+                <button
+                    type="button"
+                    id="cloud-recovery-btn"
+                    class="btn btn-secondary"
+                    style="min-height: 48px; width: 100%;"
+                >
+                    Recuperar datos desde la nube
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Cloud recovery confirmation modal -->
+    <div
+        id="cloud-recovery-modal"
+        class="modal-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cloud-recovery-modal-title"
+        style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;"
+    >
+        <div class="card" style="max-width: 420px; width: 90%; margin: 16px;">
+            <div class="card-body">
+                <h3 id="cloud-recovery-modal-title" style="margin-top: 0;">
+                    Recuperar datos desde la nube
+                </h3>
+                <p style="margin-bottom: 16px;">
+                    Se recuperarán en este dispositivo los datos históricos
+                    disponibles en tu cuenta remota. Los datos locales existentes
+                    no serán sobrescritos.
+                </p>
+
+                <form id="cloud-recovery-form">
+                    <label for="recovery-password" style="display: block; margin-bottom: 8px; font-weight: 500;">
+                        Contraseña
+                    </label>
+                    <input
+                        type="password"
+                        id="recovery-password"
+                        name="password"
+                        autocomplete="current-password"
+                        placeholder="Tu contraseña"
+                        class="form-input"
+                        style="width: 100%; margin-bottom: 16px;"
+                    >
+
+                    <div style="display: flex; gap: 8px;">
+                        <button
+                            type="button"
+                            id="cloud-recovery-cancel-btn"
+                            class="btn btn-secondary"
+                            style="min-height: 48px; flex: 1;"
+                        >
+                            Cancelar
+                        </button>
+                        <button
+                            type="submit"
+                            id="cloud-recovery-confirm-btn"
+                            class="btn btn-primary"
+                            style="min-height: 48px; flex: 1;"
+                        >
+                            Recuperar
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
     {% endif %}
 
 </div>
@@ -142,5 +224,6 @@
 {% block scripts %}
 {% if supabase_configured %}
 <script src="/static/js/remote_sync.js"></script>
+<script src="/static/js/cloud_recovery.js"></script>
 {% endif %}
 {% endblock %}
