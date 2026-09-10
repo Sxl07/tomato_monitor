@@ -7,8 +7,12 @@ inspection_results -> activity_logs) from RLS-visible remote rows, preserving
 remote UUIDs in the local ``remote_id`` columns while assigning fresh local
 integer primary keys.
 
-Scope (metadata only):
-    - NO image/video download, NO filesystem access.
+Scope (metadata + snapshot images):
+    - Metadata recovery (D2) plus physical snapshot image download (D3.2). Raw
+      and annotated snapshot images are fetched from remote Storage AFTER the
+      snapshot metadata phase closes (never while a local unit-of-work is open)
+      and written atomically under OUTPUTS_DIR via a RecoveryFilePort. Videos
+      are out of scope.
     - Anti-resurrection (Spec 022, D3.1): before recovering or reusing a remote
       entity the service consults a RecoveryTombstonePort. A blocking tombstone
       (pending | syncing | error) on the exact remote identity prevents the row
@@ -38,6 +42,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
+from src.application.interfaces.recovery_file_port import RecoveryFilePort
 from src.application.interfaces.recovery_tombstone_port import (
     RecoveryTombstonePort,
     TombstoneCheckResult,
@@ -45,6 +50,7 @@ from src.application.interfaces.recovery_tombstone_port import (
 from src.application.interfaces.recovery_unit_of_work_port import (
     RecoveryUnitOfWorkFactory,
 )
+from src.application.interfaces.remote_download_port import RemoteDownloadPort
 from src.application.interfaces.remote_read_port import RemoteReadPort
 from src.application.interfaces.sync_state_port import SyncStatePort
 from src.domain.entities.activity_log import ActivityLog
@@ -94,6 +100,33 @@ class RecoveryResult:
     entities_skipped: int = 0
     conflicts: int = 0
     errors: list[RecoveryIssue] = field(default_factory=list)
+    # Snapshot image download counters (Spec 022, D3.2). Invariant:
+    # images_downloaded + images_skipped + images_failed == number of non-null,
+    # validly-declared Storage object paths expected across recovered/reused
+    # snapshots (each of raw_storage_path / annotated_storage_path present
+    # contributes exactly one expected object).
+    images_downloaded: int = 0
+    images_skipped: int = 0
+    images_failed: int = 0
+
+
+@dataclass
+class _SnapshotDownloadJob:
+    """In-memory description of one snapshot image to download (D3.2).
+
+    Produced while the snapshot metadata phase runs (inside each per-row UoW)
+    but consumed only AFTER all snapshot units-of-work have closed, so no HTTP
+    ever happens while a local transaction is open. Holds plain values only:
+    no ORM entities and no sessions.
+    """
+
+    snapshot_remote_id: str
+    monitoring_remote_id: str
+    local_monitoring_id: int
+    frame_index: int
+    snapshot_type: str  # "raw" | "annotated"
+    remote_path: str
+    local_relative_path: str
 
 
 # ---------------------------------------------------------------------------
@@ -146,11 +179,15 @@ class RecoveryService:
         uow_factory: RecoveryUnitOfWorkFactory,
         sync_state: SyncStatePort,
         tombstone_guard: RecoveryTombstonePort,
+        remote_download: RemoteDownloadPort,
+        recovery_files: RecoveryFilePort,
     ) -> None:
         self._remote_read = remote_read
         self._uow_factory = uow_factory
         self._sync_state = sync_state
         self._tombstone_guard = tombstone_guard
+        self._remote_download = remote_download
+        self._recovery_files = recovery_files
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -175,6 +212,10 @@ class RecoveryService:
         result = RecoveryResult(success=True)
         # (entity_type, remote_uuid) -> local int id. Only parents are tracked.
         remote_to_local: dict[tuple[str, str], int] = {}
+        # Snapshot image download jobs collected during the snapshot metadata
+        # phase and processed AFTER that phase's UoWs all close (no HTTP inside
+        # a local unit-of-work).
+        download_jobs: list[_SnapshotDownloadJob] = []
         # Per-run blocked lineage: (parent_map_key, remote_uuid) of any entity
         # that was tombstoned, failed its tombstone check, or descends from such
         # an entity. Keyed with the SAME parent map keys used in remote_to_local
@@ -228,9 +269,121 @@ class RecoveryService:
                         uow,
                         blocked_lineage,
                         tombstone_cache,
+                        download_jobs,
                     )
 
+            # After ALL snapshot metadata UoWs are closed and durable, download
+            # the collected images. No local unit-of-work is open here, and this
+            # runs before the next phase's remote read (inspection_results).
+            if table == _TABLE_SNAPSHOTS:
+                self._process_download_jobs(access_token, download_jobs, result)
+
         return result
+
+    # ------------------------------------------------------------------
+    # Snapshot image download (Spec 022, D3.2)
+    # ------------------------------------------------------------------
+
+    def _process_download_jobs(
+        self,
+        access_token: str,
+        jobs: list["_SnapshotDownloadJob"],
+        result: RecoveryResult,
+    ) -> None:
+        """Download and atomically write each collected snapshot image.
+
+        Called with NO local unit-of-work open. Per job: skip if already local,
+        re-validate the remote path is exactly the deterministic path, download,
+        then atomically write. Individual failures never abort the run, roll
+        back metadata, or delete previously written files.
+        """
+        for job in jobs:
+            # A) Idempotence: already present locally -> no HTTP.
+            if self._recovery_files.exists(job.local_relative_path):
+                result.images_skipped += 1
+                continue
+
+            # B) Defense-in-depth: the stored remote path must EXACTLY equal the
+            # deterministic path for this monitoring + type + frame_index.
+            expected = _expected_remote_path(
+                job.monitoring_remote_id, job.snapshot_type, job.frame_index
+            )
+            if job.remote_path != expected:
+                result.images_failed += 1
+                result.errors.append(
+                    RecoveryIssue(
+                        entity_type=_TABLE_SNAPSHOTS,
+                        remote_id=job.snapshot_remote_id,
+                        code="IMAGE_REMOTE_PATH_INVALID",
+                        message=(
+                            f"Stored {job.snapshot_type} path does not match the "
+                            "expected deterministic path; not downloaded."
+                        ),
+                    )
+                )
+                continue
+
+            # C) Download the object.
+            download = self._remote_download.download_object(
+                access_token, job.remote_path
+            )
+
+            if download.success:
+                if not isinstance(download.content, (bytes, bytearray)):
+                    result.images_failed += 1
+                    result.errors.append(
+                        RecoveryIssue(
+                            entity_type=_TABLE_SNAPSHOTS,
+                            remote_id=job.snapshot_remote_id,
+                            code="IMAGE_WRITE_FAILED",
+                            message="Download reported success without bytes.",
+                        )
+                    )
+                    continue
+                written = self._recovery_files.write_atomic(
+                    job.local_relative_path, bytes(download.content)
+                )
+                if written.success:
+                    if written.already_exists:
+                        result.images_skipped += 1
+                    else:
+                        result.images_downloaded += 1
+                else:
+                    result.images_failed += 1
+                    result.errors.append(
+                        RecoveryIssue(
+                            entity_type=_TABLE_SNAPSHOTS,
+                            remote_id=job.snapshot_remote_id,
+                            code="IMAGE_WRITE_FAILED",
+                            message="Failed to write recovered image locally.",
+                        )
+                    )
+                continue
+
+            # D) NOT_FOUND is a skip (object absent), not a hard failure.
+            error_type = download.error_type or "UNKNOWN"
+            if error_type == "NOT_FOUND":
+                result.images_skipped += 1
+                result.errors.append(
+                    RecoveryIssue(
+                        entity_type=_TABLE_SNAPSHOTS,
+                        remote_id=job.snapshot_remote_id,
+                        code="IMAGE_NOT_FOUND",
+                        message="Remote object not found; skipped.",
+                    )
+                )
+                continue
+
+            # All other download errors: count as failed, keep going.
+            result.images_failed += 1
+            result.errors.append(
+                RecoveryIssue(
+                    entity_type=_TABLE_SNAPSHOTS,
+                    remote_id=job.snapshot_remote_id,
+                    code=f"IMAGE_DOWNLOAD_{error_type}",
+                    message=f"Image download failed ({error_type}).",
+                )
+            )
 
     # ------------------------------------------------------------------
     # Anti-resurrection helper
@@ -260,7 +413,7 @@ class RecoveryService:
 
     def _recover_greenhouse_row(
         self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
-        blocked_lineage, tombstone_cache
+        blocked_lineage, tombstone_cache, download_jobs
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -335,7 +488,7 @@ class RecoveryService:
 
     def _recover_module_row(
         self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
-        blocked_lineage, tombstone_cache
+        blocked_lineage, tombstone_cache, download_jobs
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -424,7 +577,7 @@ class RecoveryService:
 
     def _recover_monitoring_row(
         self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
-        blocked_lineage, tombstone_cache
+        blocked_lineage, tombstone_cache, download_jobs
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -526,7 +679,7 @@ class RecoveryService:
 
     def _recover_metrics_row(
         self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
-        blocked_lineage, tombstone_cache
+        blocked_lineage, tombstone_cache, download_jobs
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -613,7 +766,7 @@ class RecoveryService:
 
     def _recover_snapshot_row(
         self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
-        blocked_lineage, tombstone_cache
+        blocked_lineage, tombstone_cache, download_jobs
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -644,24 +797,48 @@ class RecoveryService:
                            "Parent monitoring was not recovered.")
                 return
 
+            # REUSE-before-interpret: check for an existing local snapshot BEFORE
+            # interpreting any cloud business field (frame_index, image_path).
+            # Import-missing-only: a reused row is never re-interpreted.
             existing = uow.snapshot_repo.find_by_remote_id(remote_id)
             if existing is not None:
                 if existing.monitoring_id == local_monitoring_id:
                     result.entities_reused += 1
                     remote_to_local[(_SNAPSHOT, remote_id)] = existing.id
+                    # REUSED consistently: still eligible for image recovery so
+                    # missing physical files can be restored. Metadata is NOT
+                    # modified; the physical jobs use the LOCAL frame_index, so
+                    # a corrupted cloud frame_index cannot affect a valid row.
+                    self._enqueue_snapshot_downloads(
+                        download_jobs, row, remote_id, remote_parent,
+                        local_monitoring_id, existing.frame_index,
+                    )
                 else:
                     self._conflict(result, _TABLE_SNAPSHOTS, remote_id, "PARENT_MISMATCH",
                                    "Existing local snapshot has a different parent.")
                 return
 
-            # NOTE: the remote key is local_image_path (NOT image_path). Download
-            # is out of scope (D3); do not invent a path.
-            image_path = row.get("local_image_path")
-            if not isinstance(image_path, str) or not image_path.strip():
-                self._skip(result, _TABLE_SNAPSHOTS, remote_id, "INVALID_SNAPSHOT_PATH",
-                           "Missing or invalid local_image_path.")
+            # Snapshot is MISSING: only now interpret the cloud frame_index.
+            # PostgREST delivers this as an integer; require a non-negative int
+            # (bool is not a valid int here) and never coerce strings or default
+            # to 0 when the value is absent.
+            raw_frame_index = row.get("frame_index")
+            if (
+                not isinstance(raw_frame_index, int)
+                or isinstance(raw_frame_index, bool)
+                or raw_frame_index < 0
+            ):
+                self._skip(result, _TABLE_SNAPSHOTS, remote_id, "INVALID_FRAME_INDEX",
+                           "Missing or invalid frame_index on snapshot row.")
                 return
+            frame_index = raw_frame_index
 
+            # D3.2: the destination image_path is authoritative for THIS device.
+            # The remote local_image_path may carry the originating device's old
+            # integer monitoring id, so it is informative only and NOT used here.
+            # Rebuild the canonical local raw path from the LOCAL monitoring id.
+            image_path = _local_raw_relative_path(local_monitoring_id, frame_index)
+            image_path = f"outputs/{image_path}"
             captured_at = self._parse_ts(row.get("captured_at"))
             if self._ts_invalid(row.get("captured_at"), captured_at):
                 self._skip(result, _TABLE_SNAPSHOTS, remote_id, "INVALID_TIMESTAMP",
@@ -671,7 +848,7 @@ class RecoveryService:
             entity = Snapshot(
                 monitoring_id=local_monitoring_id,
                 image_path=image_path,
-                frame_index=int(row.get("frame_index") or 0),
+                frame_index=frame_index,
                 captured_at=captured_at,
                 change_score=row.get("change_score"),
                 has_detections=bool(row.get("has_detections") or False),
@@ -685,6 +862,11 @@ class RecoveryService:
             )
             result.entities_recovered += 1
             remote_to_local[(_SNAPSHOT, remote_id)] = created.id
+            # RECOVERED: enqueue image downloads (processed after this phase).
+            self._enqueue_snapshot_downloads(
+                download_jobs, row, remote_id, remote_parent,
+                local_monitoring_id, frame_index,
+            )
         except RecoveredEntityAlreadyExistsError:
             self._handle_race_child(
                 uow.snapshot_repo, result, remote_to_local, _SNAPSHOT, _TABLE_SNAPSHOTS,
@@ -695,7 +877,7 @@ class RecoveryService:
 
     def _recover_inspection_row(
         self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
-        blocked_lineage, tombstone_cache
+        blocked_lineage, tombstone_cache, download_jobs
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -773,7 +955,7 @@ class RecoveryService:
 
     def _recover_activity_log_row(
         self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
-        blocked_lineage, tombstone_cache
+        blocked_lineage, tombstone_cache, download_jobs
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -869,6 +1051,43 @@ class RecoveryService:
                                "PARENT_MISMATCH", "Race on existing activity row.")
         except Exception as exc:  # noqa: BLE001
             self._row_error(result, _TABLE_ACTIVITY_LOGS, remote_id, exc)
+
+    # ------------------------------------------------------------------
+    # Snapshot download job collection (Spec 022, D3.2)
+    # ------------------------------------------------------------------
+
+    def _enqueue_snapshot_downloads(
+        self, download_jobs, row, snapshot_remote_id, monitoring_remote_id,
+        local_monitoring_id, frame_index,
+    ) -> None:
+        """Append a download job per NON-NULL declared Storage path.
+
+        Only ``raw_storage_path`` and ``annotated_storage_path`` that are
+        present (non-empty strings) contribute expected objects. The remote path
+        is validated later (right before HTTP) against the deterministic path;
+        here we only record the stored value plus the canonical local
+        destination for this device.
+        """
+        for snapshot_type, remote_key, local_builder in (
+            ("raw", "raw_storage_path", _local_raw_relative_path),
+            ("annotated", "annotated_storage_path", _local_annotated_relative_path),
+        ):
+            remote_path = row.get(remote_key)
+            if not isinstance(remote_path, str) or not remote_path.strip():
+                continue
+            download_jobs.append(
+                _SnapshotDownloadJob(
+                    snapshot_remote_id=snapshot_remote_id,
+                    monitoring_remote_id=monitoring_remote_id,
+                    local_monitoring_id=local_monitoring_id,
+                    frame_index=frame_index,
+                    snapshot_type=snapshot_type,
+                    remote_path=remote_path,
+                    local_relative_path=local_builder(
+                        local_monitoring_id, frame_index
+                    ),
+                )
+            )
 
     # ------------------------------------------------------------------
     # Anti-resurrection guard helpers (Spec 022, D3.1)
@@ -1026,6 +1245,42 @@ def _to_utc_naive(value: datetime) -> datetime:
     if value.tzinfo is not None:
         value = value.astimezone(timezone.utc).replace(tzinfo=None)
     return value
+
+
+def _expected_remote_path(
+    monitoring_remote_id: str, snapshot_type: str, frame_index: int
+) -> str:
+    """Deterministic remote Storage object path (Spec 022, D3.2 contract).
+
+    RAW:       monitorings/{uuid}/raw/snapshot_{index:06d}.jpg
+    ANNOTATED: monitorings/{uuid}/annotated/snapshot_{index:06d}.jpg
+    """
+    return (
+        f"monitorings/{monitoring_remote_id}/{snapshot_type}/"
+        f"snapshot_{frame_index:06d}.jpg"
+    )
+
+
+def _local_raw_relative_path(local_monitoring_id: int, frame_index: int) -> str:
+    """Canonical local raw path, relative to OUTPUTS_DIR (no leading outputs/)."""
+    return (
+        f"monitorings/{local_monitoring_id}/snapshots/raw/"
+        f"snapshot_{frame_index:06d}.jpg"
+    )
+
+
+def _local_annotated_relative_path(
+    local_monitoring_id: int, frame_index: int
+) -> str:
+    """Canonical local annotated path, relative to OUTPUTS_DIR.
+
+    Note the intentional folder-name difference from Storage: the remote folder
+    is ``annotated/`` while the local folder is ``annotated_snapshots/``.
+    """
+    return (
+        f"monitorings/{local_monitoring_id}/annotated_snapshots/"
+        f"snapshot_{frame_index:06d}.jpg"
+    )
 
 
 def _is_valid_uuid(value) -> bool:

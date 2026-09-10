@@ -150,13 +150,24 @@ def _uow_factory(manager):
     return factory
 
 
-def _build_service(manager, remote_port, tombstone_guard=None):
+def _build_service(
+    manager,
+    remote_port,
+    tombstone_guard=None,
+    remote_download=None,
+    recovery_files=None,
+):
     """Build a RecoveryService wired to a real per-row UoW factory + sync state.
 
     By default the real ``SqlRecoveryTombstoneAdapter`` is used over the real
     (empty) deletion_outbox: with nothing seeded, no tombstone blocks, so all
     metadata-only D2 tests keep passing unchanged. Tests that need controlled
     outcomes pass a ``FakeTombstoneGuard``.
+
+    D3.2: ``remote_download`` and ``recovery_files`` default to inert fakes (no
+    file present, downloads report NOT_FOUND) so metadata-only tests that do not
+    care about images are unaffected. Image-focused tests inject configured
+    fakes.
     """
     sync_state = SyncStateRepository(session_factory=manager.get_session)
     guard = tombstone_guard or SqlRecoveryTombstoneAdapter(manager.get_session)
@@ -166,6 +177,8 @@ def _build_service(manager, remote_port, tombstone_guard=None):
             uow_factory=_uow_factory(manager),
             sync_state=sync_state,
             tombstone_guard=guard,
+            remote_download=remote_download or FakeRemoteDownloadPort(),
+            recovery_files=recovery_files or InMemoryRecoveryFiles(),
         ),
         _NullSession(),
     )
@@ -233,6 +246,104 @@ class FakeTombstoneGuard:
                 success=True, blocked=True, status=self._blocked[key]
             )
         return TombstoneCheckResult(success=True, blocked=False)
+
+
+# ---------------------------------------------------------------------------
+# D3.2 image-download fakes
+# ---------------------------------------------------------------------------
+
+
+from src.application.interfaces.recovery_file_port import RecoveryFileResult
+from src.application.interfaces.remote_download_port import RemoteDownloadResult
+
+
+class FakeRemoteDownloadPort:
+    """Configurable in-memory RemoteDownloadPort.
+
+    By default every download reports NOT_FOUND. Map exact remote paths to a
+    ``RemoteDownloadResult`` via ``set_result``. Records every requested path in
+    ``calls``. Optionally records a boolean per call via ``active_probe`` (used
+    to assert no local UoW is open during HTTP).
+    """
+
+    def __init__(self, active_probe=None):
+        self._results: dict[str, RemoteDownloadResult] = {}
+        self.calls: list[str] = []
+        self.uow_active_flags: list[bool] = []
+        self._active_probe = active_probe
+
+    def set_result(self, remote_path, result):
+        self._results[remote_path] = result
+        return self
+
+    def set_bytes(self, remote_path, content):
+        return self.set_result(
+            remote_path, RemoteDownloadResult(success=True, content=content)
+        )
+
+    def set_error(self, remote_path, error_type):
+        return self.set_result(
+            remote_path,
+            RemoteDownloadResult(success=False, error_type=error_type),
+        )
+
+    def download_object(self, access_token, remote_path):
+        self.calls.append(remote_path)
+        if self._active_probe is not None:
+            self.uow_active_flags.append(bool(self._active_probe()))
+        return self._results.get(
+            remote_path,
+            RemoteDownloadResult(success=False, error_type="NOT_FOUND"),
+        )
+
+
+class InMemoryRecoveryFiles:
+    """In-memory RecoveryFilePort. Stores written bytes by relative path.
+
+    ``preexisting`` seeds relative paths that already exist locally. ``fail``
+    forces write_atomic to fail for specific relative paths (to exercise the
+    IMAGE_WRITE_FAILED branch).
+    """
+
+    def __init__(self, preexisting=None, fail=None):
+        self.stored: dict[str, bytes] = dict(preexisting or {})
+        self._fail: set[str] = set(fail or set())
+        self.write_calls: list[str] = []
+
+    def exists(self, relative_path):
+        return relative_path in self.stored
+
+    def write_atomic(self, relative_path, content):
+        self.write_calls.append(relative_path)
+        if relative_path in self._fail:
+            return RecoveryFileResult(success=False, error_message="forced")
+        if relative_path in self.stored:
+            return RecoveryFileResult(success=True, already_exists=True)
+        self.stored[relative_path] = bytes(content)
+        return RecoveryFileResult(success=True)
+
+
+# Deterministic remote/local path helpers mirroring the production contract.
+def _remote_raw(mon_uuid, frame_index=0):
+    return f"monitorings/{mon_uuid}/raw/snapshot_{frame_index:06d}.jpg"
+
+
+def _remote_annotated(mon_uuid, frame_index=0):
+    return f"monitorings/{mon_uuid}/annotated/snapshot_{frame_index:06d}.jpg"
+
+
+def _local_raw(local_mon_id, frame_index=0):
+    return (
+        f"monitorings/{local_mon_id}/snapshots/raw/"
+        f"snapshot_{frame_index:06d}.jpg"
+    )
+
+
+def _local_annotated(local_mon_id, frame_index=0):
+    return (
+        f"monitorings/{local_mon_id}/annotated_snapshots/"
+        f"snapshot_{frame_index:06d}.jpg"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -919,11 +1030,16 @@ def test_unknown_activity_type_skipped_no_new_catalog_row():
 
 
 # ---------------------------------------------------------------------------
-# (14) Snapshot uses local_image_path and preserves storage paths
+# (14) Snapshot rebuilds the canonical LOCAL image_path (D3.2) and preserves
+# the remote Storage object paths verbatim.
+#
+# D3.2 contract change: the remote ``local_image_path`` is informative only and
+# NOT authoritative for this device; the new local image_path is rebuilt from
+# the LOCAL monitoring id + frame_index.
 # ---------------------------------------------------------------------------
 
 
-def test_snapshot_uses_local_image_path_and_preserves_storage_paths():
+def test_snapshot_rebuilds_local_image_path_and_preserves_storage_paths():
     manager, db_path = _fresh_manager()
     try:
         seed = manager.get_session()
@@ -953,12 +1069,19 @@ def test_snapshot_uses_local_image_path_and_preserves_storage_paths():
 
             snap = SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID)
             assert snap is not None
-            assert snap.image_path == "monitorings/1/snapshots/raw/snap_0.jpg"
+            local_mon_id = snap.monitoring_id
+            # Rebuilt canonical path uses the LOCAL monitoring id + zero-padded
+            # frame index, NOT the remote local_image_path ("monitorings/1/...").
+            assert snap.image_path == (
+                f"outputs/monitorings/{local_mon_id}/snapshots/raw/"
+                "snapshot_000000.jpg"
+            )
             model = (
                 verify.query(SnapshotModel)
                 .filter(SnapshotModel.remote_id == SNAP_ID)
                 .first()
             )
+            # Remote Storage object paths are preserved verbatim.
             assert model.raw_storage_path == "remote/raw/snap_0.jpg"
             assert model.annotated_storage_path == "remote/annotated/snap_0.jpg"
         finally:
@@ -967,7 +1090,12 @@ def test_snapshot_uses_local_image_path_and_preserves_storage_paths():
         _cleanup(manager.engine, db_path)
 
 
-def test_snapshot_missing_local_image_path_is_skipped():
+def test_snapshot_ignores_remote_local_image_path_from_other_device():
+    """A remote local_image_path with another device's monitoring id is ignored.
+
+    The recovered Snapshot.image_path is rebuilt with THIS device's local
+    monitoring id, never the remote integer (e.g. 999).
+    """
     manager, db_path = _fresh_manager()
     try:
         seed = manager.get_session()
@@ -975,13 +1103,15 @@ def test_snapshot_missing_local_image_path_is_skipped():
         seed.close()
 
         rows = _full_hierarchy_rows()
-        bad = dict(rows["snapshots"][0])
-        bad["local_image_path"] = ""
+        snap = dict(rows["snapshots"][0])
+        snap["local_image_path"] = (
+            "outputs/monitorings/999/snapshots/raw/snapshot_000003.jpg"
+        )
         subset = {
             "greenhouses": rows["greenhouses"],
             "modules": rows["modules"],
             "monitorings": rows["monitorings"],
-            "snapshots": [bad],
+            "snapshots": [snap],
         }
         port = FakeRemoteReadPort(subset)
         service, session = _build_service(manager, port)
@@ -990,10 +1120,55 @@ def test_snapshot_missing_local_image_path_is_skipped():
         finally:
             session.close()
 
-        assert any(e.code == "INVALID_SNAPSHOT_PATH" for e in result.errors)
+        assert result.success is True
         verify = manager.get_session()
         try:
-            assert SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID) is None
+            recovered = SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID)
+            assert recovered is not None
+            assert "999" not in recovered.image_path
+            assert recovered.image_path == (
+                f"outputs/monitorings/{recovered.monitoring_id}/snapshots/raw/"
+                "snapshot_000000.jpg"
+            )
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+def test_snapshot_recovered_even_when_remote_local_image_path_empty():
+    """D3.2: an empty remote local_image_path no longer blocks recovery.
+
+    Because the local path is rebuilt deterministically, the snapshot metadata
+    is still recovered (the old INVALID_SNAPSHOT_PATH contract is removed).
+    """
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        snap = dict(rows["snapshots"][0])
+        snap["local_image_path"] = ""
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": rows["modules"],
+            "monitorings": rows["monitorings"],
+            "snapshots": [snap],
+        }
+        port = FakeRemoteReadPort(subset)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert not any(e.code == "INVALID_SNAPSHOT_PATH" for e in result.errors)
+        verify = manager.get_session()
+        try:
+            recovered = SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID)
+            assert recovered is not None
         finally:
             verify.close()
     finally:
@@ -1379,24 +1554,44 @@ def test_no_remote_fetch_inside_open_local_unit_of_work():
             return _SpyUnitOfWork(SqlRecoveryUnitOfWork(manager.get_session), flag)
 
         rows = _full_hierarchy_rows()
+        # Deterministic Storage paths so a download job is actually created and
+        # the probe can prove no UoW is open during the download HTTP call.
+        det_snap = dict(rows["snapshots"][0])
+        det_snap["raw_storage_path"] = _remote_raw(MON_ID)
+        det_snap["annotated_storage_path"] = _remote_annotated(MON_ID)
+        rows = dict(rows)
+        rows["snapshots"] = [det_snap]
         sync_state = SyncStateRepository(session_factory=manager.get_session)
+
+        # A download port that records the UoW-active flag on each HTTP call.
+        download = FakeRemoteDownloadPort(active_probe=lambda: flag.active)
+        download.set_bytes(_remote_raw(MON_ID), b"raw").set_bytes(
+            _remote_annotated(MON_ID), b"annotated"
+        )
 
         # First run: full multi-phase import.
         port1 = _BoundaryRemoteReadPort(flag, rows)
         service1 = RecoveryService(
             remote_read=port1, uow_factory=spy_factory, sync_state=sync_state,
             tombstone_guard=SqlRecoveryTombstoneAdapter(manager.get_session),
+            remote_download=download,
+            recovery_files=InMemoryRecoveryFiles(),
         )
         first = service1.execute_recovery("token", REMOTE_USER, local_user)
         assert first.success is True
         assert first.entities_recovered == 7
         assert flag.active is False  # closed after last row
+        # Downloads happened (raw + annotated) and NONE inside an open UoW.
+        assert len(download.calls) == 2
+        assert download.uow_active_flags == [False, False]
 
         # Second run: reuse across multiple phases.
         port2 = _BoundaryRemoteReadPort(flag, rows)
         service2 = RecoveryService(
             remote_read=port2, uow_factory=spy_factory, sync_state=sync_state,
             tombstone_guard=SqlRecoveryTombstoneAdapter(manager.get_session),
+            remote_download=FakeRemoteDownloadPort(),
+            recovery_files=InMemoryRecoveryFiles(),
         )
         second = service2.execute_recovery("token", REMOTE_USER, local_user)
         assert second.success is True
@@ -1601,6 +1796,8 @@ def test_row_error_isolation_failed_sql_session_per_row():
         service = RecoveryService(
             remote_read=port, uow_factory=factory, sync_state=sync_state,
             tombstone_guard=SqlRecoveryTombstoneAdapter(manager.get_session),
+            remote_download=FakeRemoteDownloadPort(),
+            recovery_files=InMemoryRecoveryFiles(),
         )
 
         result = service.execute_recovery("token", REMOTE_USER, local_user)
@@ -2160,6 +2357,682 @@ def test_second_run_with_tombstone_still_blocks_stable_counts():
         try:
             # Never resurrected across either run.
             assert verify.query(GreenhouseModel).count() == 0
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ===========================================================================
+# Snapshot image recovery tests (Spec 022, block D3.2)
+#
+# These exercise physical download of raw/annotated snapshot images AFTER the
+# snapshot metadata phase closes. Downloads and local writes are driven by
+# FakeRemoteDownloadPort + InMemoryRecoveryFiles; no real HTTP or filesystem.
+# ===========================================================================
+
+
+def _rows_with_storage(raw=True, annotated=True, frame_index=0):
+    """Full-hierarchy rows whose snapshot declares deterministic Storage paths.
+
+    The default fixture uses non-deterministic remote paths; D3.2 requires the
+    stored path to equal the deterministic path, so tests build it explicitly.
+    """
+    rows = _full_hierarchy_rows()
+    snap = dict(rows["snapshots"][0])
+    snap["frame_index"] = frame_index
+    snap["raw_storage_path"] = _remote_raw(MON_ID, frame_index) if raw else None
+    snap["annotated_storage_path"] = (
+        _remote_annotated(MON_ID, frame_index) if annotated else None
+    )
+    rows = dict(rows)
+    rows["snapshots"] = [snap]
+    return rows
+
+
+def _subset_through_inspection(rows):
+    """Recovery subset covering the hierarchy down to inspection_results."""
+    return {
+        "greenhouses": rows["greenhouses"],
+        "modules": rows["modules"],
+        "monitorings": rows["monitorings"],
+        "monitoring_metrics": rows["monitoring_metrics"],
+        "snapshots": rows["snapshots"],
+        "inspection_results": rows["inspection_results"],
+    }
+
+
+def _run_with_images(manager, rows, download, files, local_user):
+    port = FakeRemoteReadPort(rows)
+    service, session = _build_service(
+        manager, port, remote_download=download, recovery_files=files
+    )
+    try:
+        return service.execute_recovery("token", REMOTE_USER, local_user)
+    finally:
+        session.close()
+
+
+def _local_mon_id(manager):
+    verify = manager.get_session()
+    try:
+        return SqlMonitoringRepository(verify).find_by_remote_id(MON_ID).id
+    finally:
+        verify.close()
+
+
+# (1) Full hierarchy + raw + annotated: metadata + both images downloaded.
+def test_full_hierarchy_downloads_raw_and_annotated():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage()
+        download = FakeRemoteDownloadPort()
+        download.set_bytes(_remote_raw(MON_ID), b"RAW").set_bytes(
+            _remote_annotated(MON_ID), b"ANN"
+        )
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        assert result.success is True
+        assert result.entities_recovered == 6  # gh, mod, mon, metrics, snap, insp
+        assert result.images_downloaded == 2
+        assert result.images_skipped == 0
+        assert result.images_failed == 0
+
+        local_mon = _local_mon_id(manager)
+        assert files.stored[_local_raw(local_mon)] == b"RAW"
+        assert files.stored[_local_annotated(local_mon)] == b"ANN"
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (3) Raw only: one download.
+def test_raw_only_single_download():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage(raw=True, annotated=False)
+        download = FakeRemoteDownloadPort().set_bytes(_remote_raw(MON_ID), b"RAW")
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, {**_subset_through_inspection(rows)}, download, files, local_user
+        )
+
+        assert result.images_downloaded == 1
+        assert result.images_failed == 0
+        local_mon = _local_mon_id(manager)
+        assert _local_raw(local_mon) in files.stored
+        assert _local_annotated(local_mon) not in files.stored
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (4) Annotated only: one download.
+def test_annotated_only_single_download():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage(raw=False, annotated=True)
+        download = FakeRemoteDownloadPort().set_bytes(
+            _remote_annotated(MON_ID), b"ANN"
+        )
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        assert result.images_downloaded == 1
+        local_mon = _local_mon_id(manager)
+        assert _local_annotated(local_mon) in files.stored
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (5) Both Storage paths NULL: zero expected images, no download.
+def test_no_storage_paths_zero_expected_images():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage(raw=False, annotated=False)
+        download = FakeRemoteDownloadPort()
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        assert result.images_downloaded == 0
+        assert result.images_skipped == 0
+        assert result.images_failed == 0
+        assert download.calls == []
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (6) Raw 404: skipped, metadata survives.
+def test_raw_not_found_is_skipped_metadata_survives():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage(raw=True, annotated=False)
+        download = FakeRemoteDownloadPort().set_error(_remote_raw(MON_ID), "NOT_FOUND")
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        assert result.images_skipped == 1
+        assert result.images_downloaded == 0
+        assert result.images_failed == 0
+        assert any(e.code == "IMAGE_NOT_FOUND" for e in result.errors)
+        # Snapshot metadata survived.
+        verify = manager.get_session()
+        try:
+            assert SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID) is not None
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (7) Annotated 404 independent of raw success.
+def test_annotated_not_found_independent_of_raw():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage(raw=True, annotated=True)
+        download = FakeRemoteDownloadPort()
+        download.set_bytes(_remote_raw(MON_ID), b"RAW").set_error(
+            _remote_annotated(MON_ID), "NOT_FOUND"
+        )
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        assert result.images_downloaded == 1
+        assert result.images_skipped == 1
+        assert result.images_failed == 0
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (8) Network failure counts as failed; the next object is still processed.
+def test_network_failure_counts_failed_next_still_processed():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage(raw=True, annotated=True)
+        download = FakeRemoteDownloadPort()
+        download.set_error(_remote_raw(MON_ID), "CONNECTIVITY").set_bytes(
+            _remote_annotated(MON_ID), b"ANN"
+        )
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        assert result.images_failed == 1
+        assert result.images_downloaded == 1
+        assert any(e.code == "IMAGE_DOWNLOAD_CONNECTIVITY" for e in result.errors)
+        local_mon = _local_mon_id(manager)
+        assert _local_annotated(local_mon) in files.stored
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (9) RLS_DENIED: failed, no file created.
+def test_rls_denied_fails_and_writes_nothing():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage(raw=True, annotated=False)
+        download = FakeRemoteDownloadPort().set_error(_remote_raw(MON_ID), "RLS_DENIED")
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        assert result.images_failed == 1
+        assert result.images_downloaded == 0
+        assert files.stored == {}
+        assert any(e.code == "IMAGE_DOWNLOAD_RLS_DENIED" for e in result.errors)
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (10) Invalid raw remote path: no HTTP, failed.
+def test_invalid_raw_remote_path_no_http():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage(raw=True, annotated=False)
+        rows["snapshots"][0]["raw_storage_path"] = "monitorings/x/raw/whatever.jpg"
+        download = FakeRemoteDownloadPort()
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        assert result.images_failed == 1
+        assert download.calls == []  # never attempted HTTP
+        assert any(e.code == "IMAGE_REMOTE_PATH_INVALID" for e in result.errors)
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (11) Path points to another monitoring UUID: no HTTP, failed.
+def test_remote_path_for_other_monitoring_uuid_no_http():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage(raw=True, annotated=False)
+        other_uuid = "12121212-1111-4222-8333-444444444444"
+        rows["snapshots"][0]["raw_storage_path"] = _remote_raw(other_uuid)
+        download = FakeRemoteDownloadPort()
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        assert result.images_failed == 1
+        assert download.calls == []
+        assert any(e.code == "IMAGE_REMOTE_PATH_INVALID" for e in result.errors)
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (12) Already-local raw: skipped, no HTTP for raw.
+def test_already_local_raw_is_skipped_no_http():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        # Pre-seed the eventual local raw path. Local monitoring id starts at 1.
+        rows = _rows_with_storage(raw=True, annotated=False)
+        files = InMemoryRecoveryFiles(preexisting={_local_raw(1): b"already"})
+        download = FakeRemoteDownloadPort().set_bytes(_remote_raw(MON_ID), b"RAW")
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        # Confirm local monitoring id is indeed 1 (single seeded monitoring).
+        assert _local_mon_id(manager) == 1
+        assert result.images_skipped == 1
+        assert result.images_downloaded == 0
+        assert download.calls == []
+        assert files.stored[_local_raw(1)] == b"already"  # untouched
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (13) Rerun: first downloads, second skips existing, no duplicate/truncate.
+def test_rerun_skips_existing_images():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage(raw=True, annotated=True)
+        files = InMemoryRecoveryFiles()
+        download1 = FakeRemoteDownloadPort()
+        download1.set_bytes(_remote_raw(MON_ID), b"RAW").set_bytes(
+            _remote_annotated(MON_ID), b"ANN"
+        )
+
+        first = _run_with_images(
+            manager, _subset_through_inspection(rows), download1, files, local_user
+        )
+        assert first.images_downloaded == 2
+
+        # Second run: same files present -> all skipped, no new HTTP.
+        download2 = FakeRemoteDownloadPort()
+        download2.set_bytes(_remote_raw(MON_ID), b"CHANGED").set_bytes(
+            _remote_annotated(MON_ID), b"CHANGED"
+        )
+        second = _run_with_images(
+            manager, _subset_through_inspection(rows), download2, files, local_user
+        )
+        assert second.images_downloaded == 0
+        assert second.images_skipped == 2
+        assert download2.calls == []
+        local_mon = _local_mon_id(manager)
+        # Original bytes preserved (not overwritten/truncated).
+        assert files.stored[_local_raw(local_mon)] == b"RAW"
+        assert files.stored[_local_annotated(local_mon)] == b"ANN"
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (14) Tombstoned monitoring: no snapshot metadata AND zero download calls.
+def test_tombstoned_monitoring_triggers_zero_downloads():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        _seed_tombstone(manager, "monitoring", MON_ID, status="pending")
+
+        rows = _rows_with_storage(raw=True, annotated=True)
+        download = FakeRemoteDownloadPort()
+        download.set_bytes(_remote_raw(MON_ID), b"RAW").set_bytes(
+            _remote_annotated(MON_ID), b"ANN"
+        )
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        assert result.success is True
+        # No snapshot persisted, and NO download attempted for the blocked subtree.
+        verify = manager.get_session()
+        try:
+            assert SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID) is None
+        finally:
+            verify.close()
+        assert download.calls == []
+        assert result.images_downloaded == 0
+        assert result.images_failed == 0
+        assert result.images_skipped == 0
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (15) Metadata insert succeeds but image download fails: snapshot remains and
+# the inspection_result still recovers.
+def test_image_download_failure_keeps_metadata_and_inspection():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage(raw=True, annotated=False)
+        download = FakeRemoteDownloadPort().set_error(
+            _remote_raw(MON_ID), "REMOTE_UNAVAILABLE"
+        )
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        assert result.images_failed == 1
+        verify = manager.get_session()
+        try:
+            assert SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID) is not None
+            # inspection_result (child of snapshot) still recovered.
+            assert (
+                SqlInspectionResultRepository(verify).find_by_remote_id(INSP_ID)
+                is not None
+            )
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# Write failure branch: download succeeds but local atomic write fails.
+def test_write_failure_counts_as_failed():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _rows_with_storage(raw=True, annotated=False)
+        download = FakeRemoteDownloadPort().set_bytes(_remote_raw(MON_ID), b"RAW")
+        files = InMemoryRecoveryFiles(fail={_local_raw(1)})
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        assert _local_mon_id(manager) == 1
+        assert result.images_failed == 1
+        assert result.images_downloaded == 0
+        assert any(e.code == "IMAGE_WRITE_FAILED" for e in result.errors)
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (17) Invariant: downloaded + skipped + failed == number of declared paths.
+def test_image_counter_invariant_holds():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        # raw succeeds, annotated 404 -> 1 declared each = 2 expected objects.
+        rows = _rows_with_storage(raw=True, annotated=True)
+        download = FakeRemoteDownloadPort()
+        download.set_bytes(_remote_raw(MON_ID), b"RAW").set_error(
+            _remote_annotated(MON_ID), "NOT_FOUND"
+        )
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(
+            manager, _subset_through_inspection(rows), download, files, local_user
+        )
+
+        expected_objects = 2  # both raw and annotated declared (non-null)
+        total = (
+            result.images_downloaded + result.images_skipped + result.images_failed
+        )
+        assert total == expected_objects
+
+
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# (16) Independent snapshots: failure of one does not block the other.
+def test_independent_snapshots_failure_does_not_block_other():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        snap_a = dict(rows["snapshots"][0])
+        snap_a["frame_index"] = 0
+        snap_a["raw_storage_path"] = _remote_raw(MON_ID, 0)
+        snap_a["annotated_storage_path"] = None
+        snap_b = dict(rows["snapshots"][0])
+        snap_b_id = "cccccccc-2222-4222-8333-444444444444"
+        snap_b["id"] = snap_b_id
+        snap_b["frame_index"] = 1
+        snap_b["raw_storage_path"] = _remote_raw(MON_ID, 1)
+        snap_b["annotated_storage_path"] = None
+        rows = dict(rows)
+        rows["snapshots"] = [snap_a, snap_b]
+
+        download = FakeRemoteDownloadPort()
+        download.set_error(_remote_raw(MON_ID, 0), "CONNECTIVITY").set_bytes(
+            _remote_raw(MON_ID, 1), b"B"
+        )
+        files = InMemoryRecoveryFiles()
+
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": rows["modules"],
+            "monitorings": rows["monitorings"],
+            "snapshots": rows["snapshots"],
+        }
+        result = _run_with_images(manager, subset, download, files, local_user)
+
+        assert result.images_failed == 1
+        assert result.images_downloaded == 1
+        local_mon = _local_mon_id(manager)
+        assert files.stored[_local_raw(local_mon, 1)] == b"B"
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ===========================================================================
+# D3.2 contract hardening: snapshot REUSE ignores cloud frame_index; NEW
+# snapshot requires a strict non-negative integer frame_index.
+# ===========================================================================
+
+
+import pytest as _pytest
+
+
+def test_reuse_ignores_corrupted_cloud_frame_index_uses_local():
+    """A valid local snapshot is REUSED even if the cloud row later carries a
+    corrupted frame_index; physical jobs use the LOCAL frame_index."""
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        # First run: recover snapshot with frame_index = 3 and download raw.
+        rows1 = _full_hierarchy_rows()
+        snap1 = dict(rows1["snapshots"][0])
+        snap1["frame_index"] = 3
+        snap1["raw_storage_path"] = _remote_raw(MON_ID, 3)
+        snap1["annotated_storage_path"] = None
+        rows1 = dict(rows1)
+        rows1["snapshots"] = [snap1]
+        subset1 = {
+            "greenhouses": rows1["greenhouses"],
+            "modules": rows1["modules"],
+            "monitorings": rows1["monitorings"],
+            "snapshots": rows1["snapshots"],
+        }
+        files = InMemoryRecoveryFiles()
+        dl1 = FakeRemoteDownloadPort().set_bytes(_remote_raw(MON_ID, 3), b"RAW3")
+        first = _run_with_images(manager, subset1, dl1, files, local_user)
+        assert first.entities_recovered >= 1
+        local_mon = _local_mon_id(manager)
+        assert files.stored[_local_raw(local_mon, 3)] == b"RAW3"
+
+        # Simulate the physical file going missing before the second run.
+        del files.stored[_local_raw(local_mon, 3)]
+
+        # Second run: same remote_id/parent, but cloud frame_index is corrupted.
+        rows2 = _full_hierarchy_rows()
+        snap2 = dict(rows2["snapshots"][0])
+        snap2["frame_index"] = "corrupted"
+        # Storage path still references the true (local) frame 3.
+        snap2["raw_storage_path"] = _remote_raw(MON_ID, 3)
+        snap2["annotated_storage_path"] = None
+        rows2 = dict(rows2)
+        rows2["snapshots"] = [snap2]
+        subset2 = {
+            "greenhouses": rows2["greenhouses"],
+            "modules": rows2["modules"],
+            "monitorings": rows2["monitorings"],
+            "snapshots": rows2["snapshots"],
+        }
+        dl2 = FakeRemoteDownloadPort().set_bytes(_remote_raw(MON_ID, 3), b"RAW3b")
+        second = _run_with_images(manager, subset2, dl2, files, local_user)
+
+        # Snapshot REUSED; no invalid/insert errors from the corrupted field.
+        assert second.entities_reused >= 1
+        assert not any(e.code == "INVALID_FRAME_INDEX" for e in second.errors)
+        assert not any(e.code == "INSERT_ERROR" for e in second.errors)
+
+        verify = manager.get_session()
+        try:
+            snap = SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID)
+            assert snap is not None
+            assert snap.frame_index == 3  # local metadata unchanged
+        finally:
+            verify.close()
+
+        # The physical job used the LOCAL frame_index (000003), not "corrupted".
+        assert files.stored[_local_raw(local_mon, 3)] == b"RAW3b"
+        assert dl2.calls == [_remote_raw(MON_ID, 3)]
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+@_pytest.mark.parametrize("bad_value", [None, -1, "3", True])
+def test_new_snapshot_invalid_frame_index_is_skipped(bad_value):
+    """A MISSING snapshot with a non-int/negative frame_index is skipped with
+    INVALID_FRAME_INDEX: no metadata, no HTTP, no filesystem write."""
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        snap = dict(rows["snapshots"][0])
+        snap["frame_index"] = bad_value
+        snap["raw_storage_path"] = _remote_raw(MON_ID, 0)
+        snap["annotated_storage_path"] = None
+        rows = dict(rows)
+        rows["snapshots"] = [snap]
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": rows["modules"],
+            "monitorings": rows["monitorings"],
+            "snapshots": rows["snapshots"],
+        }
+        download = FakeRemoteDownloadPort().set_bytes(_remote_raw(MON_ID, 0), b"X")
+        files = InMemoryRecoveryFiles()
+
+        result = _run_with_images(manager, subset, download, files, local_user)
+
+        assert any(e.code == "INVALID_FRAME_INDEX" for e in result.errors)
+        assert download.calls == []
+        assert files.stored == {}
+        verify = manager.get_session()
+        try:
+            assert SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID) is None
         finally:
             verify.close()
     finally:

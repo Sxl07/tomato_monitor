@@ -701,3 +701,203 @@ class TestRemoveObjectRemoteUnavailable:
 
         assert result.success is False
         assert result.error_type == "REMOTE_UNAVAILABLE"
+
+
+# ===========================================================================
+# download_object (Spec 022, block D3.2)
+# ===========================================================================
+
+
+from src.application.interfaces.remote_download_port import RemoteDownloadResult
+
+
+class TestDownloadObject:
+    """download_object retrieves a single private-bucket object via GET."""
+
+    def test_success_200_returns_exact_bytes(self, config):
+        def handler(req):
+            return httpx.Response(200, content=_FILE_CONTENT)
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+
+        assert isinstance(result, RemoteDownloadResult)
+        assert result.success is True
+        assert result.content == _FILE_CONTENT
+        assert result.error_type is None
+
+    def test_method_get(self, config):
+        captured = {}
+
+        def handler(req):
+            captured["method"] = req.method
+            return httpx.Response(200, content=_FILE_CONTENT)
+
+        adapter = _make_adapter(config, handler)
+        adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert captured["method"] == "GET"
+
+    def test_authenticated_endpoint_path(self, config):
+        captured = {}
+
+        def handler(req):
+            captured["path"] = req.url.path
+            return httpx.Response(200, content=_FILE_CONTENT)
+
+        adapter = _make_adapter(config, handler)
+        adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        expected = f"/storage/v1/object/authenticated/dummy-bucket/{_REMOTE_PATH}"
+        assert captured["path"] == expected
+
+    def test_authorization_header(self, config):
+        captured = {}
+
+        def handler(req):
+            captured["auth"] = req.headers["authorization"]
+            return httpx.Response(200, content=_FILE_CONTENT)
+
+        adapter = _make_adapter(config, handler)
+        adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert captured["auth"] == f"Bearer {_DUMMY_JWT}"
+
+    def test_apikey_header(self, config):
+        captured = {}
+
+        def handler(req):
+            captured["apikey"] = req.headers["apikey"]
+            return httpx.Response(200, content=_FILE_CONTENT)
+
+        adapter = _make_adapter(config, handler)
+        adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert captured["apikey"] == _DUMMY_KEY
+
+    def test_404_not_found(self, config):
+        def handler(req):
+            return httpx.Response(404, json={"message": "not found"})
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert result.success is False
+        assert result.error_type == "NOT_FOUND"
+        assert result.content is None
+
+    def test_401_rls_denied(self, config):
+        def handler(req):
+            return httpx.Response(401, json={"message": "unauthorized"})
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert result.success is False
+        assert result.error_type == "RLS_DENIED"
+
+    def test_403_rls_denied(self, config):
+        def handler(req):
+            return httpx.Response(403, json={"message": "forbidden"})
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert result.success is False
+        assert result.error_type == "RLS_DENIED"
+
+    def test_500_remote_unavailable(self, config):
+        def handler(req):
+            return httpx.Response(500, json={"message": "boom"})
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert result.success is False
+        assert result.error_type == "REMOTE_UNAVAILABLE"
+
+    def test_503_remote_unavailable(self, config):
+        def handler(req):
+            return httpx.Response(503, json={"message": "unavailable"})
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert result.success is False
+        assert result.error_type == "REMOTE_UNAVAILABLE"
+
+    def test_timeout_connectivity(self, config):
+        def handler(req):
+            raise httpx.TimeoutException("timed out")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert result.success is False
+        assert result.error_type == "CONNECTIVITY"
+
+    def test_network_error_connectivity(self, config):
+        def handler(req):
+            raise httpx.ConnectError("connection failed")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert result.success is False
+        assert result.error_type == "CONNECTIVITY"
+
+    @pytest.mark.parametrize("status", [400, 405, 409, 413, 418, 422, 429])
+    def test_other_4xx_storage_error(self, config, status):
+        def handler(req):
+            return httpx.Response(status, json={"message": "err"})
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert result.success is False
+        assert result.error_type == "STORAGE_ERROR"
+
+    def test_204_no_content_is_not_success(self, config):
+        def handler(req):
+            return httpx.Response(204, content=b"")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert result.success is False
+        assert result.error_type == "UNKNOWN"
+        assert result.content is None
+
+    def test_201_is_not_success(self, config):
+        def handler(req):
+            return httpx.Response(201, content=b"created")
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.download_object(_DUMMY_JWT, _REMOTE_PATH)
+        assert result.success is False
+        assert result.error_type == "UNKNOWN"
+
+    def test_empty_path_rejected_without_network(self, config):
+        calls = []
+
+        def handler(req):
+            calls.append(req.url.path)
+            return httpx.Response(200, content=_FILE_CONTENT)
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.download_object(_DUMMY_JWT, "")
+        assert result.success is False
+        assert result.error_type == "STORAGE_ERROR"
+        assert calls == []
+
+
+class TestUploadUnchangedByDownload:
+    """Adding download_object does not change upload_file behavior."""
+
+    def test_upload_still_succeeds(self, config, local_file):
+        def handler(req):
+            return httpx.Response(201, json={"Key": "dummy"})
+
+        adapter = _make_adapter(config, handler)
+        result = adapter.upload_file(_DUMMY_JWT, str(local_file), _REMOTE_PATH)
+        assert result.success is True
+        assert result.object_path == _REMOTE_PATH
+
+    def test_upload_endpoint_still_non_authenticated_object_path(self, config, local_file):
+        captured = {}
+
+        def handler(req):
+            captured["path"] = req.url.path
+            return httpx.Response(201, json={})
+
+        adapter = _make_adapter(config, handler)
+        adapter.upload_file(_DUMMY_JWT, str(local_file), _REMOTE_PATH)
+        # Upload uses /object/ (NOT /object/authenticated/).
+        assert captured["path"] == f"/storage/v1/object/dummy-bucket/{_REMOTE_PATH}"
