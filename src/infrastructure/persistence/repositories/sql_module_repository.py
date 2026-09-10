@@ -182,6 +182,12 @@ class SqlModuleRepository(ModuleRepository):
             remote_sync_error=None,
             last_synced_at=utcnow(),
         )
+        # Preserve historical remote timestamps when present (recovery restores
+        # the remote row as-is); otherwise the ORM defaults to now.
+        if entity.created_at is not None:
+            model.created_at = entity.created_at
+        if entity.updated_at is not None:
+            model.updated_at = entity.updated_at
         self._session.add(model)
         self._session.flush()
         self._session.commit()

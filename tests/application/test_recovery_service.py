@@ -1,0 +1,1552 @@
+"""Tests for RecoveryService (Spec 022, block D2).
+
+Metadata-only hierarchical recovery from remote rows into local SQLite.
+
+These tests use a real file-backed SQLite DB via DatabaseManager (matching the
+pattern in tests/infrastructure/persistence/test_recovery_primitives.py), the
+real Sql* repositories, and the real SyncStateRepository. A FakeRemoteReadPort
+returns queued RemoteQueryResult objects per table and can force a failure on a
+given table.
+"""
+
+import os
+import tempfile
+
+from src.application.interfaces.remote_read_port import RemoteQueryResult
+from src.application.services.recovery_service import RecoveryService
+from src.infrastructure.persistence.database import DatabaseManager
+from src.infrastructure.persistence.recovery_unit_of_work import SqlRecoveryUnitOfWork
+from src.infrastructure.persistence.models.greenhouse_model import GreenhouseModel
+from src.infrastructure.persistence.models.module_model import ModuleModel
+from src.infrastructure.persistence.models.user_model import UserModel
+from src.infrastructure.persistence.repositories.sql_activity_log_repository import (
+    SqlActivityLogRepository,
+)
+from src.infrastructure.persistence.repositories.sql_activity_type_repository import (
+    SqlActivityTypeRepository,
+)
+from src.infrastructure.persistence.repositories.sql_greenhouse_repository import (
+    SqlGreenhouseRepository,
+)
+from src.infrastructure.persistence.repositories.sql_inspection_result_repository import (
+    SqlInspectionResultRepository,
+)
+from src.infrastructure.persistence.repositories.sql_module_repository import (
+    SqlModuleRepository,
+)
+from src.infrastructure.persistence.repositories.sql_monitoring_metrics_repository import (
+    SqlMonitoringMetricsRepository,
+)
+from src.infrastructure.persistence.repositories.sql_monitoring_repository import (
+    SqlMonitoringRepository,
+)
+from src.infrastructure.persistence.repositories.sql_snapshot_repository import (
+    SqlSnapshotRepository,
+)
+from src.infrastructure.persistence.sync_state_repository import SyncStateRepository
+
+
+# ---------------------------------------------------------------------------
+# Remote UUID constants
+# ---------------------------------------------------------------------------
+
+REMOTE_USER = "99999999-1111-4222-8333-444444444444"
+GH_ID = "aaaaaaaa-1111-4222-8333-444444444444"
+MOD_ID = "bbbbbbbb-1111-4222-8333-444444444444"
+MON_ID = "dddddddd-1111-4222-8333-444444444444"
+METRICS_ID = "eeeeeeee-1111-4222-8333-444444444444"
+SNAP_ID = "cccccccc-1111-4222-8333-444444444444"
+INSP_ID = "ffffffff-1111-4222-8333-444444444444"
+ACT_ID = "11111111-1111-4222-8333-444444444444"
+
+
+# ---------------------------------------------------------------------------
+# Test harness
+# ---------------------------------------------------------------------------
+
+
+def _fresh_manager():
+    fd, db_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    manager = DatabaseManager(db_path=db_path)
+    manager.init_db()
+    return manager, db_path
+
+
+def _cleanup(engine, db_path):
+    try:
+        if engine is not None:
+            engine.dispose()
+    except Exception:
+        pass
+    for suffix in ("", "-wal", "-shm"):
+        path = db_path + suffix
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def _make_user(session, email: str, remote_user_id) -> int:
+    user = UserModel(
+        full_name="Operario",
+        email=email,
+        password_hash="x",
+        remote_user_id=remote_user_id,
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user.id
+
+
+class FakeRemoteReadPort:
+    """Returns queued RemoteQueryResult per table; can force a failure."""
+
+    def __init__(self, rows_by_table=None, fail_table=None, fail_error_type="CONNECTIVITY"):
+        self._rows_by_table = rows_by_table or {}
+        self._fail_table = fail_table
+        self._fail_error_type = fail_error_type
+        self.calls = []
+
+    def fetch_by_owner(self, access_token, table, owner_user_id, filters=None):
+        self.calls.append(table)
+        if table == self._fail_table:
+            return RemoteQueryResult(
+                success=False,
+                error_type=self._fail_error_type,
+                error_message="forced failure",
+            )
+        return RemoteQueryResult(success=True, rows=list(self._rows_by_table.get(table, [])))
+
+
+class _NullSession:
+    """No-op stand-in so existing tests can still call ``session.close()``.
+
+    The refactored RecoveryService no longer holds a long-lived session; it
+    opens a fresh per-row unit-of-work internally. The old harness returned a
+    session that tests closed after ``execute_recovery``; this keeps that shape
+    without holding any DB resource.
+    """
+
+    def close(self):
+        return None
+
+
+def _uow_factory(manager):
+    """Return a callable producing a fresh SqlRecoveryUnitOfWork per row."""
+    def factory():
+        return SqlRecoveryUnitOfWork(manager.get_session)
+
+    return factory
+
+
+def _build_service(manager, remote_port):
+    """Build a RecoveryService wired to a real per-row UoW factory + sync state."""
+    sync_state = SyncStateRepository(session_factory=manager.get_session)
+    return (
+        RecoveryService(
+            remote_read=remote_port,
+            uow_factory=_uow_factory(manager),
+            sync_state=sync_state,
+        ),
+        _NullSession(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Full hierarchy row builders
+# ---------------------------------------------------------------------------
+
+
+def _full_hierarchy_rows(owner=REMOTE_USER, creator=REMOTE_USER):
+    return {
+        "greenhouses": [
+            {
+                "id": GH_ID,
+                "name": "Invernadero 1",
+                "location": "Zona A",
+                "created_at": "2023-01-01T10:00:00Z",
+                "updated_at": "2023-01-02T11:00:00Z",
+                "owner_user_id": owner,
+            }
+        ],
+        "modules": [
+            {
+                "id": MOD_ID,
+                "greenhouse_id": GH_ID,
+                "name": "Modulo 1",
+                "crop_type": "Tomate Cherry",
+                "width_m": 5.0,
+                "length_m": 2.0,
+                "monitoring_frequency_days": 7,
+                "created_at": "2023-01-03T10:00:00Z",
+                "updated_at": "2023-01-04T11:00:00Z",
+            }
+        ],
+        "monitorings": [
+            {
+                "id": MON_ID,
+                "module_id": MOD_ID,
+                "status": "completed",
+                "started_at": "2023-02-01T08:00:00Z",
+                "completed_at": "2023-02-01T09:00:00Z",
+                "width_m": 5.0,
+                "length_m": 2.0,
+                "notes": "n",
+                "total_snapshots": 1,
+                "total_detections": 3,
+                "created_by_user_id": creator,
+            }
+        ],
+        "monitoring_metrics": [
+            {
+                "id": METRICS_ID,
+                "monitoring_id": MON_ID,
+                "total_tomatoes": 3,
+                "healthy_count": 2,
+                "unhealthy_count": 1,
+                "pct_healthy": 66.6,
+                "pct_unhealthy": 33.3,
+                "pct_red": 50.0,
+                "snapshots_with_detections": 1,
+                "computed_at": "2023-02-01T09:05:00Z",
+            }
+        ],
+        "snapshots": [
+            {
+                "id": SNAP_ID,
+                "monitoring_id": MON_ID,
+                "local_image_path": "monitorings/1/snapshots/raw/snap_0.jpg",
+                "raw_storage_path": "remote/raw/snap_0.jpg",
+                "annotated_storage_path": "remote/annotated/snap_0.jpg",
+                "captured_at": "2023-02-01T08:30:00Z",
+                "frame_index": 0,
+                "change_score": 0.9,
+                "has_detections": True,
+            }
+        ],
+        "inspection_results": [
+            {
+                "id": INSP_ID,
+                "snapshot_id": SNAP_ID,
+                "detection_index": 0,
+                "bbox_x1": 10,
+                "bbox_y1": 20,
+                "bbox_x2": 30,
+                "bbox_y2": 40,
+                "detection_score": 0.95,
+                "health_label": "healthy",
+                "health_confidence": 0.9,
+                "maturity_stage": "red",
+                "maturity_percent": 88.0,
+                "created_at": "2023-02-01T09:01:00Z",
+            }
+        ],
+        "activity_logs": [
+            {
+                "id": ACT_ID,
+                "module_id": MOD_ID,
+                "user_id": REMOTE_USER,
+                "activity_type_code": "riego",
+                "product_name": None,
+                "quantity": 10.0,
+                "unit": "L",
+                "notes": "riego matinal",
+                "occurred_at": "2023-02-02T07:00:00Z",
+                "created_at": "2023-02-02T07:05:00Z",
+            }
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# (1) Full hierarchy import into empty DB
+# ---------------------------------------------------------------------------
+
+
+def test_full_hierarchy_imports_all_with_local_pks_and_preserved_uuids():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        port = FakeRemoteReadPort(_full_hierarchy_rows())
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert result.entities_recovered == 7
+        assert result.entities_reused == 0
+        assert result.conflicts == 0
+        assert result.entities_skipped == 0
+
+        verify = manager.get_session()
+        try:
+            gh_repo = SqlGreenhouseRepository(verify)
+            mod_repo = SqlModuleRepository(verify)
+            mon_repo = SqlMonitoringRepository(verify)
+            snap_repo = SqlSnapshotRepository(verify)
+
+            gh = gh_repo.find_by_remote_id(GH_ID)
+            assert gh is not None and isinstance(gh.id, int)
+            assert gh.owner_user_id == local_user
+
+            mod = mod_repo.find_by_remote_id(MOD_ID)
+            assert mod is not None and mod.greenhouse_id == gh.id
+
+            mon = mon_repo.find_by_remote_id(MON_ID)
+            assert mon is not None and mon.module_id == mod.id
+            assert mon.created_by_user_id == local_user
+
+            snap = snap_repo.find_by_remote_id(SNAP_ID)
+            assert snap is not None and snap.monitoring_id == mon.id
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (2) Second run: 0 new inserts, all reused
+# ---------------------------------------------------------------------------
+
+
+def test_second_run_reuses_everything_no_new_inserts():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+
+        port1 = FakeRemoteReadPort(rows)
+        service1, s1 = _build_service(manager, port1)
+        try:
+            first = service1.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            s1.close()
+        assert first.entities_recovered == 7
+
+        port2 = FakeRemoteReadPort(rows)
+        service2, s2 = _build_service(manager, port2)
+        try:
+            second = service2.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            s2.close()
+
+        assert second.success is True
+        assert second.entities_recovered == 0
+        assert second.entities_reused == 7
+        assert second.conflicts == 0
+
+        verify = manager.get_session()
+        try:
+            count = verify.query(GreenhouseModel).count()
+            assert count == 1
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (3) Same remote_id, different remote field -> reuse, local preserved
+# ---------------------------------------------------------------------------
+
+
+def test_existing_remote_id_with_changed_field_reuses_and_preserves_local():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        port1 = FakeRemoteReadPort({"greenhouses": rows["greenhouses"]})
+        service1, s1 = _build_service(manager, port1)
+        try:
+            service1.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            s1.close()
+
+        # Second run: same remote_id but a different name/location.
+        changed = dict(rows["greenhouses"][0])
+        changed["name"] = "Renamed"
+        changed["location"] = "Zona Z"
+        port2 = FakeRemoteReadPort({"greenhouses": [changed]})
+        service2, s2 = _build_service(manager, port2)
+        try:
+            result = service2.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            s2.close()
+
+        assert result.entities_reused == 1
+        assert result.entities_recovered == 0
+
+        verify = manager.get_session()
+        try:
+            gh = SqlGreenhouseRepository(verify).find_by_remote_id(GH_ID)
+            assert gh.name == "Invernadero 1"  # local value preserved
+            assert gh.location == "Zona A"
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (4) Greenhouse owner mismatch -> conflict, no insert, subtree not recovered
+# ---------------------------------------------------------------------------
+
+
+def test_greenhouse_owner_mismatch_conflicts_and_blocks_subtree():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows(owner="00000000-0000-4000-8000-000000000000")
+        port = FakeRemoteReadPort(rows)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert result.conflicts >= 1
+        # Greenhouse not inserted -> children can't resolve parent.
+        assert any(e.code == "OWNER_MISMATCH" for e in result.errors)
+        assert result.entities_recovered == 0
+
+        verify = manager.get_session()
+        try:
+            assert verify.query(GreenhouseModel).count() == 0
+            assert verify.query(ModuleModel).count() == 0
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (5) Child parent mismatch (same remote_id, different local parent)
+# ---------------------------------------------------------------------------
+
+
+def test_module_parent_mismatch_conflicts_no_reparent():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        # Pre-seed a module with MOD_ID under a DIFFERENT local greenhouse.
+        gh_repo = SqlGreenhouseRepository(seed)
+        mod_repo = SqlModuleRepository(seed)
+        from src.domain.entities.greenhouse import Greenhouse
+        from src.domain.entities.module import Module
+
+        other_gh = gh_repo.insert_preserving_remote_id(
+            Greenhouse(name="Other", owner_user_id=local_user),
+            remote_id="12121212-1111-4222-8333-444444444444",
+        )
+        mod_repo.insert_preserving_remote_id(
+            other_gh.id,
+            Module(greenhouse_id=other_gh.id, name="Preexisting"),
+            remote_id=MOD_ID,
+        )
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        # Only greenhouse + module phases matter here.
+        port = FakeRemoteReadPort(
+            {"greenhouses": rows["greenhouses"], "modules": rows["modules"]}
+        )
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert any(e.code == "PARENT_MISMATCH" for e in result.errors)
+
+        verify = manager.get_session()
+        try:
+            mod = SqlModuleRepository(verify).find_by_remote_id(MOD_ID)
+            # Still points at the ORIGINAL local greenhouse, not reparented.
+            assert mod.greenhouse_id == other_gh.id
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (6) Greenhouse natural key conflict
+# ---------------------------------------------------------------------------
+
+
+def test_greenhouse_natural_key_conflict_no_autolink_no_duplicate():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        # Local greenhouse with same name but NO remote_id.
+        gh_model = GreenhouseModel(owner_user_id=local_user, name="Invernadero 1")
+        seed.add(gh_model)
+        seed.commit()
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        port = FakeRemoteReadPort({"greenhouses": rows["greenhouses"]})
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert any(e.code == "NATURAL_KEY_CONFLICT" for e in result.errors)
+        assert result.entities_recovered == 0
+
+        verify = manager.get_session()
+        try:
+            # No duplicate; the local row was NOT auto-linked to the remote id.
+            all_gh = verify.query(GreenhouseModel).all()
+            assert len(all_gh) == 1
+            assert all_gh[0].remote_id is None
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (7) Module natural key conflict
+# ---------------------------------------------------------------------------
+
+
+def test_module_natural_key_conflict():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        # First: recover greenhouse + module normally.
+        port1 = FakeRemoteReadPort(
+            {"greenhouses": rows["greenhouses"], "modules": rows["modules"]}
+        )
+        service1, s1 = _build_service(manager, port1)
+        try:
+            service1.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            s1.close()
+
+        # Second: a DIFFERENT remote module id, same greenhouse + same name.
+        dup_module = dict(rows["modules"][0])
+        dup_module["id"] = "77777777-1111-4222-8333-444444444444"
+        port2 = FakeRemoteReadPort(
+            {"greenhouses": rows["greenhouses"], "modules": [dup_module]}
+        )
+        service2, s2 = _build_service(manager, port2)
+        try:
+            result = service2.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            s2.close()
+
+        assert any(e.code == "NATURAL_KEY_CONFLICT" for e in result.errors)
+
+        verify = manager.get_session()
+        try:
+            assert verify.query(ModuleModel).count() == 1
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (8) Metrics 1:1 natural conflict
+# ---------------------------------------------------------------------------
+
+
+def test_metrics_one_to_one_natural_conflict():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        # First: full up to metrics.
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": rows["modules"],
+            "monitorings": rows["monitorings"],
+            "monitoring_metrics": rows["monitoring_metrics"],
+        }
+        port1 = FakeRemoteReadPort(subset)
+        service1, s1 = _build_service(manager, port1)
+        try:
+            service1.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            s1.close()
+
+        # Second: a DIFFERENT metrics remote id for the SAME monitoring.
+        dup_metrics = dict(rows["monitoring_metrics"][0])
+        dup_metrics["id"] = "88888888-1111-4222-8333-444444444444"
+        subset2 = dict(subset)
+        subset2["monitoring_metrics"] = [dup_metrics]
+        port2 = FakeRemoteReadPort(subset2)
+        service2, s2 = _build_service(manager, port2)
+        try:
+            result = service2.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            s2.close()
+
+        assert any(e.code == "NATURAL_KEY_CONFLICT" for e in result.errors)
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (9) Initial remote failure -> success=False, SQLite unchanged
+# ---------------------------------------------------------------------------
+
+
+def test_initial_remote_failure_leaves_db_unchanged():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        port = FakeRemoteReadPort(
+            _full_hierarchy_rows(), fail_table="greenhouses",
+            fail_error_type="CONNECTIVITY",
+        )
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is False
+        assert any(e.code == "REMOTE_READ_CONNECTIVITY" for e in result.errors)
+        assert result.entities_recovered == 0
+
+        verify = manager.get_session()
+        try:
+            assert verify.query(GreenhouseModel).count() == 0
+        finally:
+            verify.close()
+        # Only the first phase was attempted.
+        assert port.calls == ["greenhouses"]
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (10) Later remote failure -> prior inserts survive, success=False
+# ---------------------------------------------------------------------------
+
+
+def test_later_remote_failure_preserves_prior_inserts():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        port = FakeRemoteReadPort(rows, fail_table="monitorings")
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is False
+        # Greenhouse + module persisted before the failing phase.
+        assert result.entities_recovered == 2
+
+        verify = manager.get_session()
+        try:
+            assert verify.query(GreenhouseModel).count() == 1
+            assert verify.query(ModuleModel).count() == 1
+        finally:
+            verify.close()
+        # inspection_results / activity_logs phases never ran.
+        assert "inspection_results" not in port.calls
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (11) User mapping: monitoring.created_by_user_id remote uuid -> local id
+# ---------------------------------------------------------------------------
+
+
+def test_monitoring_creator_maps_remote_uuid_to_local_user_id():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows(creator=REMOTE_USER)
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": rows["modules"],
+            "monitorings": rows["monitorings"],
+        }
+        port = FakeRemoteReadPort(subset)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        verify = manager.get_session()
+        try:
+            mon = SqlMonitoringRepository(verify).find_by_remote_id(MON_ID)
+            assert mon.created_by_user_id == local_user
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+def test_monitoring_creator_without_mapping_is_skipped():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows(creator="55555555-1111-4222-8333-444444444444")
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": rows["modules"],
+            "monitorings": rows["monitorings"],
+            "snapshots": rows["snapshots"],
+        }
+        port = FakeRemoteReadPort(subset)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert any(e.code == "USER_MAPPING_NOT_FOUND" for e in result.errors)
+        verify = manager.get_session()
+        try:
+            assert SqlMonitoringRepository(verify).find_by_remote_id(MON_ID) is None
+            # Descendant snapshot becomes PARENT_UNRESOLVED.
+            assert SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID) is None
+        finally:
+            verify.close()
+        assert any(e.code == "PARENT_UNRESOLVED" for e in result.errors)
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (12) Activity type mapping code "riego" -> local seeded id
+# ---------------------------------------------------------------------------
+
+
+def test_activity_type_code_maps_to_local_seeded_id():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": rows["modules"],
+            "activity_logs": rows["activity_logs"],
+        }
+        port = FakeRemoteReadPort(subset)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        verify = manager.get_session()
+        try:
+            at = SqlActivityTypeRepository(verify).get_by_code("riego")
+            act = SqlActivityLogRepository(verify).find_by_remote_id(ACT_ID)
+            assert act is not None
+            assert act.activity_type_id == at.id
+            assert act.user_id == local_user
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (13) Unknown activity type -> skipped, no new catalog row
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_activity_type_skipped_no_new_catalog_row():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        act = dict(rows["activity_logs"][0])
+        act["activity_type_code"] = "does_not_exist"
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": rows["modules"],
+            "activity_logs": [act],
+        }
+        port = FakeRemoteReadPort(subset)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert any(e.code == "ACTIVITY_TYPE_NOT_FOUND" for e in result.errors)
+        verify = manager.get_session()
+        try:
+            assert SqlActivityLogRepository(verify).find_by_remote_id(ACT_ID) is None
+            assert SqlActivityTypeRepository(verify).get_by_code("does_not_exist") is None
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (14) Snapshot uses local_image_path and preserves storage paths
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_uses_local_image_path_and_preserves_storage_paths():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": rows["modules"],
+            "monitorings": rows["monitorings"],
+            "snapshots": rows["snapshots"],
+        }
+        port = FakeRemoteReadPort(subset)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        verify = manager.get_session()
+        try:
+            from src.infrastructure.persistence.models.snapshot_model import (
+                SnapshotModel,
+            )
+
+            snap = SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID)
+            assert snap is not None
+            assert snap.image_path == "monitorings/1/snapshots/raw/snap_0.jpg"
+            model = (
+                verify.query(SnapshotModel)
+                .filter(SnapshotModel.remote_id == SNAP_ID)
+                .first()
+            )
+            assert model.raw_storage_path == "remote/raw/snap_0.jpg"
+            assert model.annotated_storage_path == "remote/annotated/snap_0.jpg"
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+def test_snapshot_missing_local_image_path_is_skipped():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        bad = dict(rows["snapshots"][0])
+        bad["local_image_path"] = ""
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": rows["modules"],
+            "monitorings": rows["monitorings"],
+            "snapshots": [bad],
+        }
+        port = FakeRemoteReadPort(subset)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert any(e.code == "INVALID_SNAPSHOT_PATH" for e in result.errors)
+        verify = manager.get_session()
+        try:
+            assert SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID) is None
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (15) Invalid remote id / parent uuid -> safe skip, no global crash
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_remote_id_and_parent_are_safely_skipped():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        # Greenhouse with missing id.
+        bad_gh = dict(rows["greenhouses"][0])
+        bad_gh["id"] = ""
+        # Module with malformed greenhouse_id FK.
+        bad_mod = dict(rows["modules"][0])
+        bad_mod["greenhouse_id"] = "not-a-uuid"
+        subset = {"greenhouses": [bad_gh], "modules": [bad_mod]}
+        port = FakeRemoteReadPort(subset)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        # No crash; both rows safely skipped with INVALID_REMOTE_ID.
+        assert result.success is True
+        assert result.entities_skipped == 2
+        assert all(e.code == "INVALID_REMOTE_ID" for e in result.errors)
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (16) Historical timestamps preserved on greenhouse/module
+# ---------------------------------------------------------------------------
+
+
+def test_historical_timestamps_preserved_on_greenhouse_and_module():
+    from datetime import datetime
+
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        subset = {"greenhouses": rows["greenhouses"], "modules": rows["modules"]}
+        port = FakeRemoteReadPort(subset)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        verify = manager.get_session()
+        try:
+            gh = (
+                verify.query(GreenhouseModel)
+                .filter(GreenhouseModel.remote_id == GH_ID)
+                .first()
+            )
+            assert gh.created_at == datetime(2023, 1, 1, 10, 0, 0)
+            assert gh.updated_at == datetime(2023, 1, 2, 11, 0, 0)
+
+            mod = (
+                verify.query(ModuleModel)
+                .filter(ModuleModel.remote_id == MOD_ID)
+                .first()
+            )
+            assert mod.created_at == datetime(2023, 1, 3, 10, 0, 0)
+            assert mod.updated_at == datetime(2023, 1, 4, 11, 0, 0)
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (17) Strict UUID: 36 non-hex chars -> INVALID_REMOTE_ID skip, no crash
+# ---------------------------------------------------------------------------
+
+
+def test_strict_uuid_rejects_36_char_non_uuid_greenhouse():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+        bad_gh = dict(rows["greenhouses"][0])
+        bad_gh["id"] = "x" * 36  # 36 chars but not a UUID
+        port = FakeRemoteReadPort({"greenhouses": [bad_gh]})
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert result.entities_recovered == 0
+        assert any(e.code == "INVALID_REMOTE_ID" for e in result.errors)
+
+        verify = manager.get_session()
+        try:
+            assert verify.query(GreenhouseModel).count() == 0
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (18) LOCAL_OWNER_MISMATCH: existing local greenhouse owned by another user
+# ---------------------------------------------------------------------------
+
+
+def test_local_owner_mismatch_conflicts_and_blocks_subtree():
+    from src.domain.entities.greenhouse import Greenhouse
+
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        # User A is the recovering operator (mapped to REMOTE_USER).
+        user_a = _make_user(seed, "a@example.com", REMOTE_USER)
+        # User B owns a pre-existing local greenhouse carrying GH_ID.
+        user_b = _make_user(seed, "b@example.com", "b0b0b0b0-1111-4222-8333-444444444444")
+        gh_repo = SqlGreenhouseRepository(seed)
+        gh_repo.insert_preserving_remote_id(
+            Greenhouse(name="Owned by B", owner_user_id=user_b),
+            remote_id=GH_ID,
+        )
+        seed.close()
+
+        # Cloud greenhouse row is owned by A's remote id; plus a child module.
+        rows = _full_hierarchy_rows(owner=REMOTE_USER)
+        port = FakeRemoteReadPort(
+            {"greenhouses": rows["greenhouses"], "modules": rows["modules"]}
+        )
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, user_a)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert result.conflicts >= 1
+        assert any(e.code == "LOCAL_OWNER_MISMATCH" for e in result.errors)
+        # Greenhouse not in map -> child module cannot resolve its parent.
+        assert any(
+            e.code == "PARENT_UNRESOLVED" and e.entity_type == "modules"
+            for e in result.errors
+        )
+
+        verify = manager.get_session()
+        try:
+            gh = SqlGreenhouseRepository(verify).find_by_remote_id(GH_ID)
+            # Greenhouse NOT modified / NOT reparented: still owned by B.
+            assert gh.owner_user_id == user_b
+            assert gh.name == "Owned by B"
+            # No auto-linked module created.
+            assert SqlModuleRepository(verify).find_by_remote_id(MOD_ID) is None
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (19) Monitoring REUSE independent of user mapping
+# ---------------------------------------------------------------------------
+
+
+def test_monitoring_reuse_independent_of_user_mapping():
+    from src.domain.entities.greenhouse import Greenhouse
+    from src.domain.entities.module import Module
+    from src.domain.entities.monitoring import Monitoring
+
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        gh_repo = SqlGreenhouseRepository(seed)
+        mod_repo = SqlModuleRepository(seed)
+        mon_repo = SqlMonitoringRepository(seed)
+
+        gh = gh_repo.insert_preserving_remote_id(
+            Greenhouse(name="Invernadero 1", owner_user_id=local_user),
+            remote_id=GH_ID,
+        )
+        mod = mod_repo.insert_preserving_remote_id(
+            gh.id,
+            Module(greenhouse_id=gh.id, name="Modulo 1"),
+            remote_id=MOD_ID,
+        )
+        mon_repo.insert_preserving_remote_id(
+            mod.id,
+            Monitoring(
+                module_id=mod.id,
+                status="completed",
+                created_by_user_id=local_user,
+            ),
+            remote_id=MON_ID,
+        )
+        seed.close()
+
+        # Monitoring row references a creator with NO local mapping. A snapshot
+        # child depends on the monitoring being mapped by reuse.
+        unmapped = "55555555-1111-4222-8333-444444444444"
+        rows = _full_hierarchy_rows(creator=unmapped)
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": rows["modules"],
+            "monitorings": rows["monitorings"],
+            "snapshots": rows["snapshots"],
+        }
+        port = FakeRemoteReadPort(subset)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        # Monitoring reused (creator mapping never consulted).
+        assert not any(e.code == "USER_MAPPING_NOT_FOUND" for e in result.errors)
+        assert result.entities_reused >= 1  # gh + mod + mon reused
+
+        verify = manager.get_session()
+        try:
+            mon = SqlMonitoringRepository(verify).find_by_remote_id(MON_ID)
+            # Local monitoring unchanged: creator preserved.
+            assert mon.created_by_user_id == local_user
+            # Monitoring mapped -> child snapshot recovered.
+            snap = SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID)
+            assert snap is not None and snap.monitoring_id == mon.id
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (20) ActivityLog REUSE independent of user/type mapping
+# ---------------------------------------------------------------------------
+
+
+def test_activity_log_reuse_independent_of_mappings():
+    from src.domain.entities.activity_log import ActivityLog
+    from src.domain.entities.greenhouse import Greenhouse
+    from src.domain.entities.module import Module
+
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        gh_repo = SqlGreenhouseRepository(seed)
+        mod_repo = SqlModuleRepository(seed)
+        act_repo = SqlActivityLogRepository(seed)
+        riego = SqlActivityTypeRepository(seed).get_by_code("riego")
+
+        gh = gh_repo.insert_preserving_remote_id(
+            Greenhouse(name="Invernadero 1", owner_user_id=local_user),
+            remote_id=GH_ID,
+        )
+        mod = mod_repo.insert_preserving_remote_id(
+            gh.id,
+            Module(greenhouse_id=gh.id, name="Modulo 1"),
+            remote_id=MOD_ID,
+        )
+        act_repo.insert_preserving_remote_id(
+            ActivityLog(
+                module_id=mod.id,
+                activity_type_id=riego.id,
+                user_id=local_user,
+                notes="seeded",
+            ),
+            remote_id=ACT_ID,
+        )
+        seed.close()
+
+        # Activity row references an unmapped user and a nonexistent type code.
+        rows = _full_hierarchy_rows()
+        act = dict(rows["activity_logs"][0])
+        act["user_id"] = "55555555-1111-4222-8333-444444444444"  # unmapped
+        act["activity_type_code"] = "does_not_exist"  # nonexistent
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": rows["modules"],
+            "activity_logs": [act],
+        }
+        port = FakeRemoteReadPort(subset)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert not any(e.code == "USER_MAPPING_NOT_FOUND" for e in result.errors)
+        assert not any(e.code == "ACTIVITY_TYPE_NOT_FOUND" for e in result.errors)
+
+        verify = manager.get_session()
+        try:
+            row = SqlActivityLogRepository(verify).find_by_remote_id(ACT_ID)
+            # Local row unchanged: still the seeded user/type/notes.
+            assert row.user_id == local_user
+            assert row.activity_type_id == riego.id
+            assert row.notes == "seeded"
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (21) Session/network boundary: no remote fetch inside an open local UoW
+# ---------------------------------------------------------------------------
+
+
+class _ScopeFlag:
+    """Mutable holder tracking whether a local UoW scope is currently open."""
+
+    def __init__(self):
+        self.active = False
+
+
+class _SpyUnitOfWork:
+    """Wraps a real SqlRecoveryUnitOfWork, flipping a shared flag on enter/exit.
+
+    The production UoW is NOT modified; the spy only observes its lifecycle.
+    """
+
+    def __init__(self, inner, flag: _ScopeFlag):
+        self._inner = inner
+        self._flag = flag
+
+    def __enter__(self):
+        self._inner.__enter__()
+        self._flag.active = True
+        return self._inner
+
+    def __exit__(self, exc_type, exc, tb):
+        self._flag.active = False
+        return self._inner.__exit__(exc_type, exc, tb)
+
+
+class _BoundaryRemoteReadPort(FakeRemoteReadPort):
+    """FakeRemoteReadPort that asserts no local UoW is open on each fetch."""
+
+    def __init__(self, flag: _ScopeFlag, rows_by_table=None):
+        super().__init__(rows_by_table=rows_by_table)
+        self._flag = flag
+
+    def fetch_by_owner(self, access_token, table, owner_user_id, filters=None):
+        assert self._flag.active is False, (
+            f"Remote fetch of '{table}' happened inside an open local UoW."
+        )
+        return super().fetch_by_owner(access_token, table, owner_user_id, filters)
+
+
+def test_no_remote_fetch_inside_open_local_unit_of_work():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        flag = _ScopeFlag()
+
+        def spy_factory():
+            return _SpyUnitOfWork(SqlRecoveryUnitOfWork(manager.get_session), flag)
+
+        rows = _full_hierarchy_rows()
+        sync_state = SyncStateRepository(session_factory=manager.get_session)
+
+        # First run: full multi-phase import.
+        port1 = _BoundaryRemoteReadPort(flag, rows)
+        service1 = RecoveryService(
+            remote_read=port1, uow_factory=spy_factory, sync_state=sync_state
+        )
+        first = service1.execute_recovery("token", REMOTE_USER, local_user)
+        assert first.success is True
+        assert first.entities_recovered == 7
+        assert flag.active is False  # closed after last row
+
+        # Second run: reuse across multiple phases.
+        port2 = _BoundaryRemoteReadPort(flag, rows)
+        service2 = RecoveryService(
+            remote_read=port2, uow_factory=spy_factory, sync_state=sync_state
+        )
+        second = service2.execute_recovery("token", REMOTE_USER, local_user)
+        assert second.success is True
+        assert second.entities_reused == 7
+        assert flag.active is False
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (22) Row-error isolation: bad row in a phase does not poison the next row
+# ---------------------------------------------------------------------------
+
+
+def test_row_error_isolation_within_phase_domain_error_per_row():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+
+        # Row A: valid uuid/parent but monitoring_frequency_days = -1 raises in
+        # Module.__post_init__ during handler processing (a pre-flush domain
+        # error) -> INSERT_ERROR skip. (SQL-failed-session isolation is covered
+        # separately by test_row_error_isolation_failed_sql_session_per_row.)
+        bad_module = dict(rows["modules"][0])
+        bad_module["id"] = "aa000000-1111-4222-8333-444444444444"
+        bad_module["name"] = "Bad Module"
+        bad_module["monitoring_frequency_days"] = -1
+
+        # Row B: valid, distinct id/name -> recovers in its own fresh UoW.
+        good_module = dict(rows["modules"][0])
+        good_module["id"] = MOD_ID
+        good_module["name"] = "Good Module"
+
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": [bad_module, good_module],
+        }
+        port = FakeRemoteReadPort(subset)
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        # Remote read succeeded for every phase -> success stays True.
+        assert result.success is True
+        # Row A produced an INSERT_ERROR; row B still recovered.
+        assert any(e.code == "INSERT_ERROR" for e in result.errors)
+
+        verify = manager.get_session()
+        try:
+            # Greenhouse (1 row) + only the good module persisted.
+            assert verify.query(ModuleModel).count() == 1
+            good = SqlModuleRepository(verify).find_by_remote_id(MOD_ID)
+            assert good is not None and good.name == "Good Module"
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# Row-error isolation with a REAL failed SQLAlchemy session (flush IntegrityError)
+# ---------------------------------------------------------------------------
+
+
+class _FailingModuleRepo:
+    """Test-only wrapper: reads delegate to the real repo, but the recovery
+    insert forces a REAL IntegrityError during ``session.flush()`` by adding an
+    orphan ModuleModel whose greenhouse_id does not exist (FK violation with
+    PRAGMA foreign_keys = ON). It does NOT roll back, so the UoW's Session is
+    left in a failed state until the real SqlRecoveryUnitOfWork.__exit__ cleans
+    it up. Production code is untouched.
+    """
+
+    def __init__(self, real_repo, session):
+        self._real = real_repo
+        self._session = session
+
+    def find_by_remote_id(self, remote_id):
+        return self._real.find_by_remote_id(remote_id)
+
+    def get_by_greenhouse(self, greenhouse_id):
+        return self._real.get_by_greenhouse(greenhouse_id)
+
+    def insert_preserving_remote_id(self, greenhouse_id, entity, remote_id):
+        # Insert an orphan row (greenhouse_id that cannot exist) and flush so
+        # SQLite raises IntegrityError; leave the session failed (no rollback).
+        orphan = ModuleModel(
+            greenhouse_id=999999999,
+            name=entity.name,
+            crop_type=entity.crop_type,
+            remote_id=remote_id,
+            remote_sync_status="synced",
+        )
+        self._session.add(orphan)
+        self._session.flush()  # -> sqlalchemy.exc.IntegrityError (FK violation)
+        # Not reached; kept for interface completeness.
+        return self._real.insert_preserving_remote_id(greenhouse_id, entity, remote_id)
+
+
+class _FailingFirstModuleUoW:
+    """Wraps a real SqlRecoveryUnitOfWork; for the FIRST module insert it swaps
+    module_repo for a repo that fails on flush. Uses the real Session and the
+    real __exit__ (defensive rollback + close)."""
+
+    def __init__(self, real_uow, state):
+        self._real = real_uow
+        self._state = state  # {"module_uow_count": int, "session_ids": list}
+
+    def __enter__(self):
+        self._real.__enter__()
+        # Record the real Session id for module-phase UoWs so the test can
+        # prove rows A and B ran on DIFFERENT sessions.
+        session = self._real._session  # test-only introspection
+        self._state["session_ids"].append(id(session))
+        self._state["module_uow_count"] += 1
+        # Only the FIRST module UoW gets the failing repo wrapper.
+        if self._state["module_uow_count"] == 1:
+            self._real.module_repo = _FailingModuleRepo(
+                self._real.module_repo, session
+            )
+        return self._real
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._real.__exit__(exc_type, exc, tb)
+
+
+def test_row_error_isolation_failed_sql_session_per_row():
+    """A row whose flush() fails (real IntegrityError) leaves its Session in a
+    failed state, but the next row recovers because it runs in a fresh UoW /
+    Session. No PendingRollbackError leaks to row B."""
+    import sqlalchemy.exc
+
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        rows = _full_hierarchy_rows()
+
+        # Row A: valid payload/uuid; its test UoW forces a flush IntegrityError.
+        bad_module = dict(rows["modules"][0])
+        bad_module["id"] = "aa000000-1111-4222-8333-444444444444"
+        bad_module["name"] = "Bad Module"
+
+        # Row B: fully valid, distinct id/name.
+        good_module = dict(rows["modules"][0])
+        good_module["id"] = MOD_ID
+        good_module["name"] = "Good Module"
+
+        subset = {
+            "greenhouses": rows["greenhouses"],
+            "modules": [bad_module, good_module],
+        }
+
+        state = {"module_uow_count": 0, "session_ids": []}
+
+        # Factory: greenhouse phase uses a plain real UoW; module phase uses the
+        # failing-first wrapper. We distinguish by whether a module row is being
+        # processed — simplest is to always wrap and let the wrapper decide
+        # (module_uow_count only increments here, but greenhouse also enters).
+        # To keep module counting accurate, only wrap module-phase UoWs by
+        # tracking phase order: greenhouse first (1 row), then modules.
+        phase_state = {"uow_created": 0}
+
+        def factory():
+            phase_state["uow_created"] += 1
+            real = SqlRecoveryUnitOfWork(manager.get_session)
+            # The first UoW created is the single greenhouse row; wrap only the
+            # subsequent (module) UoWs with the failing-first behavior.
+            if phase_state["uow_created"] == 1:
+                return real
+            return _FailingFirstModuleUoW(real, state)
+
+        # Confirm the wrapper truly triggers a SQLAlchemy IntegrityError on flush
+        # in isolation (sanity check of the mechanism, using a throwaway UoW).
+        probe = SqlRecoveryUnitOfWork(manager.get_session)
+        probe.__enter__()
+        try:
+            failing = _FailingModuleRepo(probe.module_repo, probe._session)
+            from src.domain.entities.module import Module as _Module
+
+            raised = False
+            try:
+                failing.insert_preserving_remote_id(
+                    1, _Module(greenhouse_id=1, name="probe"), "probe-remote-id"
+                )
+            except sqlalchemy.exc.IntegrityError:
+                raised = True
+            assert raised is True
+        finally:
+            probe.__exit__(None, None, None)
+
+        port = FakeRemoteReadPort(subset)
+        sync_state = SyncStateRepository(session_factory=manager.get_session)
+        service = RecoveryService(
+            remote_read=port, uow_factory=factory, sync_state=sync_state
+        )
+
+        result = service.execute_recovery("token", REMOTE_USER, local_user)
+
+        # Remote reads succeeded for every phase -> success stays True.
+        assert result.success is True
+        # Row A produced an INSERT_ERROR (from the real failed flush).
+        assert any(e.code == "INSERT_ERROR" for e in result.errors)
+
+        # Two module UoWs were created, on DIFFERENT real Sessions.
+        assert state["module_uow_count"] == 2
+        assert len(state["session_ids"]) == 2
+        assert state["session_ids"][0] != state["session_ids"][1]
+
+        verify = manager.get_session()
+        try:
+            # Greenhouse recovered; only the good module persisted (bad rolled back).
+            assert verify.query(GreenhouseModel).count() == 1
+            assert verify.query(ModuleModel).count() == 1
+            good = SqlModuleRepository(verify).find_by_remote_id(MOD_ID)
+            assert good is not None and good.name == "Good Module"
+            # The bad module's orphan row never survived.
+            assert (
+                SqlModuleRepository(verify).find_by_remote_id(
+                    "aa000000-1111-4222-8333-444444444444"
+                )
+                is None
+            )
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
