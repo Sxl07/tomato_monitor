@@ -9,7 +9,12 @@ integer primary keys.
 
 Scope (metadata only):
     - NO image/video download, NO filesystem access.
-    - NO anti-resurrection / deletion_outbox handling.
+    - Anti-resurrection (Spec 022, D3.1): before recovering or reusing a remote
+      entity the service consults a RecoveryTombstonePort. A blocking tombstone
+      (pending | syncing | error) on the exact remote identity prevents the row
+      from being reused/inserted/mapped, and its descendants are blocked via a
+      per-run blocked-lineage marker. A failed tombstone lookup fails safe (the
+      row is skipped and its subtree blocked) without aborting the whole run.
     - NO API/UI/auth/wiring. Authentication is assumed already resolved.
     - Import-missing-only: this service NEVER updates, merges, reparents, or
       duplicates an existing local row. It only inserts missing rows or reuses
@@ -33,6 +38,10 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
+from src.application.interfaces.recovery_tombstone_port import (
+    RecoveryTombstonePort,
+    TombstoneCheckResult,
+)
 from src.application.interfaces.recovery_unit_of_work_port import (
     RecoveryUnitOfWorkFactory,
 )
@@ -107,6 +116,19 @@ _TABLE_SNAPSHOTS = "snapshots"
 _TABLE_INSPECTION_RESULTS = "inspection_results"
 _TABLE_ACTIVITY_LOGS = "activity_logs"
 
+# Explicit map from a recovery-phase remote table to the deletion_outbox
+# entity_type that could DIRECTLY tombstone it (Spec 022, D3.1). Only these
+# three tables have a direct tombstone type; there is NO auto-pluralization.
+# Tables NOT listed here (monitoring_metrics, snapshots, inspection_results,
+# activity_logs) have NO direct tombstone type — they are blocked only via
+# blocked lineage (an ancestor being tombstoned). Do NOT invent tombstone
+# types for them.
+_TABLE_TO_TOMBSTONE_ENTITY_TYPE = {
+    _TABLE_GREENHOUSES: "greenhouse",
+    _TABLE_MODULES: "module",
+    _TABLE_MONITORINGS: "monitoring",
+}
+
 
 class RecoveryService:
     """Recovers the local hierarchy from remote metadata rows.
@@ -123,10 +145,12 @@ class RecoveryService:
         remote_read: RemoteReadPort,
         uow_factory: RecoveryUnitOfWorkFactory,
         sync_state: SyncStatePort,
+        tombstone_guard: RecoveryTombstonePort,
     ) -> None:
         self._remote_read = remote_read
         self._uow_factory = uow_factory
         self._sync_state = sync_state
+        self._tombstone_guard = tombstone_guard
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -151,6 +175,16 @@ class RecoveryService:
         result = RecoveryResult(success=True)
         # (entity_type, remote_uuid) -> local int id. Only parents are tracked.
         remote_to_local: dict[tuple[str, str], int] = {}
+        # Per-run blocked lineage: (parent_map_key, remote_uuid) of any entity
+        # that was tombstoned, failed its tombstone check, or descends from such
+        # an entity. Keyed with the SAME parent map keys used in remote_to_local
+        # (_GREENHOUSE, _MODULE, _MONITORING, _SNAPSHOT). Descendants consult it
+        # to skip with PARENT_TOMBSTONED and keep propagating the marker.
+        blocked_lineage: set[tuple[str, str]] = set()
+        # Per-run cache of tombstone checks, keyed by (outbox_entity_type,
+        # remote_id). Lives only for this run so a remote identity is queried at
+        # most once.
+        tombstone_cache: dict[tuple[str, str], TombstoneCheckResult] = {}
 
         phases = (
             (_TABLE_GREENHOUSES, self._recover_greenhouse_row),
@@ -192,22 +226,55 @@ class RecoveryService:
                         remote_user_id,
                         local_user_id,
                         uow,
+                        blocked_lineage,
+                        tombstone_cache,
                     )
 
         return result
+
+    # ------------------------------------------------------------------
+    # Anti-resurrection helper
+    # ------------------------------------------------------------------
+
+    def _check_tombstone(
+        self,
+        entity_type: str,
+        remote_id: str,
+        cache: dict[tuple[str, str], TombstoneCheckResult],
+    ) -> TombstoneCheckResult:
+        """Consult the per-run cache, else the tombstone guard, then cache it.
+
+        A single remote identity is looked up at most once per run.
+        """
+        key = (entity_type, remote_id)
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        checked = self._tombstone_guard.check(entity_type, remote_id)
+        cache[key] = checked
+        return checked
 
     # ------------------------------------------------------------------
     # Phase handlers (one row at a time, fault-isolated, per-row UoW)
     # ------------------------------------------------------------------
 
     def _recover_greenhouse_row(
-        self, row, result, remote_to_local, remote_user_id, local_user_id, uow
+        self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
+        blocked_lineage, tombstone_cache
     ) -> None:
         remote_id = row.get("id")
         try:
             if not _is_valid_uuid(remote_id):
                 self._skip(result, _TABLE_GREENHOUSES, remote_id, "INVALID_REMOTE_ID",
                            "Missing or invalid remote id.")
+                return
+
+            # Anti-resurrection: a blocking (or unresolvable) tombstone on this
+            # greenhouse prevents recovery/reuse and blocks the whole subtree.
+            if self._tombstone_blocks(
+                _TABLE_GREENHOUSES, remote_id, result, blocked_lineage,
+                tombstone_cache, own_map_key=_GREENHOUSE,
+            ):
                 return
 
             # Defense-in-depth: greenhouses carry an explicit owner column.
@@ -267,7 +334,8 @@ class RecoveryService:
             self._row_error(result, _TABLE_GREENHOUSES, remote_id, exc)
 
     def _recover_module_row(
-        self, row, result, remote_to_local, remote_user_id, local_user_id, uow
+        self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
+        blocked_lineage, tombstone_cache
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -276,10 +344,26 @@ class RecoveryService:
                            "Missing or invalid remote id.")
                 return
 
+            # Anti-resurrection: direct tombstone on this module (module is both
+            # a child of greenhouse and a parent of monitorings/activity_logs).
+            if self._tombstone_blocks(
+                _TABLE_MODULES, remote_id, result, blocked_lineage,
+                tombstone_cache, own_map_key=_MODULE,
+            ):
+                return
+
             remote_parent = row.get("greenhouse_id")
             if not _is_valid_uuid(remote_parent):
                 self._skip(result, _TABLE_MODULES, remote_id, "INVALID_REMOTE_ID",
                            "Missing or invalid remote greenhouse_id.")
+                return
+
+            # Blocked-lineage: parent greenhouse tombstoned/failed -> block this
+            # module and keep propagating the marker down to its own subtree.
+            if self._lineage_blocks(
+                _TABLE_MODULES, remote_id, (_GREENHOUSE, remote_parent),
+                result, blocked_lineage, own_map_key=_MODULE,
+            ):
                 return
 
             local_greenhouse_id = remote_to_local.get((_GREENHOUSE, remote_parent))
@@ -339,7 +423,8 @@ class RecoveryService:
             self._row_error(result, _TABLE_MODULES, remote_id, exc)
 
     def _recover_monitoring_row(
-        self, row, result, remote_to_local, remote_user_id, local_user_id, uow
+        self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
+        blocked_lineage, tombstone_cache
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -348,10 +433,26 @@ class RecoveryService:
                            "Missing or invalid remote id.")
                 return
 
+            # Anti-resurrection: direct tombstone on this monitoring (child of
+            # module, parent of metrics/snapshots).
+            if self._tombstone_blocks(
+                _TABLE_MONITORINGS, remote_id, result, blocked_lineage,
+                tombstone_cache, own_map_key=_MONITORING,
+            ):
+                return
+
             remote_parent = row.get("module_id")
             if not _is_valid_uuid(remote_parent):
                 self._skip(result, _TABLE_MONITORINGS, remote_id, "INVALID_REMOTE_ID",
                            "Missing or invalid remote module_id.")
+                return
+
+            # Blocked-lineage: parent module tombstoned/failed -> block this
+            # monitoring and keep propagating to its metrics/snapshot subtree.
+            if self._lineage_blocks(
+                _TABLE_MONITORINGS, remote_id, (_MODULE, remote_parent),
+                result, blocked_lineage, own_map_key=_MONITORING,
+            ):
                 return
 
             local_module_id = remote_to_local.get((_MODULE, remote_parent))
@@ -424,7 +525,8 @@ class RecoveryService:
             self._row_error(result, _TABLE_MONITORINGS, remote_id, exc)
 
     def _recover_metrics_row(
-        self, row, result, remote_to_local, remote_user_id, local_user_id, uow
+        self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
+        blocked_lineage, tombstone_cache
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -433,10 +535,20 @@ class RecoveryService:
                            "INVALID_REMOTE_ID", "Missing or invalid remote id.")
                 return
 
+            # No direct tombstone type for monitoring_metrics: it can only be
+            # blocked via its ancestor monitoring's lineage (checked below).
             remote_parent = row.get("monitoring_id")
             if not _is_valid_uuid(remote_parent):
                 self._skip(result, _TABLE_MONITORING_METRICS, remote_id,
                            "INVALID_REMOTE_ID", "Missing or invalid remote monitoring_id.")
+                return
+
+            # Blocked-lineage: parent monitoring tombstoned/failed. Metrics is a
+            # leaf, so no own lineage key is registered.
+            if self._lineage_blocks(
+                _TABLE_MONITORING_METRICS, remote_id, (_MONITORING, remote_parent),
+                result, blocked_lineage, own_map_key=None,
+            ):
                 return
 
             local_monitoring_id = remote_to_local.get((_MONITORING, remote_parent))
@@ -500,7 +612,8 @@ class RecoveryService:
             self._row_error(result, _TABLE_MONITORING_METRICS, remote_id, exc)
 
     def _recover_snapshot_row(
-        self, row, result, remote_to_local, remote_user_id, local_user_id, uow
+        self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
+        blocked_lineage, tombstone_cache
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -509,10 +622,20 @@ class RecoveryService:
                            "Missing or invalid remote id.")
                 return
 
+            # No direct tombstone type for snapshots (they are deleted only via
+            # cascade); a snapshot is blocked only via its monitoring's lineage.
             remote_parent = row.get("monitoring_id")
             if not _is_valid_uuid(remote_parent):
                 self._skip(result, _TABLE_SNAPSHOTS, remote_id, "INVALID_REMOTE_ID",
                            "Missing or invalid remote monitoring_id.")
+                return
+
+            # Blocked-lineage: parent monitoring tombstoned/failed. Snapshot is
+            # itself a parent of inspection_results, so register its own marker.
+            if self._lineage_blocks(
+                _TABLE_SNAPSHOTS, remote_id, (_MONITORING, remote_parent),
+                result, blocked_lineage, own_map_key=_SNAPSHOT,
+            ):
                 return
 
             local_monitoring_id = remote_to_local.get((_MONITORING, remote_parent))
@@ -571,7 +694,8 @@ class RecoveryService:
             self._row_error(result, _TABLE_SNAPSHOTS, remote_id, exc)
 
     def _recover_inspection_row(
-        self, row, result, remote_to_local, remote_user_id, local_user_id, uow
+        self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
+        blocked_lineage, tombstone_cache
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -580,10 +704,20 @@ class RecoveryService:
                            "INVALID_REMOTE_ID", "Missing or invalid remote id.")
                 return
 
+            # No direct tombstone type for inspection_results (cascade-only);
+            # blocked only via its ancestor snapshot's lineage.
             remote_parent = row.get("snapshot_id")
             if not _is_valid_uuid(remote_parent):
                 self._skip(result, _TABLE_INSPECTION_RESULTS, remote_id,
                            "INVALID_REMOTE_ID", "Missing or invalid remote snapshot_id.")
+                return
+
+            # Blocked-lineage: parent snapshot tombstoned/failed. Leaf: no own
+            # lineage key.
+            if self._lineage_blocks(
+                _TABLE_INSPECTION_RESULTS, remote_id, (_SNAPSHOT, remote_parent),
+                result, blocked_lineage, own_map_key=None,
+            ):
                 return
 
             local_snapshot_id = remote_to_local.get((_SNAPSHOT, remote_parent))
@@ -638,7 +772,8 @@ class RecoveryService:
             self._row_error(result, _TABLE_INSPECTION_RESULTS, remote_id, exc)
 
     def _recover_activity_log_row(
-        self, row, result, remote_to_local, remote_user_id, local_user_id, uow
+        self, row, result, remote_to_local, remote_user_id, local_user_id, uow,
+        blocked_lineage, tombstone_cache
     ) -> None:
         remote_id = row.get("id")
         try:
@@ -647,10 +782,20 @@ class RecoveryService:
                            "Missing or invalid remote id.")
                 return
 
+            # No direct tombstone type for activity_logs; blockable only via its
+            # parent module's lineage (a tombstoned monitoring does NOT block an
+            # activity_log, since its parent is the module, not the monitoring).
             remote_parent = row.get("module_id")
             if not _is_valid_uuid(remote_parent):
                 self._skip(result, _TABLE_ACTIVITY_LOGS, remote_id, "INVALID_REMOTE_ID",
                            "Missing or invalid remote module_id.")
+                return
+
+            # Blocked-lineage: parent module tombstoned/failed. Leaf: no own key.
+            if self._lineage_blocks(
+                _TABLE_ACTIVITY_LOGS, remote_id, (_MODULE, remote_parent),
+                result, blocked_lineage, own_map_key=None,
+            ):
                 return
 
             local_module_id = remote_to_local.get((_MODULE, remote_parent))
@@ -724,6 +869,64 @@ class RecoveryService:
                                "PARENT_MISMATCH", "Race on existing activity row.")
         except Exception as exc:  # noqa: BLE001
             self._row_error(result, _TABLE_ACTIVITY_LOGS, remote_id, exc)
+
+    # ------------------------------------------------------------------
+    # Anti-resurrection guard helpers (Spec 022, D3.1)
+    # ------------------------------------------------------------------
+
+    def _tombstone_blocks(
+        self, table, remote_id, result, blocked_lineage, tombstone_cache,
+        own_map_key,
+    ) -> bool:
+        """Direct tombstone check for a table with a direct tombstone type.
+
+        Returns True (caller must RETURN) when a blocking tombstone exists or
+        the lookup fails. In both cases the row is neither reused, inserted, nor
+        mapped, and — when this entity is itself a lineage parent — its own
+        (own_map_key, remote_id) marker is added to ``blocked_lineage`` so its
+        descendants are blocked too. Returns False when no tombstone blocks.
+        """
+        outbox_type = _TABLE_TO_TOMBSTONE_ENTITY_TYPE.get(table)
+        if outbox_type is None:
+            # No direct tombstone type for this table.
+            return False
+
+        checked = self._check_tombstone(outbox_type, remote_id, tombstone_cache)
+        if not checked.success:
+            self._skip(result, table, remote_id, "TOMBSTONE_CHECK_FAILED",
+                       "Tombstone lookup failed; skipping to avoid resurrection.")
+            self._mark_lineage(blocked_lineage, own_map_key, remote_id)
+            return True
+        if checked.blocked:
+            self._skip(result, table, remote_id, "TOMBSTONE_BLOCKED",
+                       f"Blocking tombstone present (status={checked.status}).")
+            self._mark_lineage(blocked_lineage, own_map_key, remote_id)
+            return True
+        return False
+
+    def _lineage_blocks(
+        self, table, remote_id, parent_key, result, blocked_lineage, own_map_key,
+    ) -> bool:
+        """Blocked-lineage check for a child row.
+
+        ``parent_key`` is (parent_map_key, remote_parent_uuid). Returns True
+        (caller must RETURN) when the parent is in ``blocked_lineage``: the row
+        is skipped with PARENT_TOMBSTONED, never reused/inserted/mapped, and —
+        when this child is itself a lineage parent — its own marker is added so
+        the subtree keeps propagating. Returns False otherwise.
+        """
+        if parent_key in blocked_lineage:
+            self._skip(result, table, remote_id, "PARENT_TOMBSTONED",
+                       "An ancestor is tombstoned; skipping descendant.")
+            self._mark_lineage(blocked_lineage, own_map_key, remote_id)
+            return True
+        return False
+
+    @staticmethod
+    def _mark_lineage(blocked_lineage, own_map_key, remote_id) -> None:
+        """Register (own_map_key, remote_id) so descendants stay blocked."""
+        if own_map_key is not None:
+            blocked_lineage.add((own_map_key, remote_id))
 
     # ------------------------------------------------------------------
     # Race handling helpers

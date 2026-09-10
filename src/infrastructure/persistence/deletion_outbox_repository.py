@@ -191,6 +191,42 @@ class DeletionOutboxRepository:
         finally:
             session.close()
 
+    def find_blocking_by_remote_identity(
+        self, entity_type: str, remote_id: str
+    ) -> Optional[DeletionOutboxEntry]:
+        """Return a BLOCKING tombstone for (entity_type, remote_id), or None.
+
+        Anti-resurrection lookup (Spec 022, D3.1): a tombstone blocks recovery
+        of a remote entity when its ``entity_type`` and ``remote_id`` match
+        EXACTLY and its remote-propagation ``status`` is not yet ``synced``
+        (i.e. one of ``pending`` | ``syncing`` | ``error``). A ``synced``
+        tombstone does NOT block. A row with ``remote_id IS NULL`` never blocks
+        a valid remote UUID (the equality filter excludes NULLs). Matching is by
+        remote identity only — never by name, local id, timestamps, or owner.
+
+        Read-only; does not mutate outbox state or Spec 021 semantics. Oldest
+        match first for determinism.
+        """
+        if not remote_id:
+            return None
+        session = self._session_factory()
+        try:
+            model = (
+                session.query(DeletionOutboxModel)
+                .filter(
+                    DeletionOutboxModel.entity_type == entity_type,
+                    DeletionOutboxModel.remote_id == remote_id,
+                    DeletionOutboxModel.status.in_(_RETRYABLE_REMOTE_STATUSES),
+                )
+                .order_by(DeletionOutboxModel.created_at.asc())
+                .first()
+            )
+            if model is None:
+                return None
+            return _to_entry(model)
+        finally:
+            session.close()
+
     def get_pending_for_propagation(
         self, owner_user_id: int
     ) -> List[DeletionOutboxEntry]:

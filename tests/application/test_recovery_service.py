@@ -12,10 +12,18 @@ given table.
 import os
 import tempfile
 
+from src.application.interfaces.recovery_tombstone_port import TombstoneCheckResult
 from src.application.interfaces.remote_read_port import RemoteQueryResult
+from src.application.services.deletion_service import ENTITY_TYPE_TO_REMOTE_TABLE
 from src.application.services.recovery_service import RecoveryService
 from src.infrastructure.persistence.database import DatabaseManager
+from src.infrastructure.persistence.recovery_tombstone_adapter import (
+    SqlRecoveryTombstoneAdapter,
+)
 from src.infrastructure.persistence.recovery_unit_of_work import SqlRecoveryUnitOfWork
+from src.infrastructure.persistence.models.deletion_outbox_model import (
+    DeletionOutboxModel,
+)
 from src.infrastructure.persistence.models.greenhouse_model import GreenhouseModel
 from src.infrastructure.persistence.models.module_model import ModuleModel
 from src.infrastructure.persistence.models.user_model import UserModel
@@ -142,17 +150,89 @@ def _uow_factory(manager):
     return factory
 
 
-def _build_service(manager, remote_port):
-    """Build a RecoveryService wired to a real per-row UoW factory + sync state."""
+def _build_service(manager, remote_port, tombstone_guard=None):
+    """Build a RecoveryService wired to a real per-row UoW factory + sync state.
+
+    By default the real ``SqlRecoveryTombstoneAdapter`` is used over the real
+    (empty) deletion_outbox: with nothing seeded, no tombstone blocks, so all
+    metadata-only D2 tests keep passing unchanged. Tests that need controlled
+    outcomes pass a ``FakeTombstoneGuard``.
+    """
     sync_state = SyncStateRepository(session_factory=manager.get_session)
+    guard = tombstone_guard or SqlRecoveryTombstoneAdapter(manager.get_session)
     return (
         RecoveryService(
             remote_read=remote_port,
             uow_factory=_uow_factory(manager),
             sync_state=sync_state,
+            tombstone_guard=guard,
         ),
         _NullSession(),
     )
+
+
+def _seed_tombstone(
+    manager, entity_type, remote_id, status="pending", entity_local_id=1
+):
+    """Insert a durable deletion_outbox tombstone directly via a session.
+
+    ``remote_table`` is derived from ENTITY_TYPE_TO_REMOTE_TABLE. ``remote_id``
+    may be None (to prove a NULL remote_id never blocks a valid UUID). The
+    local delete is marked completed and cleanup pending, matching a real
+    post-cascade tombstone.
+    """
+    session = manager.get_session()
+    try:
+        session.add(
+            DeletionOutboxModel(
+                entity_type=entity_type,
+                entity_local_id=entity_local_id,
+                remote_table=ENTITY_TYPE_TO_REMOTE_TABLE[entity_type],
+                remote_id=remote_id,
+                status=status,
+                local_delete_status="completed",
+                cleanup_status="pending",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+class FakeTombstoneGuard:
+    """In-memory RecoveryTombstonePort for check-failure / injected-block tests.
+
+    Configured per (entity_type, remote_id) identity. Default response is
+    ``success=True, blocked=False``. Identities added via ``force_failure`` yield
+    ``success=False`` (lookup could not be determined); identities added via
+    ``force_blocked`` yield ``success=True, blocked=True`` with a given status.
+    """
+
+    def __init__(self):
+        self._failures: set[tuple[str, str]] = set()
+        self._blocked: dict[tuple[str, str], str] = {}
+        self.calls: list[tuple[str, str]] = []
+
+    def force_failure(self, entity_type, remote_id):
+        self._failures.add((entity_type, remote_id))
+        return self
+
+    def force_blocked(self, entity_type, remote_id, status="pending"):
+        self._blocked[(entity_type, remote_id)] = status
+        return self
+
+    def check(self, entity_type, remote_id):
+        self.calls.append((entity_type, remote_id))
+        key = (entity_type, remote_id)
+        if key in self._failures:
+            return TombstoneCheckResult(
+                success=False, blocked=False, error_message="forced failure"
+            )
+        if key in self._blocked:
+            return TombstoneCheckResult(
+                success=True, blocked=True, status=self._blocked[key]
+            )
+        return TombstoneCheckResult(success=True, blocked=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1304,7 +1384,8 @@ def test_no_remote_fetch_inside_open_local_unit_of_work():
         # First run: full multi-phase import.
         port1 = _BoundaryRemoteReadPort(flag, rows)
         service1 = RecoveryService(
-            remote_read=port1, uow_factory=spy_factory, sync_state=sync_state
+            remote_read=port1, uow_factory=spy_factory, sync_state=sync_state,
+            tombstone_guard=SqlRecoveryTombstoneAdapter(manager.get_session),
         )
         first = service1.execute_recovery("token", REMOTE_USER, local_user)
         assert first.success is True
@@ -1314,7 +1395,8 @@ def test_no_remote_fetch_inside_open_local_unit_of_work():
         # Second run: reuse across multiple phases.
         port2 = _BoundaryRemoteReadPort(flag, rows)
         service2 = RecoveryService(
-            remote_read=port2, uow_factory=spy_factory, sync_state=sync_state
+            remote_read=port2, uow_factory=spy_factory, sync_state=sync_state,
+            tombstone_guard=SqlRecoveryTombstoneAdapter(manager.get_session),
         )
         second = service2.execute_recovery("token", REMOTE_USER, local_user)
         assert second.success is True
@@ -1517,7 +1599,8 @@ def test_row_error_isolation_failed_sql_session_per_row():
         port = FakeRemoteReadPort(subset)
         sync_state = SyncStateRepository(session_factory=manager.get_session)
         service = RecoveryService(
-            remote_read=port, uow_factory=factory, sync_state=sync_state
+            remote_read=port, uow_factory=factory, sync_state=sync_state,
+            tombstone_guard=SqlRecoveryTombstoneAdapter(manager.get_session),
         )
 
         result = service.execute_recovery("token", REMOTE_USER, local_user)
@@ -1546,6 +1629,537 @@ def test_row_error_isolation_failed_sql_session_per_row():
                 )
                 is None
             )
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ===========================================================================
+# Anti-resurrection tests (Spec 022, block D3.1)
+#
+# These use a real file-backed SQLite DB and the real SqlRecoveryTombstoneAdapter
+# over the real deletion_outbox, seeding tombstones directly. A FakeTombstoneGuard
+# is used only where a check FAILURE (undetermined lookup) must be forced.
+#
+# Direct-tombstone entity types are ONLY greenhouse | module | monitoring.
+# snapshots / monitoring_metrics / inspection_results / activity_logs have NO
+# direct tombstone type; they are blockable only via a tombstoned ancestor
+# (blocked lineage). No snapshot/activity tombstone type is fabricated.
+# ===========================================================================
+
+
+def _codes_for(result, entity_type):
+    return {e.code for e in result.errors if e.entity_type == entity_type}
+
+
+# ---------------------------------------------------------------------------
+# (D3.1-1) Direct greenhouse tombstone (pending) blocks the entire subtree
+# ---------------------------------------------------------------------------
+
+
+def test_greenhouse_tombstone_pending_blocks_whole_subtree():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        _seed_tombstone(manager, "greenhouse", GH_ID, status="pending")
+
+        port = FakeRemoteReadPort(_full_hierarchy_rows())
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert result.entities_recovered == 0
+        assert "TOMBSTONE_BLOCKED" in _codes_for(result, "greenhouses")
+        # Every descendant table skipped as PARENT_TOMBSTONED.
+        for table in (
+            "modules", "monitorings", "monitoring_metrics",
+            "snapshots", "inspection_results", "activity_logs",
+        ):
+            assert "PARENT_TOMBSTONED" in _codes_for(result, table), table
+
+        verify = manager.get_session()
+        try:
+            assert verify.query(GreenhouseModel).count() == 0
+            assert verify.query(ModuleModel).count() == 0
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (D3.1-2/3/4) Blocking statuses: syncing / error block; synced does NOT
+# ---------------------------------------------------------------------------
+
+
+def test_greenhouse_tombstone_syncing_blocks():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        _seed_tombstone(manager, "greenhouse", GH_ID, status="syncing")
+
+        port = FakeRemoteReadPort({"greenhouses": _full_hierarchy_rows()["greenhouses"]})
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert result.entities_recovered == 0
+        assert "TOMBSTONE_BLOCKED" in _codes_for(result, "greenhouses")
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+def test_greenhouse_tombstone_error_blocks():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        _seed_tombstone(manager, "greenhouse", GH_ID, status="error")
+
+        port = FakeRemoteReadPort({"greenhouses": _full_hierarchy_rows()["greenhouses"]})
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert result.entities_recovered == 0
+        assert "TOMBSTONE_BLOCKED" in _codes_for(result, "greenhouses")
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+def test_greenhouse_tombstone_synced_does_not_block():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        _seed_tombstone(manager, "greenhouse", GH_ID, status="synced")
+
+        port = FakeRemoteReadPort({"greenhouses": _full_hierarchy_rows()["greenhouses"]})
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert result.entities_recovered == 1
+        assert "TOMBSTONE_BLOCKED" not in _codes_for(result, "greenhouses")
+
+        verify = manager.get_session()
+        try:
+            assert SqlGreenhouseRepository(verify).find_by_remote_id(GH_ID) is not None
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (D3.1-5) A tombstone with remote_id NULL never blocks a valid remote UUID
+# ---------------------------------------------------------------------------
+
+
+def test_null_remote_id_tombstone_does_not_block():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        _seed_tombstone(manager, "greenhouse", None, status="pending")
+
+        port = FakeRemoteReadPort({"greenhouses": _full_hierarchy_rows()["greenhouses"]})
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert result.entities_recovered == 1
+
+        verify = manager.get_session()
+        try:
+            assert SqlGreenhouseRepository(verify).find_by_remote_id(GH_ID) is not None
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (D3.1-6) Exact identity: same UUID but different entity_type does NOT block
+# ---------------------------------------------------------------------------
+
+
+def test_tombstone_matches_entity_type_exactly():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        # A MODULE tombstone carrying the greenhouse's UUID must NOT block the
+        # greenhouse (entity_type differs).
+        _seed_tombstone(manager, "module", GH_ID, status="pending")
+
+        port = FakeRemoteReadPort({"greenhouses": _full_hierarchy_rows()["greenhouses"]})
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert result.entities_recovered == 1
+        assert "TOMBSTONE_BLOCKED" not in _codes_for(result, "greenhouses")
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (D3.1-7) Module tombstone: greenhouse recovers, module subtree blocked
+# ---------------------------------------------------------------------------
+
+
+def test_module_tombstone_blocks_module_subtree_but_not_greenhouse():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        _seed_tombstone(manager, "module", MOD_ID, status="pending")
+
+        port = FakeRemoteReadPort(_full_hierarchy_rows())
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        # Greenhouse recovered.
+        verify = manager.get_session()
+        try:
+            assert SqlGreenhouseRepository(verify).find_by_remote_id(GH_ID) is not None
+            assert SqlModuleRepository(verify).find_by_remote_id(MOD_ID) is None
+            assert SqlMonitoringRepository(verify).find_by_remote_id(MON_ID) is None
+        finally:
+            verify.close()
+
+        assert "TOMBSTONE_BLOCKED" in _codes_for(result, "modules")
+        # Module descendants (monitoring/metrics/snapshot/inspection) blocked,
+        # and the module's activity_log too (its parent is the module).
+        for table in (
+            "monitorings", "monitoring_metrics",
+            "snapshots", "inspection_results", "activity_logs",
+        ):
+            assert "PARENT_TOMBSTONED" in _codes_for(result, table), table
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (D3.1-8/9) Monitoring tombstone: blocks its metrics/snapshot/inspection
+# lineage, while the module's activity_log still recovers.
+#
+# NOTE (test 9): there is NO direct snapshot tombstone type. The snapshot ->
+# inspection_result lineage is blocked by tombstoning the parent MONITORING.
+# This single test covers both the "monitoring tombstone" and the
+# "snapshot subtree blocked" intents; no snapshot tombstone type is invented.
+# ---------------------------------------------------------------------------
+
+
+def test_monitoring_tombstone_blocks_snapshot_lineage_but_activity_recovers():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        _seed_tombstone(manager, "monitoring", MON_ID, status="pending")
+
+        port = FakeRemoteReadPort(_full_hierarchy_rows())
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        verify = manager.get_session()
+        try:
+            # Greenhouse + module recover.
+            assert SqlGreenhouseRepository(verify).find_by_remote_id(GH_ID) is not None
+            assert SqlModuleRepository(verify).find_by_remote_id(MOD_ID) is not None
+            # Monitoring + its snapshot lineage blocked (not persisted).
+            assert SqlMonitoringRepository(verify).find_by_remote_id(MON_ID) is None
+            assert SqlSnapshotRepository(verify).find_by_remote_id(SNAP_ID) is None
+            assert (
+                SqlInspectionResultRepository(verify).find_by_remote_id(INSP_ID)
+                is None
+            )
+            # The module's activity_log recovers (parent is module, not monitoring).
+            assert SqlActivityLogRepository(verify).find_by_remote_id(ACT_ID) is not None
+        finally:
+            verify.close()
+
+        assert "TOMBSTONE_BLOCKED" in _codes_for(result, "monitorings")
+        for table in ("monitoring_metrics", "snapshots", "inspection_results"):
+            assert "PARENT_TOMBSTONED" in _codes_for(result, table), table
+        # activity_logs recovered -> no tombstone/lineage skip for it.
+        assert "PARENT_TOMBSTONED" not in _codes_for(result, "activity_logs")
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (D3.1-10) activity_log has no direct tombstone type.
+#
+# activity_log is only blockable via its parent MODULE (covered by
+# test_module_tombstone_blocks_module_subtree_but_not_greenhouse). There is no
+# "activity_log" entity_type in deletion_outbox, so no dedicated direct-tombstone
+# test is possible without fabricating an unsupported entity_type. Documented
+# here intentionally; nothing to assert.
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# (D3.1-11) Two independent greenhouses: only the tombstoned one is blocked
+# ---------------------------------------------------------------------------
+
+
+GH_B = "a2a2a2a2-1111-4222-8333-444444444444"
+MOD_B = "b2b2b2b2-1111-4222-8333-444444444444"
+
+
+def _two_greenhouse_rows():
+    base = _full_hierarchy_rows()
+    gh_b = dict(base["greenhouses"][0])
+    gh_b["id"] = GH_B
+    gh_b["name"] = "Invernadero 2"
+    mod_b = dict(base["modules"][0])
+    mod_b["id"] = MOD_B
+    mod_b["greenhouse_id"] = GH_B
+    mod_b["name"] = "Modulo B"
+    return {
+        "greenhouses": [base["greenhouses"][0], gh_b],
+        "modules": [base["modules"][0], mod_b],
+    }
+
+
+def test_two_independent_greenhouses_only_tombstoned_blocked():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        _seed_tombstone(manager, "greenhouse", GH_ID, status="pending")
+
+        port = FakeRemoteReadPort(_two_greenhouse_rows())
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        verify = manager.get_session()
+        try:
+            # GH_A blocked; its module blocked.
+            assert SqlGreenhouseRepository(verify).find_by_remote_id(GH_ID) is None
+            assert SqlModuleRepository(verify).find_by_remote_id(MOD_ID) is None
+            # GH_B recovers fully with its module.
+            gh_b = SqlGreenhouseRepository(verify).find_by_remote_id(GH_B)
+            assert gh_b is not None
+            mod_b = SqlModuleRepository(verify).find_by_remote_id(MOD_B)
+            assert mod_b is not None and mod_b.greenhouse_id == gh_b.id
+        finally:
+            verify.close()
+
+        assert "TOMBSTONE_BLOCKED" in _codes_for(result, "greenhouses")
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (D3.1-12) Tombstone check FAILURE on one row: fail-safe skip, run continues
+# ---------------------------------------------------------------------------
+
+
+def test_tombstone_check_failure_skips_row_and_run_continues():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        guard = FakeTombstoneGuard().force_failure("greenhouse", GH_ID)
+
+        port = FakeRemoteReadPort(_two_greenhouse_rows())
+        service, session = _build_service(manager, port, tombstone_guard=guard)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        # A failed lookup does NOT abort the whole run.
+        assert result.success is True
+        assert "TOMBSTONE_CHECK_FAILED" in _codes_for(result, "greenhouses")
+
+        verify = manager.get_session()
+        try:
+            # GH_A not mapped/inserted; GH_B recovers.
+            assert SqlGreenhouseRepository(verify).find_by_remote_id(GH_ID) is None
+            assert SqlGreenhouseRepository(verify).find_by_remote_id(GH_B) is not None
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (D3.1-13) A parent check FAILURE blocks its descendants (via blocked lineage)
+# ---------------------------------------------------------------------------
+
+
+def test_parent_check_failure_blocks_descendants():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        guard = FakeTombstoneGuard().force_failure("greenhouse", GH_ID)
+
+        port = FakeRemoteReadPort(_full_hierarchy_rows())
+        service, session = _build_service(manager, port, tombstone_guard=guard)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        assert "TOMBSTONE_CHECK_FAILED" in _codes_for(result, "greenhouses")
+        # Module blocked via blocked lineage, no reparent, not persisted.
+        assert "PARENT_TOMBSTONED" in _codes_for(result, "modules")
+
+        verify = manager.get_session()
+        try:
+            assert SqlModuleRepository(verify).find_by_remote_id(MOD_ID) is None
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (D3.1-14) Existing local row + same remote_id + blocking tombstone -> NO reuse
+# ---------------------------------------------------------------------------
+
+
+def test_existing_local_row_not_resurrected_when_tombstoned():
+    from src.domain.entities.greenhouse import Greenhouse
+
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        # Stale local greenhouse already carrying the remote id.
+        SqlGreenhouseRepository(seed).insert_preserving_remote_id(
+            Greenhouse(name="Stale local", owner_user_id=local_user),
+            remote_id=GH_ID,
+        )
+        seed.close()
+
+        _seed_tombstone(manager, "greenhouse", GH_ID, status="pending")
+
+        port = FakeRemoteReadPort(_full_hierarchy_rows())
+        service, session = _build_service(manager, port)
+        try:
+            result = service.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            session.close()
+
+        assert result.success is True
+        # The guard sits BEFORE find_by_remote_id: no reuse despite a stale row.
+        assert result.entities_reused == 0
+        assert "TOMBSTONE_BLOCKED" in _codes_for(result, "greenhouses")
+        # Not mapped -> child module blocked.
+        assert "PARENT_TOMBSTONED" in _codes_for(result, "modules")
+
+        verify = manager.get_session()
+        try:
+            gh = SqlGreenhouseRepository(verify).find_by_remote_id(GH_ID)
+            assert gh is not None and gh.name == "Stale local"  # unchanged
+            assert SqlModuleRepository(verify).find_by_remote_id(MOD_ID) is None
+        finally:
+            verify.close()
+    finally:
+        _cleanup(manager.engine, db_path)
+
+
+# ---------------------------------------------------------------------------
+# (D3.1-15) Idempotent: a second run with the tombstone present never resurrects
+# ---------------------------------------------------------------------------
+
+
+def test_second_run_with_tombstone_still_blocks_stable_counts():
+    manager, db_path = _fresh_manager()
+    try:
+        seed = manager.get_session()
+        local_user = _make_user(seed, "op@example.com", REMOTE_USER)
+        seed.close()
+
+        _seed_tombstone(manager, "greenhouse", GH_ID, status="pending")
+
+        rows = _full_hierarchy_rows()
+
+        port1 = FakeRemoteReadPort(rows)
+        service1, s1 = _build_service(manager, port1)
+        try:
+            first = service1.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            s1.close()
+
+        port2 = FakeRemoteReadPort(rows)
+        service2, s2 = _build_service(manager, port2)
+        try:
+            second = service2.execute_recovery("token", REMOTE_USER, local_user)
+        finally:
+            s2.close()
+
+        assert first.success is True and second.success is True
+        assert first.entities_recovered == 0 and second.entities_recovered == 0
+        assert "TOMBSTONE_BLOCKED" in _codes_for(first, "greenhouses")
+        assert "TOMBSTONE_BLOCKED" in _codes_for(second, "greenhouses")
+
+        verify = manager.get_session()
+        try:
+            # Never resurrected across either run.
+            assert verify.query(GreenhouseModel).count() == 0
         finally:
             verify.close()
     finally:

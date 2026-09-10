@@ -212,6 +212,22 @@ class DeletionOutboxPort(Protocol):
         """
         ...
 
+    def find_blocking_by_remote_identity(
+        self, entity_type: str, remote_id: str
+    ) -> Optional[DeletionOutboxEntry]:
+        """Return a BLOCKING tombstone for (entity_type, remote_id), or None.
+
+        Anti-resurrection lookup (Spec 022, D3.1). A tombstone blocks recovery
+        when ``entity_type`` and ``remote_id`` match EXACTLY and its remote
+        propagation ``status`` is not yet ``synced`` (one of
+        ``pending`` | ``syncing`` | ``error``). A ``synced`` tombstone does NOT
+        block, and a NULL ``remote_id`` never blocks a valid remote UUID.
+        Matching is by remote identity only.
+
+        Read-only: MUST NOT mutate outbox state.
+        """
+        ...
+
     def get_pending_for_propagation(
         self, owner_user_id: int
     ) -> List[DeletionOutboxEntry]:
