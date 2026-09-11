@@ -54,3 +54,30 @@ class ModuleRepository(ABC):
         and Monitoring → MonitoringMetrics.
         """
         ...
+
+    # --- Recovery primitives (Spec 022, block D1) ---
+
+    @abstractmethod
+    def find_by_remote_id(self, remote_id: str) -> Optional[Module]:
+        """Return the module mapped to the given remote_id, or None.
+
+        The remote UUID is stored in the local ``remote_id`` column; the local
+        primary key remains an integer autoincrement value.
+        """
+        ...
+
+    @abstractmethod
+    def insert_preserving_remote_id(
+        self, greenhouse_id: int, entity: Module, remote_id: str
+    ) -> Module:
+        """Insert a recovered module under the LOCAL parent greenhouse id.
+
+        Import-missing-only: builds a NEW local row with a fresh autoincrement
+        id under ``greenhouse_id`` (the local parent id), sets remote sync
+        metadata to a synced state, and never modifies an existing local row.
+
+        Raises:
+            RecoveredEntityAlreadyExistsError: if a local module already exists
+                with the given remote_id.
+        """
+        ...

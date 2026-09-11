@@ -966,11 +966,20 @@ class DeletionService:
 
         remote_id = self._sync_state.get_remote_id(entity_type, entity_local_id)
 
+        # Capture the durable LOCAL owner of the root's hierarchy BEFORE the
+        # Local_Cascade removes it (Spec 022). Resolved via the effective owner
+        # of the root greenhouse; never inferred from the current user. May be
+        # None for legacy/unowned roots.
+        owner_user_id = self._sync_state.get_effective_owner_local_user_id(
+            entity_type, entity_local_id
+        )
+
         return DeletionOutboxEntryInput(
             entity_type=entity_type,
             entity_local_id=entity_local_id,
             remote_table=remote_table,
             remote_id=remote_id,
+            owner_user_id=owner_user_id,
             storage_paths=storage_paths,
             local_artifacts=local_artifacts,
         )

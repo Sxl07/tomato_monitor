@@ -11,6 +11,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from src.domain.entities.monitoring import Monitoring
+from src.domain.exceptions import RecoveredEntityAlreadyExistsError
 from src.domain.repositories.monitoring_repository import MonitoringRepository
 from src.domain.value_objects.monitoring_status import MonitoringState, MonitoringStatus
 from src.infrastructure.persistence.models.monitoring_model import MonitoringModel
@@ -281,6 +282,58 @@ class SqlMonitoringRepository(MonitoringRepository):
         ).update({"sync_status": status}, synchronize_session="fetch")
         self._session.flush()
         self._session.commit()
+
+    def find_by_remote_id(self, remote_id: str) -> Optional[Monitoring]:
+        """Return the monitoring mapped to the given remote_id, or None."""
+        model = (
+            self._session.query(MonitoringModel)
+            .filter(MonitoringModel.remote_id == remote_id)
+            .first()
+        )
+        if model is None:
+            return None
+        return self._to_entity(model)
+
+    def insert_preserving_remote_id(
+        self, module_id: int, entity: Monitoring, remote_id: str
+    ) -> Monitoring:
+        """Insert a recovered monitoring under the LOCAL parent module id.
+
+        Import-missing-only: guards against duplicate remote_id, assigns a new
+        autoincrement id, and marks the row synced. Recovered status/timestamps
+        are stored as-is (recovery is not a normal FSM transition). Mirrors
+        create()'s flush+commit transactional pattern.
+        """
+        existing = (
+            self._session.query(MonitoringModel)
+            .filter(MonitoringModel.remote_id == remote_id)
+            .first()
+        )
+        if existing is not None:
+            raise RecoveredEntityAlreadyExistsError("Monitoring", remote_id)
+
+        model = MonitoringModel(
+            module_id=module_id,
+            status=entity.status,
+            started_at=entity.started_at,
+            completed_at=entity.completed_at,
+            width_m=entity.width_m,
+            length_m=entity.length_m,
+            notes=entity.notes,
+            total_snapshots=entity.total_snapshots,
+            total_detections=entity.total_detections,
+            created_by_user_id=entity.created_by_user_id,
+            sync_status=entity.sync_status,
+            video_path=entity.video_path,
+            remote_id=remote_id,
+            remote_sync_status="synced",
+            remote_sync_error=None,
+            last_synced_at=_utcnow(),
+        )
+        self._session.add(model)
+        self._session.flush()
+        self._session.commit()
+        return self._to_entity(model)
 
     def _to_entity(self, model: MonitoringModel) -> Monitoring:
         """Convert an ORM model instance to a domain entity."""

@@ -67,6 +67,10 @@ _USER_REMOTE_ID = "99999999-8888-4777-8666-555555555555"
 # ---------------------------------------------------------------------------
 
 
+# Local user id that _USER_REMOTE_ID resolves to (session owner).
+_SESSION_LOCAL_USER_ID = 7
+
+
 def _make_entry(
     entry_id: int,
     *,
@@ -75,8 +79,13 @@ def _make_entry(
     created_at: Optional[datetime] = None,
     entity_type: str = "monitoring",
     entity_local_id: Optional[int] = None,
+    owner_user_id: Optional[int] = _SESSION_LOCAL_USER_ID,
 ) -> DeletionOutboxEntry:
-    """Build a locally-completed DeletionOutboxEntry ready for propagation."""
+    """Build a locally-completed DeletionOutboxEntry ready for propagation.
+
+    Defaults ``owner_user_id`` to the session's local user id so entries are
+    owned by the syncing user (Spec 022 FASE 0 scoping).
+    """
     return DeletionOutboxEntry(
         id=entry_id,
         entity_type=entity_type,
@@ -90,6 +99,7 @@ def _make_entry(
         deleted_at=datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
         last_error=None,
         retry_count=0,
+        owner_user_id=owner_user_id,
     )
 
 
@@ -137,11 +147,14 @@ class FakeDeletionOutbox:
 
     # --- port methods used by FASE 0 ------------------------------------
 
-    def get_pending_for_propagation(self) -> List[DeletionOutboxEntry]:
+    def get_pending_for_propagation(
+        self, owner_user_id: int
+    ) -> List[DeletionOutboxEntry]:
         retriable = [
             e
             for e in self._entries
-            if e.local_delete_status == "completed"
+            if e.owner_user_id == owner_user_id
+            and e.local_delete_status == "completed"
             and e.status in ("pending", "error", "syncing")
         ]
         return sorted(retriable, key=lambda e: e.created_at)
@@ -262,6 +275,10 @@ class FakeSyncState:
 
     def get_pending_entities(self, entity_type: str) -> list[dict]:
         return []
+
+    def get_local_user_id_by_remote_id(self, user_remote_id: str) -> Optional[int]:
+        # The session's remote identity resolves to the session local user id.
+        return _SESSION_LOCAL_USER_ID if user_remote_id == _USER_REMOTE_ID else None
 
     def get_remote_id(self, entity_type: str, local_id: int) -> Optional[str]:  # pragma: no cover
         return None
@@ -492,7 +509,7 @@ class TestOfflineRetry:
         assert outbox._find(1).status == "error"
 
         # Entry still returned for propagation (error is retryable).
-        assert [e.id for e in outbox.get_pending_for_propagation()] == [1]
+        assert [e.id for e in outbox.get_pending_for_propagation(_SESSION_LOCAL_USER_ID)] == [1]
 
         # Second run: connectivity restored -> succeeds.
         ok_data = FakeRemoteData(default_delete=RemoteDeleteResult(success=True))
@@ -592,3 +609,74 @@ class TestNoOutboxNoOp:
         assert result.deletions_synced == 0
         assert result.deletions_failed == 0
         assert result.success is True
+
+
+# ===========================================================================
+# Spec 022 — FASE 0 user-scoped propagation (A + B + legacy NULL)
+# ===========================================================================
+
+
+class TestFase0UserScoped:
+    """B's sync propagates only B's deletions; A and legacy NULL are untouched."""
+
+    def test_only_session_user_entries_processed(self):
+        _A_LOCAL = 1  # different user
+        _LEGACY = None
+
+        outbox = FakeDeletionOutbox()
+        # A's deletion (owner = A, not the session user).
+        outbox.add_entry(_make_entry(
+            1, remote_id="mon-A", owner_user_id=_A_LOCAL
+        ))
+        # B's deletion (owner = session user _SESSION_LOCAL_USER_ID).
+        outbox.add_entry(_make_entry(
+            2, remote_id="mon-B", owner_user_id=_SESSION_LOCAL_USER_ID
+        ))
+        # Legacy deletion with NULL owner.
+        outbox.add_entry(_make_entry(
+            3, remote_id="mon-legacy", owner_user_id=_LEGACY
+        ))
+
+        data = FakeRemoteData(default_delete=RemoteDeleteResult(success=True))
+        svc = _build_service(outbox, data=data)
+
+        result = svc.execute_sync("jwt", _USER_REMOTE_ID)  # session = B
+
+        # Only B reached delete_by_id.
+        assert data.delete_calls == [("monitorings", "mon-B")]
+        assert result.deletions_synced == 1
+        assert result.deletions_failed == 0
+
+        # B was marked synced.
+        b = outbox._find(2)
+        assert b.status == "synced"
+
+        # A and legacy are completely intact: no status change, no retry.
+        a = outbox._find(1)
+        legacy = outbox._find(3)
+        assert a.status == "pending"
+        assert a.retry_count == 0
+        assert legacy.status == "pending"
+        assert legacy.retry_count == 0
+
+        # No mark_* calls touched entries 1 or 3.
+        touched_ids = {c[1] for c in outbox.calls if len(c) >= 2 and isinstance(c[1], int)}
+        assert 1 not in touched_ids
+        assert 3 not in touched_ids
+
+    def test_unresolvable_session_user_aborts_before_fase0(self):
+        """If the remote identity maps to no local user, sync aborts untouched."""
+        outbox = FakeDeletionOutbox()
+        outbox.add_entry(_make_entry(
+            2, remote_id="mon-B", owner_user_id=_SESSION_LOCAL_USER_ID
+        ))
+        data = FakeRemoteData(default_delete=RemoteDeleteResult(success=True))
+        svc = _build_service(outbox, data=data)
+
+        result = svc.execute_sync("jwt", "unknown-remote-id")
+
+        assert result.success is False
+        # Nothing propagated; no delete calls; entry untouched.
+        assert data.delete_calls == []
+        assert outbox.calls == []
+        assert outbox._find(2).status == "pending"

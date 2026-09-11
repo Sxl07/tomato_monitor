@@ -138,6 +138,65 @@ class SyncStatePort(Protocol):
         """
         ...
 
+    def get_user_remote_id(
+        self,
+        local_user_id: int,
+    ) -> Optional[str]:
+        """Return the remote_user_id (UUID / auth.uid()) for a local user.
+
+        Used to map a greenhouse's local owner (``owner_user_id`` -> users.id)
+        to the owner's remote identity for the sync payload. Returns None when
+        the user does not exist or has no ``remote_user_id`` assigned.
+
+        Args:
+            local_user_id: Local integer primary key of the owning user.
+
+        Returns:
+            The user's remote UUID string, or None.
+        """
+        ...
+
+    def get_effective_owner_local_user_id(
+        self,
+        entity_type: str,
+        local_id: int,
+    ) -> Optional[int]:
+        """Return the effective owner's LOCAL user id for an entity.
+
+        Resolves ownership by walking the FK chain up to the root Greenhouse
+        and returning its ``owner_user_id`` (the local ``users.id``), WITHOUT
+        depending on ``users.remote_user_id``:
+
+            greenhouse           -> owner_user_id
+            module               -> greenhouse -> owner_user_id
+            monitoring           -> module -> greenhouse -> owner_user_id
+            monitoring_metrics   -> monitoring -> ... -> owner_user_id
+            snapshot             -> monitoring -> ... -> owner_user_id
+            inspection_result    -> snapshot -> ... -> owner_user_id
+            activity_log         -> module -> ... -> owner_user_id
+
+        Used to scope a sync to the current user BEFORE any remote write, based
+        on LOCAL ownership (independent of whether the owner has a
+        remote_user_id yet). Entities whose effective local owner differs from
+        the current user's local id are skipped (no-touch).
+
+        Returns:
+            The owner's local user id, or None when the chain cannot be
+            resolved or the root greenhouse has no owner_user_id (legacy NULL).
+        """
+        ...
+
+    def get_local_user_id_by_remote_id(
+        self,
+        user_remote_id: str,
+    ) -> Optional[int]:
+        """Return the local users.id whose remote_user_id matches, or None.
+
+        Used to map the session's ``user_remote_id`` back to the local user id
+        so sync scoping can compare LOCAL ownership.
+        """
+        ...
+
     def get_storage_paths(
         self,
         snapshot_id: int,

@@ -20,6 +20,7 @@ from typing import Any, Optional
 
 import httpx
 
+from src.application.interfaces.remote_download_port import RemoteDownloadResult
 from src.application.interfaces.remote_storage_port import (
     RemoteStorageDeleteResult,
     RemoteUploadResult,
@@ -127,6 +128,56 @@ def _classify_delete_error(response: httpx.Response) -> RemoteStorageDeleteResul
 
     # Default fallback
     return RemoteStorageDeleteResult(
+        success=False,
+        error_type="UNKNOWN",
+        error_message=error_msg,
+    )
+
+
+def _classify_download_error(response: httpx.Response) -> RemoteDownloadResult:
+    """Classify an HTTP error response for a Storage download (Spec 022, D3.2).
+
+    Not-found (404) is a distinct outcome (a missing object, not a hard error)
+    so the caller can count it as skipped. 401/403 map to RLS_DENIED, 5xx to
+    REMOTE_UNAVAILABLE, and other storage-specific 4xx to STORAGE_ERROR.
+    """
+    status = response.status_code
+    error_msg = _extract_error_message(response)
+
+    # 404 → NOT_FOUND (object absent; not a hard failure)
+    if status == 404:
+        return RemoteDownloadResult(
+            success=False,
+            error_type="NOT_FOUND",
+            error_message=error_msg,
+        )
+
+    # 401/403 → RLS_DENIED
+    if status in (401, 403):
+        return RemoteDownloadResult(
+            success=False,
+            error_type="RLS_DENIED",
+            error_message=error_msg,
+        )
+
+    # 5xx → REMOTE_UNAVAILABLE
+    if status in (500, 502, 503):
+        return RemoteDownloadResult(
+            success=False,
+            error_type="REMOTE_UNAVAILABLE",
+            error_message=error_msg,
+        )
+
+    # Any other 4xx (400/405/409/413/422/429/...) → STORAGE_ERROR
+    if 400 <= status < 500:
+        return RemoteDownloadResult(
+            success=False,
+            error_type="STORAGE_ERROR",
+            error_message=error_msg,
+        )
+
+    # Default fallback (e.g. unexpected 2xx like 204, or other 5xx)
+    return RemoteDownloadResult(
         success=False,
         error_type="UNKNOWN",
         error_message=error_msg,
@@ -308,6 +359,64 @@ class SupabaseStorageAdapter:
 
         return RemoteStorageDeleteResult(success=True)
 
+    def download_object(
+        self,
+        access_token: str,
+        remote_path: str,
+    ) -> RemoteDownloadResult:
+        """Download a single object from Supabase Storage (Spec 022, D3.2).
+
+        Uses the authenticated Storage endpoint against a PRIVATE bucket. No
+        signed/public URLs, no service_role, no retries, no local filesystem
+        access. RLS/Storage policies are the access authority.
+
+        Args:
+            access_token: Ephemeral JWT for authenticating the request.
+            remote_path: Object path within the configured bucket.
+
+        Returns:
+            RemoteDownloadResult with success=True and content (bytes) on HTTP
+            200, or success=False with an error classification on failure.
+        """
+        if not isinstance(remote_path, str) or not remote_path:
+            return RemoteDownloadResult(
+                success=False,
+                error_type="STORAGE_ERROR",
+                error_message="Empty object path",
+            )
+
+        url = (
+            f"{self._config.storage_url}/object/authenticated/"
+            f"{self._config.storage_bucket}/{remote_path}"
+        )
+
+        try:
+            with self._build_download_client(access_token) as client:
+                response = client.get(url)
+        except httpx.TimeoutException:
+            return RemoteDownloadResult(
+                success=False,
+                error_type="CONNECTIVITY",
+                error_message="Request timed out",
+            )
+        except httpx.RequestError as exc:
+            return RemoteDownloadResult(
+                success=False,
+                error_type="CONNECTIVITY",
+                error_message=f"Connection failed: {type(exc).__name__}",
+            )
+
+        # Only an exact HTTP 200 with a body is a successful download. Any other
+        # status (including 201/204) is classified; a 204 must NOT be treated as
+        # a successful empty file.
+        if response.status_code == 200:
+            return RemoteDownloadResult(
+                success=True,
+                content=response.content,
+            )
+
+        return _classify_download_error(response)
+
     def _build_client(self, access_token: str) -> httpx.Client:
         """Create a configured httpx Client for a single upload."""
         kwargs: dict[str, Any] = {
@@ -328,6 +437,23 @@ class SupabaseStorageAdapter:
 
         Unlike the upload client, this does not set upload-specific headers
         (Content-Type: image/jpeg, x-upsert).
+        """
+        kwargs: dict[str, Any] = {
+            "timeout": self._timeout_seconds,
+            "headers": {
+                "apikey": self._config.publishable_key,
+                "Authorization": f"Bearer {access_token}",
+            },
+        }
+        if self._transport is not None:
+            kwargs["transport"] = self._transport
+        return httpx.Client(**kwargs)
+
+    def _build_download_client(self, access_token: str) -> httpx.Client:
+        """Create a configured httpx Client for a single object download.
+
+        Only authentication headers are set (Bearer JWT + apikey); no
+        upload-specific headers (Content-Type, x-upsert).
         """
         kwargs: dict[str, Any] = {
             "timeout": self._timeout_seconds,

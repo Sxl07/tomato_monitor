@@ -30,6 +30,7 @@ class SyncRuntimeState:
     """
 
     is_syncing: bool = False
+    is_recovering: bool = False
     phase: str = ""
     processed: int = 0
     total: int = 0
@@ -40,12 +41,13 @@ class SyncRuntimeState:
     def try_acquire(self) -> bool:
         """Attempt to start a new sync operation.
 
-        Returns True if acquired (was idle), False if already syncing.
-        Resets progress counters for the new operation on success.
-        Does NOT modify state of an active sync on failure.
+        Returns True if acquired (device was idle), False if a sync OR a
+        recovery is already active (at most one manual cloud operation may run
+        at a time). Resets progress counters for the new operation on success.
+        Does NOT modify state of an active operation on failure.
         """
         with self._lock:
-            if self.is_syncing:
+            if self.is_syncing or self.is_recovering:
                 return False
             self.is_syncing = True
             self.phase = ""
@@ -84,6 +86,10 @@ class SyncRuntimeState:
 
         Returns a new dict with a copy of the errors list to prevent
         external mutation of internal state.
+
+        NOTE: This snapshot deliberately does NOT expose recovery state — the
+        GET /api/sync/status contract is unchanged. Recovery state is used only
+        internally for mutual exclusion via get_active_operation().
         """
         with self._lock:
             return {
@@ -94,3 +100,46 @@ class SyncRuntimeState:
                 "errors": list(self.errors),
                 "last_result": self.last_result,
             }
+
+    # ------------------------------------------------------------------
+    # Recovery coordination (Spec 022, block E)
+    #
+    # Recovery reuses this single shared object so that at most ONE manual
+    # cloud operation (sync OR recovery) runs at a time. Recovery does NOT use
+    # the sync progress fields (phase/processed/total/errors/last_result).
+    # ------------------------------------------------------------------
+
+    def try_acquire_recovery(self) -> bool:
+        """Attempt to start a manual recovery operation.
+
+        Returns True if acquired (device was idle), False if a sync OR a
+        recovery is already active. On success only the recovery flag is set;
+        the sync progress fields are left untouched.
+        """
+        with self._lock:
+            if self.is_syncing or self.is_recovering:
+                return False
+            self.is_recovering = True
+            return True
+
+    def release_recovery(self) -> None:
+        """Mark the recovery operation as completed. Idempotent.
+
+        Clears only the recovery flag; never touches sync state or progress.
+        """
+        with self._lock:
+            self.is_recovering = False
+
+    def get_active_operation(self) -> Optional[str]:
+        """Return the currently active manual cloud operation under the lock.
+
+        Returns "sync", "recovery", or None. If both flags were somehow set,
+        "sync" takes precedence in reporting (should not happen given the
+        mutual-exclusion guards).
+        """
+        with self._lock:
+            if self.is_syncing:
+                return "sync"
+            if self.is_recovering:
+                return "recovery"
+            return None

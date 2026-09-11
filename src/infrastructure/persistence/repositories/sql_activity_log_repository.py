@@ -5,8 +5,12 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from src.domain.entities.activity_log import ActivityLog
+from src.domain.exceptions import RecoveredEntityAlreadyExistsError
 from src.domain.repositories.activity_log_repository import ActivityLogRepository
-from src.infrastructure.persistence.models.activity_log_model import ActivityLogModel
+from src.infrastructure.persistence.models.activity_log_model import (
+    ActivityLogModel,
+    utcnow,
+)
 
 
 class SqlActivityLogRepository(ActivityLogRepository):
@@ -83,6 +87,47 @@ class SqlActivityLogRepository(ActivityLogRepository):
         ).update({"sync_status": status}, synchronize_session="fetch")
         self._session.flush()
         self._session.commit()
+
+    def find_by_remote_id(self, remote_id: str) -> Optional[ActivityLog]:
+        """Return the activity log mapped to the given remote_id, or None."""
+        model = (
+            self._session.query(ActivityLogModel)
+            .filter(ActivityLogModel.remote_id == remote_id)
+            .first()
+        )
+        if model is None:
+            return None
+        return self._to_entity(model)
+
+    def insert_preserving_remote_id(
+        self, entity: ActivityLog, remote_id: str
+    ) -> ActivityLog:
+        """Insert a recovered activity log, mapping remote_id -> local remote_id.
+
+        Import-missing-only: guards against duplicate remote_id, assigns a new
+        autoincrement id, and marks the row synced. Mirrors create()'s
+        flush+commit+refresh transactional pattern.
+        """
+        existing = (
+            self._session.query(ActivityLogModel)
+            .filter(ActivityLogModel.remote_id == remote_id)
+            .first()
+        )
+        if existing is not None:
+            raise RecoveredEntityAlreadyExistsError("ActivityLog", remote_id)
+
+        model = self._to_model(entity)
+        if entity.created_at is not None:
+            model.created_at = entity.created_at
+        model.remote_id = remote_id
+        model.remote_sync_status = "synced"
+        model.remote_sync_error = None
+        model.last_synced_at = utcnow()
+        self._session.add(model)
+        self._session.flush()
+        self._session.commit()
+        self._session.refresh(model)
+        return self._to_entity(model)
 
     def _to_entity(self, model: ActivityLogModel) -> ActivityLog:
         return ActivityLog(

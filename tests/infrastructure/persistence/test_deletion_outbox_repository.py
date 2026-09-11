@@ -83,6 +83,31 @@ def manager(db_file):
     return mgr
 
 
+# Local owner used by the outbox entries in these tests (FK -> users.id).
+OWNER_UID = 1
+
+
+@pytest.fixture(autouse=True)
+def _seed_owner_user(manager):
+    """Seed user id=1 so outbox.owner_user_id FK is satisfiable (Spec 022)."""
+    from src.infrastructure.persistence.models.user_model import UserModel
+
+    session = manager.get_session()
+    try:
+        if session.query(UserModel).filter(UserModel.id == OWNER_UID).first() is None:
+            session.add(UserModel(
+                id=OWNER_UID,
+                full_name="Owner",
+                email="owner@example.com",
+                password_hash="x",
+                role="operator",
+                is_active=True,
+            ))
+            session.commit()
+    finally:
+        session.close()
+
+
 @pytest.fixture
 def repo(manager):
     """DeletionOutboxRepository bound to the temp-file session factory."""
@@ -94,6 +119,7 @@ def _sample_input(
     entity_local_id=1,
     remote_table="monitorings",
     remote_id=UUID_ROOT,
+    owner_user_id=OWNER_UID,
 ):
     """Build a DeletionOutboxEntryInput with two Storage paths and one artifact."""
     return DeletionOutboxEntryInput(
@@ -101,6 +127,7 @@ def _sample_input(
         entity_local_id=entity_local_id,
         remote_table=remote_table,
         remote_id=remote_id,
+        owner_user_id=owner_user_id,
         storage_paths=[
             OutboxStoragePathInput(
                 storage_path="monitorings/uuid-1/raw/snapshot_000001.jpg"
@@ -255,7 +282,7 @@ class TestRestartDurability:
 
         # Not completed yet -> not eligible for propagation.
         try:
-            assert new_repo.get_pending_for_propagation() == []
+            assert new_repo.get_pending_for_propagation(OWNER_UID) == []
             # But re-enqueue is idempotent against the persisted prepared entry.
             again = new_repo.enqueue(_sample_input())
             assert again.local_delete_status == "prepared"
@@ -352,18 +379,18 @@ class TestLocalCompletedAndPropagationGating:
 
     def test_prepared_entry_excluded_from_propagation(self, repo):
         repo.enqueue(_sample_input())
-        assert repo.get_pending_for_propagation() == []
+        assert repo.get_pending_for_propagation(OWNER_UID) == []
 
     def test_failed_entry_excluded_from_propagation(self, repo):
         entry = repo.enqueue(_sample_input())
         repo.mark_local_failed(entry.id)
-        assert repo.get_pending_for_propagation() == []
+        assert repo.get_pending_for_propagation(OWNER_UID) == []
 
     def test_completed_pending_entry_included(self, repo):
         entry = repo.enqueue(_sample_input())
         repo.mark_local_completed(entry.id, deleted_at=_utcnow())
 
-        pending = repo.get_pending_for_propagation()
+        pending = repo.get_pending_for_propagation(OWNER_UID)
         assert [e.id for e in pending] == [entry.id]
 
     def test_completed_syncing_and_error_are_retryable(self, repo):
@@ -375,7 +402,7 @@ class TestLocalCompletedAndPropagationGating:
         repo.mark_local_completed(e_error.id, deleted_at=_utcnow())
         repo.mark_error(e_error.id, "boom")
 
-        pending_ids = {e.id for e in repo.get_pending_for_propagation()}
+        pending_ids = {e.id for e in repo.get_pending_for_propagation(OWNER_UID)}
         assert e_syncing.id in pending_ids
         assert e_error.id in pending_ids
 
@@ -383,7 +410,7 @@ class TestLocalCompletedAndPropagationGating:
         entry = repo.enqueue(_sample_input())
         repo.mark_local_completed(entry.id, deleted_at=_utcnow())
         repo.mark_synced(entry.id)
-        assert repo.get_pending_for_propagation() == []
+        assert repo.get_pending_for_propagation(OWNER_UID) == []
 
     def test_propagation_ordered_by_created_at_asc(self, repo, manager):
         first = repo.enqueue(_sample_input(entity_local_id=1))
@@ -405,7 +432,7 @@ class TestLocalCompletedAndPropagationGating:
         repo.mark_local_completed(first.id, deleted_at=_utcnow())
         repo.mark_local_completed(second.id, deleted_at=_utcnow())
 
-        pending = repo.get_pending_for_propagation()
+        pending = repo.get_pending_for_propagation(OWNER_UID)
         assert [e.id for e in pending] == [first.id, second.id]
 
 
@@ -616,3 +643,241 @@ def _read_status(manager, outbox_id):
         return session.get(DeletionOutboxModel, outbox_id).status
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# Spec 022 — deletion_outbox.owner_user_id migration
+# ---------------------------------------------------------------------------
+
+
+class TestDeletionOutboxOwnerMigration:
+    """Additive, idempotent owner_user_id column on deletion_outbox."""
+
+    def _legacy_engine(self, db_file):
+        """Create a legacy deletion_outbox table WITHOUT owner_user_id."""
+        from sqlalchemy import create_engine, event
+
+        engine = create_engine(f"sqlite:///{db_file}", echo=False)
+
+        @event.listens_for(engine, "connect")
+        def _pragma(dbapi_conn, rec):
+            cur = dbapi_conn.cursor()
+            cur.execute("PRAGMA foreign_keys = ON")
+            cur.close()
+
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    full_name VARCHAR(150) NOT NULL,
+                    email VARCHAR(200) NOT NULL UNIQUE,
+                    password_hash VARCHAR(255) NOT NULL
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE deletion_outbox (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_type VARCHAR(20) NOT NULL,
+                    entity_local_id INTEGER NOT NULL,
+                    remote_id VARCHAR(36),
+                    remote_table VARCHAR(50) NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    status VARCHAR(10) NOT NULL DEFAULT 'pending',
+                    local_delete_status VARCHAR(12) NOT NULL DEFAULT 'prepared',
+                    last_error TEXT,
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    cleanup_status VARCHAR(12) NOT NULL DEFAULT 'pending',
+                    deleted_at DATETIME
+                )
+            """))
+            conn.execute(text(
+                "INSERT INTO deletion_outbox "
+                "(id, entity_type, entity_local_id, remote_table, created_at, "
+                " status, local_delete_status, cleanup_status, retry_count) "
+                "VALUES (1, 'monitoring', 5, 'monitorings', '2025-06-01 12:00:00', "
+                "'pending', 'completed', 'pending', 0)"
+            ))
+            conn.commit()
+        return engine
+
+    def test_migration_adds_owner_column_legacy_null_and_idempotent(self, tmp_path):
+        from src.infrastructure.persistence.database import (
+            _migrate_add_deletion_outbox_owner,
+        )
+
+        db_file = str(tmp_path / "outbox_owner_migration.db")
+        engine = self._legacy_engine(db_file)
+        try:
+            _migrate_add_deletion_outbox_owner(engine)
+            # Re-run must be a no-op.
+            _migrate_add_deletion_outbox_owner(engine)
+
+            with engine.connect() as conn:
+                cols = [r[1] for r in conn.execute(
+                    text("PRAGMA table_info(deletion_outbox)")
+                ).fetchall()]
+                # Exactly one owner_user_id column added.
+                assert cols.count("owner_user_id") == 1
+
+                # Legacy row preserved with owner_user_id NULL (never inferred).
+                row = conn.execute(text(
+                    "SELECT entity_type, entity_local_id, owner_user_id "
+                    "FROM deletion_outbox WHERE id = 1"
+                )).fetchone()
+                assert row == ("monitoring", 5, None)
+        finally:
+            engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Spec 022 microfix — safe owner reconciliation on prepared/failed re-enqueue
+# ---------------------------------------------------------------------------
+
+
+OWNER_A = OWNER_UID   # == 1, already seeded by _seed_owner_user fixture
+OWNER_B = 2           # a second user; seeded within each test that needs it
+
+
+def _seed_owner_b(manager):
+    """Seed user id=2 so OWNER_B FK is satisfiable."""
+    from src.infrastructure.persistence.models.user_model import UserModel
+
+    session = manager.get_session()
+    try:
+        if session.query(UserModel).filter(UserModel.id == OWNER_B).first() is None:
+            session.add(UserModel(
+                id=OWNER_B,
+                full_name="Owner B",
+                email="ownerb@example.com",
+                password_hash="x",
+                role="operator",
+                is_active=True,
+            ))
+            session.commit()
+    finally:
+        session.close()
+
+
+class TestEnqueueOwnerReconciliation:
+    """Spec 022 microfix: safe owner reconciliation when reusing prepared/failed."""
+
+    @pytest.mark.parametrize("local_delete_status", ["prepared", "failed"])
+    def test_legacy_null_owner_updated_to_known_owner(
+        self, repo, local_delete_status
+    ):
+        """Case A: NULL→known owner — backfills the owner on the same outbox row."""
+        # Enqueue without owner (legacy / no owner known at TX1 time).
+        first = repo.enqueue(_sample_input(owner_user_id=None))
+        assert first.owner_user_id is None
+
+        # Simulate the failure path so the entry matches prepared|failed.
+        if local_delete_status == "failed":
+            repo.mark_local_failed(first.id)
+
+        # Count rows before retry.
+        session = repo._session_factory()
+        try:
+            count_before = session.query(DeletionOutboxModel).count()
+        finally:
+            session.close()
+
+        # Re-enqueue with the now-known owner (e.g. from build_deletion_payload).
+        second = repo.enqueue(_sample_input(owner_user_id=OWNER_A))
+
+        session = repo._session_factory()
+        try:
+            count_after = session.query(DeletionOutboxModel).count()
+            row = session.get(DeletionOutboxModel, first.id)
+        finally:
+            session.close()
+
+        # Same outbox entry reused (same id, no duplicate row).
+        assert second.id == first.id
+        assert count_after == count_before
+
+        # Owner is now set.
+        assert second.owner_user_id == OWNER_A
+        assert row.owner_user_id == OWNER_A
+
+        # Remote_id, remote_table and other metadata are untouched.
+        assert second.remote_id == first.remote_id
+        assert second.remote_table == first.remote_table
+
+    @pytest.mark.parametrize("local_delete_status", ["prepared", "failed"])
+    def test_known_owner_not_erased_by_null_retry(
+        self, repo, local_delete_status
+    ):
+        """Case B: known→NULL — existing owner is preserved; not erased."""
+        first = repo.enqueue(_sample_input(owner_user_id=OWNER_A))
+        if local_delete_status == "failed":
+            repo.mark_local_failed(first.id)
+
+        # Retry payload has no owner (e.g. older code path or unresolvable root).
+        second = repo.enqueue(_sample_input(owner_user_id=None))
+
+        assert second.id == first.id
+        assert second.owner_user_id == OWNER_A  # preserved
+
+        session = repo._session_factory()
+        try:
+            row = session.get(DeletionOutboxModel, first.id)
+        finally:
+            session.close()
+        assert row.owner_user_id == OWNER_A
+
+    @pytest.mark.parametrize("local_delete_status", ["prepared", "failed"])
+    def test_same_owner_reused_unchanged(self, repo, local_delete_status):
+        """Case C: same owner — normal reuse, no unintended changes."""
+        first = repo.enqueue(_sample_input(owner_user_id=OWNER_A))
+        if local_delete_status == "failed":
+            repo.mark_local_failed(first.id)
+
+        second = repo.enqueue(_sample_input(owner_user_id=OWNER_A))
+
+        assert second.id == first.id
+        assert second.owner_user_id == OWNER_A
+
+    @pytest.mark.parametrize("local_delete_status", ["prepared", "failed"])
+    def test_owner_conflict_raises_and_preserves_original(
+        self, repo, manager, local_delete_status
+    ):
+        """Case D: owner conflict — ValueError; existing outbox unchanged."""
+        _seed_owner_b(manager)
+
+        first = repo.enqueue(_sample_input(owner_user_id=OWNER_A))
+        if local_delete_status == "failed":
+            repo.mark_local_failed(first.id)
+
+        original_retry = first.retry_count
+
+        with pytest.raises(ValueError, match="conflict"):
+            repo.enqueue(_sample_input(owner_user_id=OWNER_B))
+
+        # No duplicate row created.
+        session = repo._session_factory()
+        try:
+            count = session.query(DeletionOutboxModel).count()
+            row = session.get(DeletionOutboxModel, first.id)
+        finally:
+            session.close()
+
+        assert count == 1
+        assert row.owner_user_id == OWNER_A  # not changed
+        assert row.retry_count == original_retry  # metadata untouched
+
+    def test_propagation_eligibility_after_owner_backfill(self, repo):
+        """After backfill, completed entry appears in correct user's queue only."""
+        # Enqueue legacy (no owner), then retry with owner.
+        first = repo.enqueue(_sample_input(owner_user_id=None))
+        repo.enqueue(_sample_input(owner_user_id=OWNER_A))  # backfills owner
+
+        # Complete the local deletion.
+        repo.mark_local_completed(first.id, deleted_at=_utcnow())
+
+        # OWNER_A's propagation queue contains this entry.
+        pending_a = repo.get_pending_for_propagation(OWNER_A)
+        assert any(e.id == first.id for e in pending_a)
+
+        # Another user's queue is empty.
+        pending_other = repo.get_pending_for_propagation(99)
+        assert not any(e.id == first.id for e in pending_other)

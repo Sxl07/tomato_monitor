@@ -153,15 +153,24 @@ class FakeSyncState:
         self,
         remote_ids: Optional[dict[tuple[str, int], str]] = None,
         storage_paths: Optional[dict[int, StoragePaths]] = None,
+        effective_owners: Optional[dict[tuple[str, int], int]] = None,
     ) -> None:
         self._remote_ids = remote_ids or {}
         self._storage_paths = storage_paths or {}
+        self._effective_owners = effective_owners or {}
 
     def get_remote_id(self, entity_type: str, local_id: int) -> Optional[str]:
         return self._remote_ids.get((entity_type, local_id))
 
     def get_storage_paths(self, snapshot_id: int) -> StoragePaths:
         return self._storage_paths.get(snapshot_id, StoragePaths())
+
+    def get_effective_owner_local_user_id(
+        self, entity_type: str, local_id: int
+    ) -> Optional[int]:
+        # Configurable owner per (entity_type, local_id); defaults to None
+        # (legacy/unowned) unless seeded via effective_owners.
+        return self._effective_owners.get((entity_type, local_id))
 
 
 class FakeSnapshotRepository:
@@ -301,6 +310,7 @@ def _full_service(
     snapshots: Optional[dict[int, list]] = None,
     remote_ids: Optional[dict[tuple[str, int], str]] = None,
     storage_paths: Optional[dict[int, StoragePaths]] = None,
+    effective_owners: Optional[dict[tuple[str, int], int]] = None,
 ) -> tuple[DeletionService, FakeMonitoringRepository, RecordingDeletionOutbox, RecordingLocalCascade]:
     """Build a DeletionService with the full two-transaction collaborators."""
     repo = FakeMonitoringRepository({monitoring.id: monitoring})
@@ -309,7 +319,11 @@ def _full_service(
     service = DeletionService(
         monitoring_repository=repo,
         runtime_registry=registry,
-        sync_state=FakeSyncState(remote_ids=remote_ids, storage_paths=storage_paths),
+        sync_state=FakeSyncState(
+            remote_ids=remote_ids,
+            storage_paths=storage_paths,
+            effective_owners=effective_owners,
+        ),
         snapshot_repository=FakeSnapshotRepository(snapshots),
         module_repository=FakeModuleRepository(),
         deletion_outbox=outbox,
@@ -1090,3 +1104,69 @@ def test_empty_greenhouse_enqueues_root_entry_with_no_artifacts_or_paths() -> No
     assert list(payload.storage_paths) == []
     assert len(cascade.calls) == 1
     assert result.entity_local_id == 5
+
+
+# ===========================================================================
+# Spec 022 — durable owner capture BEFORE the Local_Cascade
+# ===========================================================================
+
+
+def test_monitoring_deletion_captures_effective_owner_before_cascade() -> None:
+    """The payload persists the root's effective LOCAL owner (pre-cascade)."""
+    mon = FakeMonitoring(7, MonitoringState.COMPLETED.value)
+    service, _, outbox, cascade = _full_service(
+        mon,
+        remote_ids={("monitoring", 7): "remote-uuid-7"},
+        effective_owners={("monitoring", 7): 42},
+    )
+
+    service.delete_monitoring(7)
+
+    # TX1 enqueue ran (before TX2 cascade) and carried the effective owner.
+    assert len(outbox.enqueue_calls) == 1
+    assert len(cascade.calls) == 1
+    assert outbox.enqueue_calls[0].owner_user_id == 42
+
+
+def test_module_deletion_captures_effective_owner_before_cascade() -> None:
+    mon = FakeMonitoring(7, MonitoringState.COMPLETED.value)
+    service, _, outbox, _ = _full_service(
+        mon,
+        remote_ids={("module", 3): "remote-mod-3"},
+        effective_owners={("module", 3): 55},
+    )
+
+    service.delete_module(3)
+
+    assert len(outbox.enqueue_calls) == 1
+    assert outbox.enqueue_calls[0].entity_type == "module"
+    assert outbox.enqueue_calls[0].owner_user_id == 55
+
+
+def test_greenhouse_deletion_captures_effective_owner_before_cascade() -> None:
+    mon = FakeMonitoring(7, MonitoringState.COMPLETED.value)
+    service, _, outbox, _ = _full_service(
+        mon,
+        remote_ids={("greenhouse", 2): "remote-gh-2"},
+        effective_owners={("greenhouse", 2): 9},
+    )
+
+    service.delete_greenhouse(2)
+
+    assert len(outbox.enqueue_calls) == 1
+    assert outbox.enqueue_calls[0].entity_type == "greenhouse"
+    assert outbox.enqueue_calls[0].owner_user_id == 9
+
+
+def test_legacy_root_without_owner_captures_none() -> None:
+    """A root with no effective owner persists owner_user_id=None (never inferred)."""
+    mon = FakeMonitoring(7, MonitoringState.COMPLETED.value)
+    service, _, outbox, _ = _full_service(
+        mon,
+        remote_ids={("monitoring", 7): "remote-uuid-7"},
+        effective_owners={},  # unresolved -> None
+    )
+
+    service.delete_monitoring(7)
+
+    assert outbox.enqueue_calls[0].owner_user_id is None

@@ -359,3 +359,113 @@ class TestProperty15ExceptionRelease:
         assert state.get_status()["is_syncing"] is False
         assert state.try_acquire() is True
         state.release(None)
+
+
+# ===========================================================================
+# Recovery mutual exclusion (Spec 022, block E)
+# ===========================================================================
+
+
+class TestRecoveryMutualExclusion:
+    """try_acquire_recovery / release_recovery + sync mutual exclusion."""
+
+    def test_idle_acquire_recovery_succeeds(self):
+        state = SyncRuntimeState()
+        assert state.try_acquire_recovery() is True
+        assert state.get_active_operation() == "recovery"
+
+    def test_second_recovery_fails(self):
+        state = SyncRuntimeState()
+        assert state.try_acquire_recovery() is True
+        assert state.try_acquire_recovery() is False
+
+    def test_sync_active_blocks_recovery(self):
+        state = SyncRuntimeState()
+        assert state.try_acquire() is True
+        assert state.try_acquire_recovery() is False
+        assert state.get_active_operation() == "sync"
+
+    def test_recovery_active_blocks_sync(self):
+        state = SyncRuntimeState()
+        assert state.try_acquire_recovery() is True
+        assert state.try_acquire() is False
+        assert state.get_active_operation() == "recovery"
+
+    def test_release_recovery_allows_sync(self):
+        state = SyncRuntimeState()
+        state.try_acquire_recovery()
+        state.release_recovery()
+        assert state.try_acquire() is True
+        assert state.get_active_operation() == "sync"
+
+    def test_release_sync_allows_recovery(self):
+        state = SyncRuntimeState()
+        state.try_acquire()
+        state.release(None)
+        assert state.try_acquire_recovery() is True
+        assert state.get_active_operation() == "recovery"
+
+    def test_release_recovery_is_idempotent(self):
+        state = SyncRuntimeState()
+        state.try_acquire_recovery()
+        state.release_recovery()
+        state.release_recovery()  # no error, still idle
+        assert state.get_active_operation() is None
+        assert state.try_acquire_recovery() is True
+
+    def test_get_active_operation_none_when_idle(self):
+        state = SyncRuntimeState()
+        assert state.get_active_operation() is None
+
+    def test_recovery_does_not_touch_sync_progress(self):
+        state = SyncRuntimeState()
+        state.try_acquire()
+        state.update_progress("snapshots", 5, 10)
+        state.release({"success": True})
+        # Now recovery runs; sync progress snapshot must be untouched.
+        state.try_acquire_recovery()
+        status = state.get_status()
+        assert status["is_syncing"] is False
+        assert status["phase"] == "snapshots"
+        assert status["processed"] == 5
+        assert status["total"] == 10
+        assert status["last_result"] == {"success": True}
+        state.release_recovery()
+
+    def test_get_status_never_exposes_recovery(self):
+        state = SyncRuntimeState()
+        state.try_acquire_recovery()
+        status = state.get_status()
+        assert "is_recovering" not in status
+        assert "recovery_progress" not in status
+        assert "recovery_result" not in status
+
+    def test_concurrent_sync_vs_recovery_exactly_one(self):
+        state = SyncRuntimeState()
+        num_threads = 20
+        barrier = threading.Barrier(num_threads)
+        results = []
+        results_lock = threading.Lock()
+
+        def worker(index):
+            barrier.wait()
+            # Half attempt sync, half attempt recovery.
+            if index % 2 == 0:
+                got = state.try_acquire()
+            else:
+                got = state.try_acquire_recovery()
+            with results_lock:
+                results.append(got)
+
+        threads = [
+            threading.Thread(target=worker, args=(i,)) for i in range(num_threads)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5.0)
+            assert not t.is_alive()
+
+        # Exactly one operation (sync OR recovery) won the lock.
+        assert results.count(True) == 1
+        assert state.get_active_operation() in ("sync", "recovery")

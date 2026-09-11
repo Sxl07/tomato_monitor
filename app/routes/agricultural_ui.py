@@ -100,6 +100,53 @@ def _parse_monitoring_frequency(value: str) -> int | None:
 
 
 # ---------------------------------------------------------------------------
+# Local multiuser isolation helpers (Spec 022)
+#
+# Ownership is anchored on the root Greenhouse (owner_user_id). Descendants
+# (Module, Monitoring, ...) inherit it via FK chain; we do NOT duplicate
+# owner_user_id on children. These helpers resolve a module/monitoring up to
+# its greenhouse and check it belongs to the current user, so authenticated
+# routes never operate on another user's hierarchy.
+# ---------------------------------------------------------------------------
+
+
+def _user_owns_greenhouse(request: Request, greenhouse_id: int, user) -> bool:
+    """True if the greenhouse exists AND belongs to the current user."""
+    gh_repo = get_greenhouse_repository(request)
+    return gh_repo.get_by_id_for_owner(greenhouse_id, user.id) is not None
+
+
+def _module_owned_by_user(request: Request, module_id: int, user):
+    """Return the module only if its greenhouse belongs to the current user.
+
+    Returns None when the module does not exist OR its root greenhouse is
+    owned by a different user (treated as not-found by callers).
+    """
+    module_repo = get_module_repository(request)
+    module = module_repo.get_by_id(module_id)
+    if module is None:
+        return None
+    if not _user_owns_greenhouse(request, module.greenhouse_id, user):
+        return None
+    return module
+
+
+def _monitoring_owned_by_user(request: Request, monitoring_id: int, user):
+    """Return the monitoring only if its module's greenhouse belongs to the user.
+
+    Returns None when the monitoring does not exist OR belongs to another
+    user's hierarchy (module -> greenhouse -> owner).
+    """
+    monitoring_repo = get_monitoring_repository(request)
+    monitoring = monitoring_repo.get_by_id(monitoring_id)
+    if monitoring is None:
+        return None
+    if _module_owned_by_user(request, monitoring.module_id, user) is None:
+        return None
+    return monitoring
+
+
+# ---------------------------------------------------------------------------
 # Home
 # ---------------------------------------------------------------------------
 
@@ -127,7 +174,9 @@ async def dashboard(request: Request, user=Depends(require_current_user_html)):
     activity_type_repo = get_activity_type_repository(request)
     export_repo = get_export_package_repository(request)
 
-    greenhouses = gh_repo.get_all()
+    # Local multiuser isolation (Spec 022): dashboard covers only the current
+    # user's greenhouses and their descendants.
+    greenhouses = gh_repo.get_all_by_owner(user.id)
     modules = []
     monitorings_by_module: dict[int, list] = {}
     for gh in greenhouses:
@@ -136,8 +185,13 @@ async def dashboard(request: Request, user=Depends(require_current_user_html)):
         for m in gh_modules:
             monitorings_by_module[m.id] = monitoring_repo.get_by_module(m.id)
 
-    # Recent activities (enriched with type names)
-    recent_logs = activity_log_repo.list_recent(limit=5)
+    # Recent activities (enriched with type names) — scoped to the user's
+    # modules, then sorted by occurrence and limited, to avoid cross-user leak.
+    scoped_logs = []
+    for m in modules:
+        scoped_logs.extend(activity_log_repo.list_by_module(m.id))
+    scoped_logs.sort(key=lambda l: l.occurred_at, reverse=True)
+    recent_logs = scoped_logs[:5]
     all_types = {t.id: t for t in activity_type_repo.list_all()}
     recent_activities = []
     for log in recent_logs:
@@ -149,8 +203,12 @@ async def dashboard(request: Request, user=Depends(require_current_user_html)):
             "module_id": log.module_id,
         })
 
-    # Export packages
-    export_packages = export_repo.list_pending()
+    # Export packages — scoped to the current user; keep only pending ones
+    # (no global list_pending() that could surface other users' packages).
+    export_packages = [
+        p for p in export_repo.list_by_user(user.id)
+        if getattr(p, "status", None) == "pending"
+    ]
 
     # Build context
     dashboard_service = DashboardService()
@@ -183,7 +241,9 @@ async def greenhouse_list(request: Request, user=Depends(require_current_user_ht
     module_repo = get_module_repository(request)
     monitoring_repo = get_monitoring_repository(request)
 
-    greenhouses = repo.get_all()
+    # Local multiuser isolation (Spec 022): list only the current user's own
+    # greenhouses; ownership of descendants is inherited via the greenhouse.
+    greenhouses = repo.get_all_by_owner(user.id)
 
     # Build lookup dicts for context builder
     modules_by_gh: dict[int, list] = {}
@@ -252,7 +312,16 @@ def greenhouse_create(request: Request, name: str = Form(...), location: str = F
 
     repo = get_greenhouse_repository(request)
     try:
-        greenhouse = repo.create(Greenhouse(name=validated_name, location=location.strip() or None))
+        # Requirement 1.2: persist the authenticated owner on creation. The
+        # auth dependency (require_current_user_html) already blocks
+        # unauthenticated access, so a normal creation always has an owner.
+        greenhouse = repo.create(
+            Greenhouse(
+                name=validated_name,
+                owner_user_id=user.id,
+                location=location.strip() or None,
+            )
+        )
     except IntegrityError:
         errors.append("Ya existe un invernadero con ese nombre.")
         return templates.TemplateResponse(request, "agricultural/greenhouse_form.html", {
@@ -273,7 +342,8 @@ async def greenhouse_detail(request: Request, id: int, user=Depends(require_curr
     """Screen 2: Greenhouse Detail Screen."""
 
     repo = get_greenhouse_repository(request)
-    greenhouse = repo.get_by_id(id)
+    # Isolation: another user's greenhouse resolves to None (not found).
+    greenhouse = repo.get_by_id_for_owner(id, user.id)
     if greenhouse is None:
         return RedirectResponse(url="/invernaderos?error=Invernadero+no+encontrado", status_code=303)
 
@@ -304,7 +374,7 @@ async def greenhouse_detail(request: Request, id: int, user=Depends(require_curr
 def greenhouse_edit_form(request: Request, id: int, user=Depends(require_current_user_html)):
     """Greenhouse edit form."""
     repo = get_greenhouse_repository(request)
-    greenhouse = repo.get_by_id(id)
+    greenhouse = repo.get_by_id_for_owner(id, user.id)
     if greenhouse is None:
         return RedirectResponse(url="/invernaderos?error=Invernadero+no+encontrado", status_code=303)
 
@@ -340,7 +410,7 @@ def greenhouse_edit(request: Request, id: int, name: str = Form(...), location: 
         })
 
     repo = get_greenhouse_repository(request)
-    greenhouse = repo.get_by_id(id)
+    greenhouse = repo.get_by_id_for_owner(id, user.id)
     if greenhouse is None:
         return RedirectResponse(url="/invernaderos?error=Invernadero+no+encontrado", status_code=303)
 
@@ -375,6 +445,11 @@ def greenhouse_delete(request: Request, id: int, user=Depends(require_current_us
     """
     from src.application.services.deletion_service import DeletionError
 
+    # Isolation: refuse to delete a greenhouse owned by another user.
+    gh_repo = get_greenhouse_repository(request)
+    if gh_repo.get_by_id_for_owner(id, user.id) is None:
+        return RedirectResponse(url="/invernaderos?error=Invernadero+no+encontrado", status_code=303)
+
     service = get_deletion_service(request)
     try:
         service.delete_greenhouse(id)
@@ -394,7 +469,8 @@ def greenhouse_delete(request: Request, id: int, user=Depends(require_current_us
 def module_create_form(request: Request, gh_id: int, user=Depends(require_current_user_html)):
     """Module creation form."""
     gh_repo = get_greenhouse_repository(request)
-    greenhouse = gh_repo.get_by_id(gh_id)
+    # Isolation: cannot create a module under another user's greenhouse.
+    greenhouse = gh_repo.get_by_id_for_owner(gh_id, user.id)
     if greenhouse is None:
         return RedirectResponse(url="/invernaderos?error=Invernadero+no+encontrado", status_code=303)
 
@@ -425,6 +501,11 @@ def module_create(
     user=Depends(require_current_user_html),
 ):
     """Process module creation."""
+    # Isolation: cannot create a module under another user's greenhouse.
+    gh_repo = get_greenhouse_repository(request)
+    if gh_repo.get_by_id_for_owner(gh_id, user.id) is None:
+        return RedirectResponse(url="/invernaderos?error=Invernadero+no+encontrado", status_code=303)
+
     errors: list[str] = []
 
     # Validate module name
@@ -503,8 +584,7 @@ def module_create(
 async def module_detail(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 3: Module Detail Screen."""
 
-    repo = get_module_repository(request)
-    module = repo.get_by_id(id)
+    module = _module_owned_by_user(request, id, user)
     if module is None:
         return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
 
@@ -584,8 +664,7 @@ async def module_detail(request: Request, id: int, user=Depends(require_current_
 @router.get("/modulos/{id}/editar", response_class=HTMLResponse)
 def module_edit_form(request: Request, id: int, user=Depends(require_current_user_html)):
     """Module edit form."""
-    repo = get_module_repository(request)
-    module = repo.get_by_id(id)
+    module = _module_owned_by_user(request, id, user)
     if module is None:
         return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
 
@@ -647,7 +726,7 @@ def module_edit(
         errors.append("La frecuencia de monitoreo debe ser un número entero positivo.")
 
     repo = get_module_repository(request)
-    module = repo.get_by_id(id)
+    module = _module_owned_by_user(request, id, user)
     if module is None:
         return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
 
@@ -709,8 +788,7 @@ def module_delete(request: Request, id: int, user=Depends(require_current_user_h
     """
     from src.application.services.deletion_service import DeletionError
 
-    module_repo = get_module_repository(request)
-    module = module_repo.get_by_id(id)
+    module = _module_owned_by_user(request, id, user)
     if module is None:
         return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
 
@@ -734,8 +812,7 @@ def module_delete(request: Request, id: int, user=Depends(require_current_user_h
 async def monitoring_setup(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 4: Monitoring Setup Screen."""
 
-    repo = get_module_repository(request)
-    module = repo.get_by_id(id)
+    module = _module_owned_by_user(request, id, user)
     if module is None:
         return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
 
@@ -781,7 +858,7 @@ def monitoring_start(
     from app.dependencies import get_log_service
 
     repo = get_module_repository(request)
-    module = repo.get_by_id(id)
+    module = _module_owned_by_user(request, id, user)
     if module is None:
         return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
 
@@ -922,8 +999,7 @@ def monitoring_start(
 async def monitoring_execution(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 5: Monitoring Execution Screen."""
 
-    monitoring_repo = get_monitoring_repository(request)
-    monitoring = monitoring_repo.get_by_id(id)
+    monitoring = _monitoring_owned_by_user(request, id, user)
     if monitoring is None:
         return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
 
@@ -950,8 +1026,7 @@ async def monitoring_execution(request: Request, id: int, user=Depends(require_c
 async def monitoring_report(request: Request, id: int, user=Depends(require_current_user_html)):
     """Screen 6: Monitoring Report Screen."""
 
-    monitoring_repo = get_monitoring_repository(request)
-    monitoring = monitoring_repo.get_by_id(id)
+    monitoring = _monitoring_owned_by_user(request, id, user)
     if monitoring is None:
         return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
 
@@ -1011,8 +1086,7 @@ def monitoring_delete(request: Request, id: int, user=Depends(require_current_us
     """
     from src.application.services.deletion_service import DeletionError
 
-    monitoring_repo = get_monitoring_repository(request)
-    monitoring = monitoring_repo.get_by_id(id)
+    monitoring = _monitoring_owned_by_user(request, id, user)
     if monitoring is None:
         return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
 
@@ -1044,6 +1118,10 @@ def monitoring_abort(request: Request, id: int, user=Depends(require_current_use
     from src.domain.exceptions import InvalidTransitionError
 
     _logger.info(f"UI abort request received for monitoring {id}")
+
+    # Isolation: refuse to operate on another user's monitoring.
+    if _monitoring_owned_by_user(request, id, user) is None:
+        return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
 
     monitoring_service = get_monitoring_service(request)
     try:
@@ -1085,6 +1163,10 @@ def monitoring_finalize_capture(request: Request, id: int, user=Depends(require_
     from src.domain.exceptions import InvalidTransitionError
 
     _logger.info(f"UI finalize-capture request received for monitoring {id}")
+
+    # Isolation: refuse to operate on another user's monitoring.
+    if _monitoring_owned_by_user(request, id, user) is None:
+        return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
 
     monitoring_service = get_monitoring_service(request)
     try:
@@ -1159,6 +1241,10 @@ def monitoring_start_analysis(
         f"(power_source_confirmed={power_source_confirmed})"
     )
 
+    # Isolation: refuse to operate on another user's monitoring.
+    if _monitoring_owned_by_user(request, id, user) is None:
+        return RedirectResponse(url="/invernaderos?error=Monitoreo+no+encontrado", status_code=303)
+
     monitoring_service = get_monitoring_service(request)
     db_session = _get_request_session(request)
 
@@ -1211,8 +1297,7 @@ async def activity_list(request: Request, id: int, user=Depends(require_current_
     """Activity log list for a module."""
     from src.application.services.activity_service import ActivityService
 
-    module_repo = get_module_repository(request)
-    module = module_repo.get_by_id(id)
+    module = _module_owned_by_user(request, id, user)
     if module is None:
         return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
 
@@ -1236,8 +1321,7 @@ async def activity_create_form(request: Request, id: int, user=Depends(require_c
     """Show form to register a new agricultural activity."""
     from src.application.services.activity_service import ActivityService
 
-    module_repo = get_module_repository(request)
-    module = module_repo.get_by_id(id)
+    module = _module_owned_by_user(request, id, user)
     if module is None:
         return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
 
@@ -1276,8 +1360,7 @@ def activity_create(
         ActivityTypeNotFoundError,
     )
 
-    module_repo = get_module_repository(request)
-    module = module_repo.get_by_id(id)
+    module = _module_owned_by_user(request, id, user)
     if module is None:
         return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
 
@@ -1421,8 +1504,10 @@ def export_create(request: Request, user=Depends(require_current_user_html)):
     package = export_repo.create(package)
 
     try:
-        # Fetch all data
-        greenhouses = gh_repo.get_all()
+        # Fetch data scoped to the current user's greenhouses only (Spec 022):
+        # descendants are collected exclusively under the user's own greenhouses,
+        # so another user's hierarchy/activity logs are never exported.
+        greenhouses = gh_repo.get_all_by_owner(user.id)
         modules = []
         for gh in greenhouses:
             modules.extend(module_repo.get_by_greenhouse(gh.id))
@@ -1440,7 +1525,10 @@ def export_create(request: Request, user=Depends(require_current_user_html)):
             snapshots_by_monitoring[mon.id] = snapshot_repo.get_by_monitoring(mon.id)
 
         activity_types = activity_type_repo.list_all()
-        activity_logs = activity_log_repo.list_recent(limit=10000)
+        # Scope activity logs to the user's modules only (no cross-user leakage).
+        activity_logs = []
+        for mod in modules:
+            activity_logs.extend(activity_log_repo.list_by_module(mod.id))
 
         # Generate ZIP
         service = ExportService()
@@ -1489,7 +1577,8 @@ async def export_detail(request: Request, id: int, user=Depends(require_current_
     """Show export package details."""
     export_repo = get_export_package_repository(request)
     package = export_repo.get_by_id(id)
-    if package is None:
+    # Isolation: another user's package is treated as not-found.
+    if package is None or package.created_by_user_id != user.id:
         return RedirectResponse(url="/exportar?error=Exportación+no+encontrada", status_code=303)
 
     # Parse manifest for display
@@ -1536,7 +1625,8 @@ async def export_download(request: Request, id: int, user=Depends(require_curren
 
     export_repo = get_export_package_repository(request)
     package = export_repo.get_by_id(id)
-    if package is None:
+    # Isolation: another user's package is treated as not-found.
+    if package is None or package.created_by_user_id != user.id:
         return RedirectResponse(url="/exportar?error=Exportación+no+encontrada", status_code=303)
 
     if package.status != "completed":
@@ -1606,8 +1696,20 @@ async def sync_local_trigger(request: Request, user=Depends(require_current_user
     from src.application.services.export_service import ExportService
     from src.domain.entities.export_package import ExportPackage
 
-    monitorings = monitoring_repo.list_all()
-    activity_logs = activity_log_repo.list_all()
+    # Local multiuser isolation (Spec 022): local sync/export covers only the
+    # current user's hierarchy (greenhouses -> modules -> monitorings/activities),
+    # never another user's records.
+    _gh_repo = get_greenhouse_repository(request)
+    _module_repo = get_module_repository(request)
+    _user_greenhouses = _gh_repo.get_all_by_owner(user.id)
+    _user_modules = []
+    for _gh in _user_greenhouses:
+        _user_modules.extend(_module_repo.get_by_greenhouse(_gh.id))
+    monitorings = []
+    activity_logs = []
+    for _mod in _user_modules:
+        monitorings.extend(monitoring_repo.get_by_module(_mod.id))
+        activity_logs.extend(activity_log_repo.list_by_module(_mod.id))
 
     # Check there are pending records
     sync_service = SyncService()
@@ -1626,25 +1728,21 @@ async def sync_local_trigger(request: Request, user=Depends(require_current_user
     )
     package = export_repo.create(package)
 
-    # Generate the export (reuses existing ExportService)
+    # Generate the export (reuses existing ExportService). Greenhouses/modules
+    # were already resolved (user-scoped) above; only the extra repos are needed here.
     from app.dependencies import (
-        get_greenhouse_repository,
-        get_module_repository,
         get_snapshot_repository,
         get_monitoring_metrics_repository,
         get_activity_type_repository,
     )
 
-    greenhouse_repo = get_greenhouse_repository(request)
-    module_repo = get_module_repository(request)
     snapshot_repo = get_snapshot_repository(request)
     metrics_repo = get_monitoring_metrics_repository(request)
     activity_type_repo = get_activity_type_repository(request)
 
-    greenhouses = greenhouse_repo.get_all()
-    modules = []
-    for gh in greenhouses:
-        modules.extend(module_repo.get_by_greenhouse(gh.id))
+    # Reuse the user-scoped greenhouses/modules resolved above.
+    greenhouses = _user_greenhouses
+    modules = _user_modules
 
     all_activity_types = activity_type_repo.list_active()
 

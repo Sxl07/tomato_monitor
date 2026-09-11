@@ -111,12 +111,14 @@ async def trigger_sync(
             detail="Finaliza el monitoreo en curso antes de sincronizar.",
         )
 
-    # 3. Attempt to acquire sync lock
+    # 3. Attempt to acquire sync lock (also blocked while a recovery runs)
     if not runtime_state.try_acquire():
-        raise HTTPException(
-            status_code=409,
-            detail="Sincronización en curso, espera a que finalice.",
-        )
+        active = runtime_state.get_active_operation()
+        if active == "recovery":
+            detail = "Hay una recuperación de datos en curso."
+        else:
+            detail = "Sincronización en curso, espera a que finalice."
+        raise HTTPException(status_code=409, detail=detail)
 
     # From here, we MUST release in finally
     result_dict: Optional[dict] = None
@@ -283,7 +285,9 @@ async def get_sync_status(
     # (get_pending_for_propagation already filters local_delete_status=='completed'
     # AND status in pending/error/syncing). We do NOT sum the whole durable
     # synced outbox history, which would grow unbounded.
-    pending_deletions = deletion_outbox_repo.get_pending_for_propagation()
+    pending_deletions = deletion_outbox_repo.get_pending_for_propagation(
+    current_user.id
+)
     deletion_pending_count = len(pending_deletions)
     deletion_error_count = sum(
         1 for entry in pending_deletions if entry.status == "error"

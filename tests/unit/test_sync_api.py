@@ -35,8 +35,10 @@ class _FakeDeletionOutbox:
 
     def __init__(self, pending=None):
         self._pending = list(pending or [])
+        self.requested_owner_user_id = None
 
-    def get_pending_for_propagation(self):
+    def get_pending_for_propagation(self, owner_user_id):
+        self.requested_owner_user_id = owner_user_id
         return list(self._pending)
 
 
@@ -1233,3 +1235,56 @@ class TestSyncTriggerReturnsDeletionCounters:
         assert data["deletions_synced"] == 1
         assert data["deletions_failed"] == 0
         assert data["entities_synced"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Recovery active blocks sync (Spec 022, block E)
+# ---------------------------------------------------------------------------
+
+
+class TestRecoveryBlocksSync:
+    """A manual recovery in progress blocks POST /api/sync/trigger with 409."""
+
+    @patch("src.application.services.remote_sync_service.RemoteSyncService")
+    @patch(
+        "src.infrastructure.supabase.supabase_auth_adapter.SupabaseAuthAdapter.sign_in"
+    )
+    def test_sync_blocked_while_recovery_active(
+        self,
+        mock_sign_in,
+        mock_service_cls,
+        sync_runtime,
+        mock_registry,
+        mock_sync_state_repo,
+        user_with_remote_id,
+    ):
+        # Recovery is currently holding the shared cloud-operation lock.
+        assert sync_runtime.try_acquire_recovery() is True
+
+        app.dependency_overrides[get_sync_runtime_state] = lambda: sync_runtime
+        app.dependency_overrides[get_monitoring_runtime_registry] = lambda: mock_registry
+        app.dependency_overrides[get_sync_state_repository] = lambda: mock_sync_state_repo
+        app.dependency_overrides[require_current_user_api] = lambda: user_with_remote_id
+
+        try:
+            with TestClient(app) as client:
+                app.state.supabase_config = _make_supabase_config()
+                response = client.post(
+                    "/api/sync/trigger", json={"password": "secret"}
+                )
+
+            assert response.status_code == 409
+            # Detail indicates a recovery is in progress.
+            assert "recuperación" in response.json()["detail"].lower()
+            # Neither sign_in nor RemoteSyncService were invoked.
+            mock_sign_in.assert_not_called()
+            mock_service_cls.assert_not_called()
+            # Recovery lock is still held (sync did not release it).
+            assert sync_runtime.get_active_operation() == "recovery"
+        finally:
+            # Cleanup: release recovery so no state leaks to other tests.
+            sync_runtime.release_recovery()
+            app.dependency_overrides.pop(get_sync_runtime_state, None)
+            app.dependency_overrides.pop(get_monitoring_runtime_registry, None)
+            app.dependency_overrides.pop(get_sync_state_repository, None)
+            app.dependency_overrides.pop(require_current_user_api, None)

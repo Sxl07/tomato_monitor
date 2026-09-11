@@ -83,6 +83,38 @@ def _get_request_session(request: Request) -> Session:
     return request.state._db_session
 
 
+def release_request_db_session(request: Request) -> None:
+    """Eagerly release the request-scoped SQLite session (Spec 022, block E).
+
+    Opt-in helper for long-running operations that have already materialized the
+    domain data they need from the request-scoped session (e.g. a User loaded by
+    ``require_current_user_api``). Closing the session here prevents an
+    authentication read transaction from staying open across remote network
+    calls (Supabase re-auth, remote reads, Storage downloads) and the recovery
+    inserts, which use their own sessions.
+
+    Idempotent and defensive:
+        - No-op when no session exists.
+        - Rolls back (this session was used only for a read), then closes.
+        - Always clears ``request.state._db_session`` so DBSessionMiddleware does
+          NOT re-commit/re-rollback/re-close an already-released session.
+
+    Does NOT commit. Callers must have already copied any needed data out of the
+    ORM before invoking this.
+    """
+    session = getattr(request.state, "_db_session", None)
+    if session is None:
+        return
+
+    try:
+        session.rollback()
+    finally:
+        try:
+            session.close()
+        finally:
+            request.state._db_session = None
+
+
 def get_db_session(request: Request) -> Generator[Session, None, None]:
     """Provide a transactional SQLAlchemy session scoped to a single request.
 
@@ -198,6 +230,63 @@ def get_sync_state_repository(request: Request) -> "SyncStateRepository":
 def get_monitoring_runtime_registry(request: Request) -> "MonitoringRuntimeRegistry":
     """Return the shared MonitoringRuntimeRegistry singleton from app.state."""
     return request.app.state.monitoring_runtime_registry
+
+
+def get_recovery_service(request: Request) -> "RecoveryService":
+    """Build the productive RecoveryService (Spec 022, block E wiring).
+
+    Wires RecoveryService with exactly the approved implementations:
+        - RemoteReadPort            -> SupabaseRemoteReadAdapter(config)
+        - RecoveryUnitOfWorkFactory -> lambda: SqlRecoveryUnitOfWork(get_session)
+        - SyncStatePort             -> SyncStateRepository(session_factory)
+        - RecoveryTombstonePort     -> SqlRecoveryTombstoneAdapter(get_session)
+        - RemoteDownloadPort        -> SupabaseStorageAdapter(config)
+        - RecoveryFilePort          -> LocalRecoveryFileAdapter(OUTPUTS_DIR)
+
+    Uses the same SupabaseConfig from app.state as sync. No service_role, no
+    token in the constructor — the access_token is passed only to
+    execute_recovery. The UoW factory produces a FRESH SqlRecoveryUnitOfWork
+    (new Session) per invocation, preserving the D2 per-row session discipline.
+
+    Raises:
+        RuntimeError: If Supabase is not configured. Callers validate config
+            before invoking this dependency, so this is a defensive guard.
+    """
+    from src.application.services.recovery_service import RecoveryService
+    from src.infrastructure.persistence.recovery_file_adapter import (
+        LocalRecoveryFileAdapter,
+    )
+    from src.infrastructure.persistence.recovery_tombstone_adapter import (
+        SqlRecoveryTombstoneAdapter,
+    )
+    from src.infrastructure.persistence.recovery_unit_of_work import (
+        SqlRecoveryUnitOfWork,
+    )
+    from src.infrastructure.persistence.sync_state_repository import (
+        SyncStateRepository,
+    )
+    from src.infrastructure.supabase.supabase_read_adapter import (
+        SupabaseRemoteReadAdapter,
+    )
+    from src.infrastructure.supabase.supabase_storage_adapter import (
+        SupabaseStorageAdapter,
+    )
+
+    config = get_supabase_config(request)
+    if config is None:
+        raise RuntimeError("Supabase is not configured; recovery unavailable.")
+
+    db_manager = request.app.state.db_manager
+    get_session = db_manager.get_session
+
+    return RecoveryService(
+        remote_read=SupabaseRemoteReadAdapter(config),
+        uow_factory=lambda: SqlRecoveryUnitOfWork(get_session),
+        sync_state=SyncStateRepository(session_factory=get_session),
+        tombstone_guard=SqlRecoveryTombstoneAdapter(get_session),
+        remote_download=SupabaseStorageAdapter(config),
+        recovery_files=LocalRecoveryFileAdapter(OUTPUTS_DIR),
+    )
 
 
 def get_deletion_outbox_repository(request: Request) -> "DeletionOutboxRepository":

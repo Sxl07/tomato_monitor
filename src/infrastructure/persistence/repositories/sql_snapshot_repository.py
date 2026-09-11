@@ -7,9 +7,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.domain.entities.snapshot import Snapshot
-from src.domain.exceptions import InvalidImagePathError, ParentNotFoundError
+from src.domain.exceptions import (
+    InvalidImagePathError,
+    ParentNotFoundError,
+    RecoveredEntityAlreadyExistsError,
+)
 from src.domain.repositories.snapshot_repository import SnapshotRepository
-from src.infrastructure.persistence.models.snapshot_model import SnapshotModel
+from src.infrastructure.persistence.models.snapshot_model import SnapshotModel, utcnow
 
 
 # Regex to detect Windows drive letter absolute paths (e.g., C:\, D:/)
@@ -111,6 +115,70 @@ class SqlSnapshotRepository(SnapshotRepository):
             raise ParentNotFoundError("Snapshot", id)
         model.has_detections = has_detections
         self._session.flush()
+        return self._to_entity(model)
+
+    def find_by_remote_id(self, remote_id: str) -> Optional[Snapshot]:
+        """Return the snapshot mapped to the given remote_id, or None."""
+        model = (
+            self._session.query(SnapshotModel)
+            .filter(SnapshotModel.remote_id == remote_id)
+            .first()
+        )
+        if model is None:
+            return None
+        return self._to_entity(model)
+
+    def insert_preserving_remote_id(
+        self,
+        monitoring_id: int,
+        entity: Snapshot,
+        remote_id: str,
+        raw_storage_path: Optional[str] = None,
+        annotated_storage_path: Optional[str] = None,
+    ) -> Snapshot:
+        """Insert a recovered snapshot under the LOCAL parent monitoring id.
+
+        Import-missing-only: validates image_path, guards against duplicate
+        remote_id, assigns a new autoincrement id, records remote storage paths
+        as given, and marks the row synced. Commits so the recovered row is a
+        durable LOCAL checkpoint (create() stays flush+refresh, unchanged).
+        """
+        self._validate_image_path(entity.image_path)
+
+        existing = (
+            self._session.query(SnapshotModel)
+            .filter(SnapshotModel.remote_id == remote_id)
+            .first()
+        )
+        if existing is not None:
+            raise RecoveredEntityAlreadyExistsError("Snapshot", remote_id)
+
+        model = SnapshotModel(
+            monitoring_id=monitoring_id,
+            image_path=entity.image_path,
+            frame_index=entity.frame_index,
+            change_score=entity.change_score,
+            has_detections=entity.has_detections,
+            raw_storage_path=raw_storage_path,
+            annotated_storage_path=annotated_storage_path,
+            remote_id=remote_id,
+            remote_sync_status="synced",
+            remote_sync_error=None,
+            last_synced_at=utcnow(),
+        )
+        if entity.captured_at is not None:
+            model.captured_at = entity.captured_at
+        # Recovery is a durable LOCAL checkpoint: commit so the recovered row
+        # survives even if a later remote request fails. Distinct transactional
+        # context from create() (which only flushes); create() is unchanged.
+        try:
+            self._session.add(model)
+            self._session.flush()
+            self._session.commit()
+        except Exception:
+            self._session.rollback()
+            raise
+        self._session.refresh(model)
         return self._to_entity(model)
 
     def _validate_image_path(self, path: str) -> None:

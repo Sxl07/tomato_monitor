@@ -94,3 +94,20 @@ class MetricsNotAllowedError(DomainError):
             f"with status '{current_status}'. "
             f"Monitoring must be in 'completed' or 'aborted' state."
         )
+
+
+class RecoveredEntityAlreadyExistsError(DomainError):
+    """A local row already exists for the given remote_id during recovery.
+
+    Raised by repository recovery insert primitives when an insert is attempted
+    for a remote_id that is already mapped to an existing local row. Recovery is
+    import-missing-only: it never updates, merges, reparents, or duplicates an
+    existing local row.
+    """
+
+    def __init__(self, entity_type: str, remote_id: str) -> None:
+        self.entity_type = entity_type
+        self.remote_id = remote_id
+        super().__init__(
+            f"{entity_type} with remote_id '{remote_id}' already exists locally."
+        )

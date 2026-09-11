@@ -23,11 +23,31 @@
     var formEl = document.getElementById("remote-sync-form");
     var passwordInput = document.getElementById("sync-password");
     var syncBtn = document.getElementById("remote-sync-btn");
+    var recoveryBtn = document.getElementById("cloud-recovery-btn");
 
     // --- State ---
     var pollingId = null;
 
     // --- Helpers ---
+
+    // Ownership-aware blocking of the Recovery button: sync only disables it if
+    // it was NOT already disabled (e.g. by an in-flight recovery), and only
+    // re-enables the button it itself disabled. This mirrors the recovery
+    // controller's ownership of the Sync button so neither clobbers the other.
+    function setRecoveryBlockedBySync(blocked) {
+        if (!recoveryBtn) return;
+        if (blocked) {
+            if (!recoveryBtn.disabled) {
+                recoveryBtn.disabled = true;
+                recoveryBtn.dataset.disabledBySync = "true";
+            }
+            return;
+        }
+        if (recoveryBtn.dataset.disabledBySync === "true") {
+            recoveryBtn.disabled = false;
+            delete recoveryBtn.dataset.disabledBySync;
+        }
+    }
 
     function fetchStatus() {
         return fetch("/api/sync/status", { credentials: "same-origin" })
@@ -57,6 +77,12 @@
         }
 
         statusEl.innerHTML = html;
+
+        // Reconcile Recovery availability with the known sync state so that a
+        // page opened while another sync is active reflects the real state.
+        // Only a sync-owned disable is released here; a recovery-owned disable
+        // is left untouched.
+        setRecoveryBlockedBySync(data.is_syncing === true);
     }
 
     function formatDate(isoStr) {
@@ -155,6 +181,7 @@
 
         hideResult();
         setButtonEnabled(false);
+        setRecoveryBlockedBySync(true);
         startPolling();
 
         fetch("/api/sync/trigger", {
@@ -172,6 +199,7 @@
             .then(function (result) {
                 stopPolling();
                 setButtonEnabled(true);
+                setRecoveryBlockedBySync(false);
 
                 if (result.ok) {
                     var d = result.data;
@@ -209,6 +237,7 @@
                 clearPassword();
                 stopPolling();
                 setButtonEnabled(true);
+                setRecoveryBlockedBySync(false);
                 showResult("No se pudo conectar al servidor.", true);
             });
     }

@@ -6,9 +6,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.domain.entities.module import Module
-from src.domain.exceptions import DuplicateModuleError
+from src.domain.exceptions import (
+    DuplicateModuleError,
+    RecoveredEntityAlreadyExistsError,
+)
 from src.domain.repositories.module_repository import ModuleRepository
-from src.infrastructure.persistence.models.module_model import ModuleModel
+from src.infrastructure.persistence.models.module_model import ModuleModel, utcnow
 
 
 class SqlModuleRepository(ModuleRepository):
@@ -138,6 +141,58 @@ class SqlModuleRepository(ModuleRepository):
         if model is not None:
             self._session.delete(model)
             self._session.commit()
+
+    def find_by_remote_id(self, remote_id: str) -> Optional[Module]:
+        """Return the module mapped to the given remote_id, or None."""
+        model = (
+            self._session.query(ModuleModel)
+            .filter(ModuleModel.remote_id == remote_id)
+            .first()
+        )
+        if model is None:
+            return None
+        return self._to_entity(model)
+
+    def insert_preserving_remote_id(
+        self, greenhouse_id: int, entity: Module, remote_id: str
+    ) -> Module:
+        """Insert a recovered module under the LOCAL parent greenhouse id.
+
+        Import-missing-only: guards against duplicate remote_id, assigns a new
+        autoincrement id, and marks the row synced. Mirrors create()'s
+        commit-based transactional pattern.
+        """
+        existing = (
+            self._session.query(ModuleModel)
+            .filter(ModuleModel.remote_id == remote_id)
+            .first()
+        )
+        if existing is not None:
+            raise RecoveredEntityAlreadyExistsError("Module", remote_id)
+
+        model = ModuleModel(
+            greenhouse_id=greenhouse_id,
+            name=entity.name,
+            crop_type=entity.crop_type,
+            width_m=entity.width_m,
+            length_m=entity.length_m,
+            monitoring_frequency_days=entity.monitoring_frequency_days,
+            remote_id=remote_id,
+            remote_sync_status="synced",
+            remote_sync_error=None,
+            last_synced_at=utcnow(),
+        )
+        # Preserve historical remote timestamps when present (recovery restores
+        # the remote row as-is); otherwise the ORM defaults to now.
+        if entity.created_at is not None:
+            model.created_at = entity.created_at
+        if entity.updated_at is not None:
+            model.updated_at = entity.updated_at
+        self._session.add(model)
+        self._session.flush()
+        self._session.commit()
+        self._session.refresh(model)
+        return self._to_entity(model)
 
     def _to_entity(self, model: ModuleModel) -> Module:
         """Convert a SQLAlchemy ModuleModel to a domain Module entity.
