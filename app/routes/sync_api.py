@@ -285,7 +285,9 @@ async def get_sync_status(
     # (get_pending_for_propagation already filters local_delete_status=='completed'
     # AND status in pending/error/syncing). We do NOT sum the whole durable
     # synced outbox history, which would grow unbounded.
-    pending_deletions = deletion_outbox_repo.get_pending_for_propagation()
+    pending_deletions = deletion_outbox_repo.get_pending_for_propagation(
+    current_user.id
+)
     deletion_pending_count = len(pending_deletions)
     deletion_error_count = sum(
         1 for entry in pending_deletions if entry.status == "error"

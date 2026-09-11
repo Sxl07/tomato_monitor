@@ -35,8 +35,10 @@ class _FakeDeletionOutbox:
 
     def __init__(self, pending=None):
         self._pending = list(pending or [])
+        self.requested_owner_user_id = None
 
-    def get_pending_for_propagation(self):
+    def get_pending_for_propagation(self, owner_user_id):
+        self.requested_owner_user_id = owner_user_id
         return list(self._pending)
 
 
