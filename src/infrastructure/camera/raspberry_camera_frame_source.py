@@ -79,6 +79,7 @@ class RaspberryCameraFrameSource(FrameSource):
         height: int = 480,
         fps: int = 5,
         camera_mode: str = CAMERA_MODE_STILL,
+        camera_lock_timeout_seconds: float = 15.0,
     ):
         """Initialize the frame source.
 
@@ -92,6 +93,12 @@ class RaspberryCameraFrameSource(FrameSource):
             camera_mode: ``"still"`` (default, existing capture-first behavior)
                 or ``"video"`` (video-first: explicit video configuration with
                 a physical frame-duration cadence).
+            camera_lock_timeout_seconds: Maximum time (seconds) that ``read()``
+                waits to acquire the global camera lock in persistent mode.
+                Defaults to ``15.0`` to preserve the existing monitoring
+                behavior. A short value (e.g. the live preview manager, Spec 023
+                Task 5) lets a caller fail fast instead of blocking, so its own
+                bounded ``stop()`` is not defeated by a long lock wait.
 
         Raises:
             ValueError: If ``camera_mode`` is unknown, or if ``fps <= 0`` when
@@ -111,6 +118,7 @@ class RaspberryCameraFrameSource(FrameSource):
         self._height = height
         self._fps = fps
         self._camera_mode = camera_mode
+        self._camera_lock_timeout_seconds = camera_lock_timeout_seconds
         self._camera: Optional[Any] = None
         self._started = False
         self._lock_held = False  # True if we're holding _camera_lock in persistent mode
@@ -130,9 +138,14 @@ class RaspberryCameraFrameSource(FrameSource):
             if not self._started:
                 # Acquire global lock for persistent mode
                 logger.info("Worker: acquiring camera lock...")
-                acquired = _camera_lock.acquire(timeout=15.0)
+                acquired = _camera_lock.acquire(
+                    timeout=self._camera_lock_timeout_seconds
+                )
                 if not acquired:
-                    logger.error("Worker: could not acquire camera lock within 15s.")
+                    logger.error(
+                        "Worker: could not acquire camera lock within %ss.",
+                        self._camera_lock_timeout_seconds,
+                    )
                     return (False, None)
                 self._lock_held = True
                 logger.info("Worker: camera lock acquired.")

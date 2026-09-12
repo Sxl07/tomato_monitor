@@ -10,10 +10,11 @@
  *   2. GET /api/monitoring/{id}/log?since=... — activity log entries (incremental)
  *   3. GET /api/monitoring/{id}/last-snapshot — last thumbnail (when not recording)
  *
- * Fast recording-preview loop (~5 fps / 200 ms) runs separately while the
- * session is "running" and reads the recording worker's last-frame copy via
- * GET /api/monitoring/{id}/preview. It never opens a camera and does not
- * change recording_target_fps.
+ * Spec 023: the recording preview is a continuous MJPEG stream (an <img> whose
+ * src points to GET /api/monitoring/{id}/preview-stream) shown while the session
+ * is "running". There is NO fast frame-polling loop; the browser renders the
+ * stream directly. The stream never opens a camera and does not change
+ * recording_target_fps.
  *
  * Also manages:
  *   - Elapsed time counter (MM:SS) updating every second
@@ -36,32 +37,17 @@
     var currentStatus = null;
     var lastLogTimestamp = null;
     var lastSnapshotBlobUrl = null;
-    // Concurrency guard for the fast preview loop: true while a single preview
-    // fetch is in flight. Reset by stopPreviewLoop() (and thus on teardown/
-    // restart) and by the owning request's finally.
-    var previewRequestInFlight = false;
-    // AbortController of the single active preview fetch (null when none).
-    // Aborting it cancels an in-flight request when the loop stops, polling
-    // restarts, or the session leaves "running".
-    var previewAbortController = null;
-    // Monotonic generation token. Incremented every time the preview is
-    // (re)started or torn down. A request captures the generation at launch;
-    // if the current generation has advanced by the time it resolves, the
-    // response belongs to an older session and must NOT touch the UI or the
-    // shared guard/controller.
-    var previewGeneration = 0;
-
     // --- Configuration ---
     var POLL_INTERVAL_MS = 2000;
-    // Live recording preview runs on its OWN faster loop (~5 fps / 200 ms) so
-    // the recording feels live, while status/log stay on the slow 2 s cycle.
-    // This does NOT change recording_target_fps — it only refreshes the
-    // worker's last-frame copy more often. Single camera owner is preserved.
-    var PREVIEW_INTERVAL_MS = 200;
     var TEMPERATURE_THRESHOLD = 70;
 
-    // Separate interval id for the fast recording-preview loop.
-    var previewIntervalId = null;
+    // Spec 023: the recording preview is a continuous MJPEG stream rendered by an
+    // <img>. There is NO fast frame-polling loop anymore. We only toggle the
+    // <img> src based on the monitoring state (running vs not running).
+    var recordingPreviewStreaming = false;
+    // A single pending retry timer (NOT a polling interval). On stream error we
+    // schedule at most one delayed reconnection while still "running".
+    var previewRetryTimeoutId = null;
 
     // Terminal states that stop polling
     var TERMINAL_STATES = ["completed", "aborted", "error"];
@@ -147,46 +133,58 @@
     }
 
     /**
-     * Start the fast recording-preview loop (~5 fps). Idempotent. Only the
-     * preview is refreshed here — no status/log requests. Never opens a camera.
+     * Attach the recording preview MJPEG stream to the <img>. Idempotent: if the
+     * <img> is already pointing at this monitoring's stream, do NOT reassign src
+     * (that would restart the connection). Never opens a camera.
      */
     function startPreviewLoop() {
-        if (previewIntervalId !== null) return; // already running
-        // Kick off immediately so the preview appears without a 200 ms delay.
-        pollRecordingPreview(currentMonitoringId);
-        previewIntervalId = setInterval(function () {
-            pollRecordingPreview(currentMonitoringId);
-        }, PREVIEW_INTERVAL_MS);
+        var imgEl = document.getElementById("recording-preview-img");
+        var placeholderEl = document.getElementById("recording-preview-placeholder");
+        if (!imgEl) return;
+        var expected = "/api/monitoring/" + currentMonitoringId + "/preview-stream";
+        // Idempotent: only (re)assign if not already streaming this monitoring.
+        var current = imgEl.getAttribute("src") || "";
+        if (recordingPreviewStreaming && current.indexOf(expected) === 0) {
+            return;
+        }
+        // On stream error while running, schedule ONE delayed reconnection with
+        // a cache-buster (NOT frame polling, NOT an interval). At most one retry
+        // timer is pending at a time.
+        imgEl.onerror = function () {
+            if (currentStatus !== "running") return;
+            if (previewRetryTimeoutId !== null) return; // a retry is already pending
+            previewRetryTimeoutId = setTimeout(function () {
+                previewRetryTimeoutId = null;
+                if (currentStatus === "running") {
+                    imgEl.src = "/api/monitoring/" + currentMonitoringId +
+                        "/preview-stream?t=" + Date.now();
+                }
+            }, 800);
+        };
+        imgEl.onload = function () {
+            imgEl.style.display = "block";
+            if (placeholderEl) placeholderEl.style.display = "none";
+        };
+        imgEl.src = expected;
+        recordingPreviewStreaming = true;
     }
 
     /**
-     * Stop the fast recording-preview loop. Idempotent.
-     *
-     * Besides clearing the interval, this ABORTS any in-flight preview fetch
-     * and advances the generation token. Together these guarantee that a
-     * pending request cannot update the UI or release the guard/controller of
-     * a later session after the loop has stopped.
+     * Detach the recording preview stream. Idempotent. Clearing the src closes
+     * the MJPEG connection and cancels any pending retry timer.
      */
     function stopPreviewLoop() {
-        if (previewIntervalId !== null) {
-            clearInterval(previewIntervalId);
-            previewIntervalId = null;
+        if (previewRetryTimeoutId !== null) {
+            clearTimeout(previewRetryTimeoutId);
+            previewRetryTimeoutId = null;
         }
-        // Cancel the active preview request (if any). Its rejected fetch is
-        // handled inside pollRecordingPreview; the generation bump below makes
-        // it a no-op even if it somehow resolves.
-        if (previewAbortController !== null) {
-            try {
-                previewAbortController.abort();
-            } catch (e) {
-                // Older engines without AbortController: nothing to abort.
-            }
-            previewAbortController = null;
+        var imgEl = document.getElementById("recording-preview-img");
+        if (imgEl) {
+            imgEl.onerror = null;
+            imgEl.onload = null;
+            imgEl.removeAttribute("src");
         }
-        // Invalidate any outstanding request so its late finally/then cannot
-        // touch shared state that now belongs to a new generation.
-        previewGeneration++;
-        previewRequestInFlight = false;
+        recordingPreviewStreaming = false;
     }
 
     // --- Polling cycle (max 3 requests) ---
@@ -528,87 +526,11 @@
         }
     }
 
-    // --- Recording preview polling (video-first) ---
-
-    var recordingPreviewBlobUrl = null;
-    // Concurrency is enforced by THREE cooperating pieces of module state:
-    //   - previewRequestInFlight: at most ONE preview fetch runs at a time;
-    //   - previewAbortController: lets stopPreviewLoop() cancel that fetch;
-    //   - previewGeneration: a token captured at launch so a response from an
-    //     aborted/older session can never update the UI nor release the guard
-    //     of a newer request.
-
-    /**
-     * Fetch the recording worker's last frame during a video-first recording.
-     * The endpoint reads a thread-safe copy from the registry worker and NEVER
-     * opens a camera. 503 means "no frame yet" — the placeholder remains.
-     *
-     * Race-safe by construction:
-     *   1. Returns immediately if a preview fetch is already in flight
-     *      (no two concurrent preview requests).
-     *   2. Uses a dedicated AbortController so stopPreviewLoop()/restart can
-     *      cancel the active request.
-     *   3. Captures the generation token at launch; after every await it bails
-     *      (without touching imgEl.src) if the generation advanced — i.e. the
-     *      loop was stopped/restarted meanwhile.
-     *   4. Only clears the shared guard/controller in finally when it still
-     *      owns the current generation, so an old request's late finally can
-     *      never free a newer request's state.
-     * @param {number} monitoringId
-     */
-    async function pollRecordingPreview(monitoringId) {
-        // (1) Skip if a previous preview request has not completed yet.
-        if (previewRequestInFlight) return;
-
-        var imgEl = document.getElementById("recording-preview-img");
-        var placeholderEl = document.getElementById("recording-preview-placeholder");
-        if (!imgEl) return;
-        var url = imgEl.getAttribute("data-preview-url") ||
-            ("/api/monitoring/" + monitoringId + "/preview");
-
-        // (2) Own AbortController + (3) generation captured for THIS request.
-        var controller = (typeof AbortController !== "undefined")
-            ? new AbortController()
-            : null;
-        var myGeneration = previewGeneration;
-
-        previewRequestInFlight = true;
-        previewAbortController = controller;
-        try {
-            var response = await fetch(
-                url + "?t=" + Date.now(),
-                controller ? { signal: controller.signal } : undefined
-            );
-            // Stale (loop stopped/restarted while awaiting) → do not touch UI.
-            if (myGeneration !== previewGeneration) return;
-            if (!response.ok) {
-                // 503 — recording not producing frames yet; keep the placeholder
-                return;
-            }
-            var blob = await response.blob();
-            // Re-check after the second await: an aborted/older response must
-            // NEVER update imgEl.src for the current session.
-            if (myGeneration !== previewGeneration) return;
-            if (recordingPreviewBlobUrl) {
-                URL.revokeObjectURL(recordingPreviewBlobUrl);
-            }
-            recordingPreviewBlobUrl = URL.createObjectURL(blob);
-            imgEl.src = recordingPreviewBlobUrl;
-            imgEl.style.display = "block";
-            if (placeholderEl) placeholderEl.style.display = "none";
-        } catch (error) {
-            // AbortError (cancelled) and network errors are both non-critical;
-            // the placeholder / last frame remains.
-        } finally {
-            // (4) Only release shared state if THIS request is still current.
-            // A stale request (generation advanced, e.g. after a restart or
-            // stop) must not clear the guard/controller owned by a newer one.
-            if (myGeneration === previewGeneration) {
-                previewRequestInFlight = false;
-                previewAbortController = null;
-            }
-        }
-    }
+    // --- Recording preview (video-first, Spec 023) ---
+    // The preview is a continuous MJPEG stream rendered by the browser via an
+    // <img> whose src points to /api/monitoring/{id}/preview-stream. There is NO
+    // frame-polling here anymore; startPreviewLoop()/stopPreviewLoop() only
+    // attach/detach the <img> src. See those functions above.
 
     // --- Elapsed time counter ---
 

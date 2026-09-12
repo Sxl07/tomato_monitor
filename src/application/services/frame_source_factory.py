@@ -24,6 +24,7 @@ def create_frame_source(
     height: int | None = None,
     fps: int | None = None,
     camera_mode: str | None = None,
+    camera_lock_timeout_seconds: float | None = None,
 ) -> Optional[FrameSource]:
     """Select the best available FrameSource backend.
 
@@ -43,6 +44,11 @@ def create_frame_source(
             If None, uses the frame source default.
         camera_mode: "still" (default) or "video". Only affects
             RaspberryCameraFrameSource; ignored by the OpenCV fallback.
+        camera_lock_timeout_seconds: Optional max wait (seconds) for the global
+            camera lock in persistent mode. Only affects
+            RaspberryCameraFrameSource; ignored by the OpenCV fallback. If None,
+            the RaspberryCameraFrameSource default (15.0) is used, preserving
+            existing behavior.
 
     Returns:
         A FrameSource instance (not yet connected to hardware), or None.
@@ -69,6 +75,8 @@ def create_frame_source(
                 kwargs["fps"] = fps
             if camera_mode is not None:
                 kwargs["camera_mode"] = camera_mode
+            if camera_lock_timeout_seconds is not None:
+                kwargs["camera_lock_timeout_seconds"] = camera_lock_timeout_seconds
             return RaspberryCameraFrameSource(**kwargs)
     except Exception as e:
         logger.debug(f"picamera2 backend not available: {e}")

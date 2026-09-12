@@ -138,6 +138,11 @@ def fake_picamera(monkeypatch):
     return factory
 
 
+class _AlwaysWriteSampler:
+    def should_write(self) -> bool:
+        return True
+
+
 def _make_worker(frame_source, recorder):
     return VideoRecordingWorker(
         monitoring_id=1,
@@ -146,6 +151,8 @@ def _make_worker(frame_source, recorder):
         monitoring_repo=object(),
         db_session=object(),
         configured_recording_fps=10.0,
+        configured_camera_stream_fps=20.0,
+        recording_sampler=_AlwaysWriteSampler(),
     )
 
 

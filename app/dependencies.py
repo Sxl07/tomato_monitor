@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Generator, Optional
 
-from fastapi import Request
+from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from src.infrastructure.config.settings import DETECTION_MODEL_PATH, OUTPUTS_DIR
@@ -232,6 +232,11 @@ def get_monitoring_runtime_registry(request: Request) -> "MonitoringRuntimeRegis
     return request.app.state.monitoring_runtime_registry
 
 
+def get_live_preview_manager(request: Request) -> "LivePreviewManager":
+    """Return the shared LivePreviewManager singleton from app.state (Spec 023)."""
+    return request.app.state.live_preview_manager
+
+
 def get_recovery_service(request: Request) -> "RecoveryService":
     """Build the productive RecoveryService (Spec 022, block E wiring).
 
@@ -458,3 +463,46 @@ async def require_current_user_api(request: Request):
         from fastapi import HTTPException
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
+
+
+# ---------------------------------------------------------------------------
+# Monitoring ownership dependency (Spec 023)
+# ---------------------------------------------------------------------------
+
+# Uniform "not found" message so that a resource belonging to another user is
+# indistinguishable from a non-existent one (does not leak existence).
+_MONITORING_NOT_FOUND_DETAIL = "No encontrado"
+
+
+def require_monitoring_owner(
+    monitoring_id: int,
+    user=Depends(require_current_user_api),
+    monitoring_repo=Depends(get_monitoring_repository),
+    module_repo=Depends(get_module_repository),
+    greenhouse_repo=Depends(get_greenhouse_repository),
+):
+    """Return the monitoring only if it belongs to the authenticated user.
+
+    Resolves Monitoring -> Module -> Greenhouse and reuses the existing
+    ``get_by_id_for_owner`` (Spec 022). Reuses the request-scoped repository
+    dependencies; does NOT create a new Session or session helper, and does NOT
+    import any private router helper.
+
+    Semantics (deliberate): a non-existent id, a missing module, and a resource
+    owned by another user ALL raise 404 with the SAME detail, so the response
+    does not reveal whether an id exists for a different user. Authentication is
+    already enforced by ``require_current_user_api`` (401 when unauthenticated).
+    """
+    monitoring = monitoring_repo.get_by_id(monitoring_id)
+    if monitoring is None:
+        raise HTTPException(status_code=404, detail=_MONITORING_NOT_FOUND_DETAIL)
+
+    module = module_repo.get_by_id(monitoring.module_id)
+    if module is None:
+        raise HTTPException(status_code=404, detail=_MONITORING_NOT_FOUND_DETAIL)
+
+    greenhouse = greenhouse_repo.get_by_id_for_owner(module.greenhouse_id, user.id)
+    if greenhouse is None:
+        raise HTTPException(status_code=404, detail=_MONITORING_NOT_FOUND_DETAIL)
+
+    return monitoring

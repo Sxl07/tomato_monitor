@@ -432,6 +432,7 @@ class MonitoringService:
         """
         from src.infrastructure.config.settings import ACTIVE_PROFILE, BASE_DIR
         from src.application.services.video_recording_worker import VideoRecordingWorker
+        from src.application.services.recording_sampler import RecordingSampler
         from src.infrastructure.camera.video_recorder import VideoRecorder
         from src.infrastructure.monitoring.thermal_monitor import ThermalMonitor
 
@@ -448,6 +449,14 @@ class MonitoringService:
             allowed_base=BASE_DIR,
         )
 
+        # Spec 023: the RecordingSampler enforces the recording cadence
+        # (recording_target_fps) by temporal selection, while the camera/preview
+        # run at camera_stream_fps. The VideoRecorder container fps stays
+        # recording_target_fps (NOT camera_stream_fps).
+        recording_sampler = RecordingSampler(
+            recording_fps=float(ACTIVE_PROFILE.recording_target_fps)
+        )
+
         worker = VideoRecordingWorker(
             monitoring_id=monitoring.id,
             frame_source=frame_source,
@@ -455,6 +464,8 @@ class MonitoringService:
             monitoring_repo=self._monitoring_repo,
             db_session=db_session,
             configured_recording_fps=float(ACTIVE_PROFILE.recording_target_fps),
+            configured_camera_stream_fps=float(ACTIVE_PROFILE.camera_stream_fps),
+            recording_sampler=recording_sampler,
             log_service=log_service,
         )
 

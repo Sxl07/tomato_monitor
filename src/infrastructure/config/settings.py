@@ -48,6 +48,15 @@ class ExecutionProfile:
     camera_height: int
     camera_fps: int
 
+    # Physical camera / preview cadence (Spec 023).
+    # camera_stream_fps: the PHYSICAL capture / live-preview cadence, decoupled
+    #   from the recording cadence. It drives FrameDurationLimits for the video
+    #   camera mode used by the fluid preview and is NOT the fps persisted to the
+    #   MP4. The recording cadence remains recording_target_fps (per profile).
+    #   This separation is the core of Spec 023: camera ~= camera_stream_fps,
+    #   video ~= recording_target_fps.
+    camera_stream_fps: float
+
     # Loop frequency control (time-based)
     capture_loop_fps: float
     min_seconds_between_snapshots: float
@@ -87,11 +96,13 @@ class ExecutionProfile:
 
     # --- Video-first recording (Spec 019) ---
     # video_first_enabled: enables the video-first flow for the profile.
-    # recording_target_fps: NOMINAL fps requested from the camera/pipeline and
-    #   used as configured_recording_fps by RaspberryCameraFrameSource(camera_mode
-    #   ="video"), VideoRecordingWorker and VideoRecorder. It is kept aligned with
-    #   camera_fps so the requested cadence and the MP4 container fps match. This
-    #   is NOT the effective fps; effective_recording_fps is measured at runtime as
+    # recording_target_fps: NOMINAL fps of the PERSISTED video (MP4 container fps
+    #   and configured_recording_fps for VideoRecordingWorker/VideoRecorder). It
+    #   is the RECORDING cadence only. Since Spec 023 it does NOT drive the
+    #   physical camera cadence: the sensor is configured from camera_stream_fps
+    #   (see field above), and the recording cadence is applied by temporal
+    #   sampling (RecordingSampler), not by throttling the camera. This is NOT the
+    #   effective fps; effective_recording_fps is measured at runtime as
     #   frames_written / recording_duration_seconds.
     # video_codec_candidates: ordered codec fallback for VideoRecorder (tuple).
     video_first_enabled: bool
@@ -123,6 +134,7 @@ EDGE_PROFILE = ExecutionProfile(
     camera_width=960,
     camera_height=720,
     camera_fps=5,
+    camera_stream_fps=20.0,
     capture_loop_fps=5.0,
     min_seconds_between_snapshots=1.0,
     max_seconds_without_snapshot=3.0,
@@ -167,6 +179,7 @@ FULL_PROFILE = ExecutionProfile(
     camera_width=640,
     camera_height=480,
     camera_fps=10,
+    camera_stream_fps=20.0,
     capture_loop_fps=5.0,
     min_seconds_between_snapshots=1.0,
     max_seconds_without_snapshot=3.0,
@@ -219,6 +232,41 @@ else:
         f"Valid values: 'edge', 'full'. Using 'edge' as default."
     )
     ACTIVE_PROFILE = EDGE_PROFILE
+
+
+def validate_profile_cadences(profile: ExecutionProfile) -> None:
+    """Validate the camera-stream vs recording cadence invariants (Spec 023).
+
+    Enforces, for a profile defined in code (not user input):
+        camera_stream_fps > 0
+        recording_target_fps > 0
+        recording_target_fps <= camera_stream_fps
+
+    Policy is FAIL-FAST: an invalid profile is a configuration bug and must stop
+    startup immediately. This function never mutates the (frozen) profile, never
+    applies a silent correction (e.g. max(...)) and never merely warns; it raises
+    ``ValueError`` with an actionable message.
+    """
+    if profile.camera_stream_fps <= 0:
+        raise ValueError(
+            f"Invalid profile '{profile.name}': camera_stream_fps must be > 0, "
+            f"got {profile.camera_stream_fps}."
+        )
+    if profile.recording_target_fps <= 0:
+        raise ValueError(
+            f"Invalid profile '{profile.name}': recording_target_fps must be > 0, "
+            f"got {profile.recording_target_fps}."
+        )
+    if profile.recording_target_fps > profile.camera_stream_fps:
+        raise ValueError(
+            f"Invalid profile '{profile.name}': recording_target_fps "
+            f"({profile.recording_target_fps}) must be <= camera_stream_fps "
+            f"({profile.camera_stream_fps})."
+        )
+
+
+# Fail-fast validation of the selected profile at import/startup time.
+validate_profile_cadences(ACTIVE_PROFILE)
 
 # --- Local physical cleanup (Spec 021, Task 11) ---
 # Retention window (hours) that local artifacts under OUTPUTS_DIR are kept after

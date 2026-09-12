@@ -227,6 +227,7 @@ def _record_real_video(env, monitoring_id):
         allowed_base=env["tmp_path"],
     )
     frame_source = _BoundedFrameSource(SAMPLE_VIDEO, max_frames=8)
+    from src.application.services.recording_sampler import RecordingSampler
     worker = VideoRecordingWorker(
         monitoring_id=monitoring_id,
         frame_source=frame_source,
@@ -234,6 +235,8 @@ def _record_real_video(env, monitoring_id):
         monitoring_repo=env["mon_repo"],
         db_session=env["session"],
         configured_recording_fps=5.0,
+        configured_camera_stream_fps=20.0,
+        recording_sampler=RecordingSampler(recording_fps=5.0),
     )
     frame_source.bind_worker(worker)
     worker.run()

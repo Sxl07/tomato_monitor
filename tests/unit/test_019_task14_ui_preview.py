@@ -119,10 +119,11 @@ class TestStartActionNoFileSelection:
         # The frame source is a camera source; it was not built from a file path.
         assert "video_path" not in captured
 
-    @pytest.mark.parametrize("profile_fps", [5, 10])
-    def test_video_first_start_uses_video_frame_source(self, profile_fps):
-        """When video_first_enabled=True, START builds the VIDEO frame source
-        with camera_mode='video' and fps=int(recording_target_fps)."""
+    @pytest.mark.parametrize("stream_fps", [20])
+    def test_video_first_start_uses_video_frame_source(self, stream_fps):
+        """Spec 023: when video_first_enabled=True, START builds the VIDEO frame
+        source with camera_mode='video' and fps=int(camera_stream_fps) (the
+        PHYSICAL cadence), decoupled from recording_target_fps."""
         client = _start_client()
 
         captured = {}
@@ -131,12 +132,15 @@ class TestStartActionNoFileSelection:
             captured.update(kwargs)
             return MagicMock()
 
-        # A profile stub with video-first enabled and the target recording fps.
+        # A profile stub with video-first enabled. camera_stream_fps drives the
+        # physical cadence; recording_target_fps is intentionally different to
+        # prove the fps passed to the source is NOT the recording cadence.
         profile = MagicMock()
         profile.video_first_enabled = True
         profile.camera_width = 640
         profile.camera_height = 480
-        profile.recording_target_fps = float(profile_fps)
+        profile.camera_stream_fps = float(stream_fps)
+        profile.recording_target_fps = 5.0
         profile.camera_fps = 30
 
         with patch("app.routes.agricultural_ui.get_module_repository") as m_repo, \
@@ -164,7 +168,8 @@ class TestStartActionNoFileSelection:
 
         assert resp.status_code == 303
         assert captured.get("camera_mode") == "video"
-        assert captured.get("fps") == int(profile_fps)
+        # Spec 023: physical cadence comes from camera_stream_fps, not recording.
+        assert captured.get("fps") == int(stream_fps)
         assert isinstance(captured.get("fps"), int)
 
 
@@ -185,11 +190,15 @@ class _FakeVideoWorker:
 
 def _preview_client(worker, camera_service=None):
     from app.routes.monitoring_api import router
-    from app.dependencies import require_current_user_api
+    from app.dependencies import require_current_user_api, require_monitoring_owner
 
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[require_current_user_api] = lambda: MagicMock(id=1)
+    # Spec 023: the single-frame preview endpoint now depends on ownership.
+    # Ownership itself is covered by test_023_monitoring_preview_ownership.py;
+    # here we bypass it (owner granted) to test the worker/frame behavior.
+    app.dependency_overrides[require_monitoring_owner] = lambda: MagicMock(id=55)
 
     registry = MagicMock()
     registry.get_worker.return_value = worker

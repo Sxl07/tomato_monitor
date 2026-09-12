@@ -40,7 +40,6 @@
     <div id="camera-preview-container" style="background-color: var(--color-bg); border-radius: var(--border-radius); overflow: hidden; min-height: 180px; display: flex; align-items: center; justify-content: center;">
         <img
             id="camera-preview-img"
-            src="/api/camera/preview"
             alt="Vista previa de la cámara"
             style="width: 100%; max-height: 240px; object-fit: contain; display: none;"
         >
@@ -154,17 +153,38 @@
     var modelBadge = document.getElementById("model-badge");
     var btnStart = document.getElementById("btn-start-monitoring");
 
+    // Spec 023: the preview is a continuous MJPEG stream. The <img> load result
+    // is the source of truth for camera availability:
+    //   - img.onload  -> camera available -> enable "Iniciar Monitoreo"
+    //   - img.onerror -> query /api/camera/status ONCE, only for diagnostics.
+    // We do NOT poll /api/camera/status while our own preview is active.
+    // Handlers are attached BEFORE the first refreshCamera() so the initial
+    // onload/onerror event is never lost, and the <img> has NO src in the
+    // markup so refreshCamera() is the single point that starts the stream.
+    previewImg.onload = function() {
+        previewImg.style.display = "block";
+        previewPlaceholder.style.display = "none";
+        cameraStatus = "available";
+        updateCameraBadge();
+        updateStartButton();
+    };
+    previewImg.onerror = function() {
+        previewImg.style.display = "none";
+        previewPlaceholder.style.display = "block";
+        previewPlaceholder.textContent = "Imagen no disponible";
+        fetchCameraStatus();  // diagnostics only
+    };
+
     // Apply model badge styling on load
     updateModelBadge();
 
-    // Fetch camera status on page load
+    // Start the preview stream once, AFTER handlers are attached.
     refreshCamera();
 
     function refreshCamera() {
-        // Sequential flow: try preview first.
-        // If preview succeeds → camera is available (no need for separate status call).
-        // If preview fails → query /api/camera/status to distinguish busy vs not_detected.
-        fetchCameraPreview();
+        // Force a fresh stream connection with a cache-buster. onload/onerror
+        // above drive availability; no separate status polling.
+        previewImg.src = "/api/camera/preview-stream?t=" + Date.now();
     }
 
     function fetchCameraStatus() {
@@ -182,29 +202,6 @@
                 updateCameraBadge();
                 updateStartButton();
             });
-    }
-
-    function fetchCameraPreview() {
-        // Use a timestamped URL to avoid browser cache
-        var url = "/api/camera/preview?t=" + Date.now();
-        var img = new Image();
-        img.onload = function() {
-            previewImg.src = url;
-            previewImg.style.display = "block";
-            previewPlaceholder.style.display = "none";
-            // Preview succeeded → camera is available
-            cameraStatus = "available";
-            updateCameraBadge();
-            updateStartButton();
-        };
-        img.onerror = function() {
-            previewImg.style.display = "none";
-            previewPlaceholder.style.display = "block";
-            previewPlaceholder.textContent = "Imagen no disponible";
-            // Preview failed → ask status endpoint to find out why
-            fetchCameraStatus();
-        };
-        img.src = url;
     }
 
     function updateCameraBadge() {

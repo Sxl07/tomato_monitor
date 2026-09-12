@@ -122,6 +122,25 @@ async def lifespan(app: FastAPI):
     from src.application.services.monitoring_runtime_registry import MonitoringRuntimeRegistry
     app.state.monitoring_runtime_registry = MonitoringRuntimeRegistry()
 
+    # Spec 023: persistent live preview manager (single owner of the physical
+    # preview camera BEFORE a monitoring starts). Created AFTER the registry so
+    # it can consult device-global capture/analysis coordination. The
+    # is_camera_locked callable (infrastructure) is resolved here in the
+    # composition root, not inside the manager.
+    from src.application.services.live_preview_manager import LivePreviewManager
+    from src.application.services.frame_source_factory import create_frame_source
+    from src.infrastructure.camera.raspberry_camera_frame_source import (
+        is_camera_locked as _is_camera_locked,
+    )
+    from src.infrastructure.config.settings import ACTIVE_PROFILE as _ACTIVE_PROFILE
+    app.state.live_preview_manager = LivePreviewManager(
+        frame_source_factory=create_frame_source,
+        runtime_registry=app.state.monitoring_runtime_registry,
+        camera_is_locked=_is_camera_locked,
+        camera_stream_fps=_ACTIVE_PROFILE.camera_stream_fps,
+        camera_wh=(_ACTIVE_PROFILE.camera_width, _ACTIVE_PROFILE.camera_height),
+    )
+
     # Recover leftover recordings from an abrupt termination (Task 11.1).
     # Delegates entirely to MonitoringService.recover_abrupt_recordings();
     # best-effort — must never crash startup.
@@ -150,7 +169,14 @@ async def lifespan(app: FastAPI):
     _run_deferred_cleanup(db_manager)
 
     yield
-    # No persistent camera to release — preview uses single-frame capture
+    # Spec 023: release the live preview manager's camera on shutdown
+    # (best-effort; must never crash shutdown).
+    try:
+        app.state.live_preview_manager.stop()
+    except Exception as e:  # pragma: no cover - defensive shutdown guard
+        _logging.getLogger("app.shutdown").warning(
+            f"LivePreviewManager stop failed on shutdown: {e}"
+        )
 
 
 class DBSessionMiddleware(BaseHTTPMiddleware):

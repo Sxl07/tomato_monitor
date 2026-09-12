@@ -816,6 +816,13 @@ async def monitoring_setup(request: Request, id: int, user=Depends(require_curre
     if module is None:
         return RedirectResponse(url="/invernaderos?error=Módulo+no+encontrado", status_code=303)
 
+    # Spec 023: returning to the setup screen closes the preview lifecycle
+    # SUSPENDED -> IDLE. enable_preview() is idempotent, does NOT open the camera
+    # and only re-enables future subscriptions when the device is verifiably free.
+    live_preview_manager = getattr(request.app.state, "live_preview_manager", None)
+    if live_preview_manager is not None:
+        live_preview_manager.enable_preview()
+
     # Check model availability (lightweight file existence check)
     model_service = ModelService(DETECTION_MODEL_PATH)
     model_status = model_service.check_availability().value
@@ -894,6 +901,29 @@ def monitoring_start(
     if width is not None and length is not None:
         repo.update(id, {"width_m": width, "length_m": length})
 
+    # Spec 023 handoff: before acquiring the camera for monitoring, stop the
+    # persistent pre-monitoring preview server-side and block new subscriptions
+    # so a concurrent preview-stream cannot reacquire the camera. This is a
+    # deterministic handoff — do NOT rely on the browser closing the MJPEG
+    # stream, and do NOT add a second _CAMERA_SETTLE_SECONDS (release() already
+    # settles). If the camera is not released in time, do not start monitoring.
+    live_preview_manager = getattr(request.app.state, "live_preview_manager", None)
+    if live_preview_manager is not None:
+        handoff_ok = live_preview_manager.suspend_for_handoff(timeout=5.0)
+        if not handoff_ok:
+            errors = ["La cámara está ocupada. Intenta nuevamente."]
+            return templates.TemplateResponse(request, "agricultural/monitoring_setup.html", {
+                "title": f"Nuevo Monitoreo — {module.name}",
+                "module": module,
+                "width_m": width_m,
+                "length_m": length_m,
+                "notes": notes,
+                "errors": errors,
+                "model_status": model_status,
+                "show_back": True,
+                "back_url": f"/modulos/{id}",
+            })
+
     # Construct dependencies for MonitoringService.start_session()
     # 1. Frame source (camera backend — picamera2 on RPi, OpenCV on PC)
     #    Pass camera resolution from ACTIVE_PROFILE for monitoring capture.
@@ -901,10 +931,17 @@ def monitoring_start(
     #    configured recording fps so the sensor cadence is explicit.
     from src.infrastructure.config.settings import ACTIVE_PROFILE
     if getattr(ACTIVE_PROFILE, "video_first_enabled", False):
+        # Spec 023: the PHYSICAL camera cadence is camera_stream_fps (~20 FPS),
+        # decoupled from the recording cadence (recording_target_fps). The
+        # video-mode FrameDurationLimits are driven by camera_stream_fps here;
+        # the recording cadence is applied later by the RecordingSampler (Task
+        # 3/4), not by the camera. Passing recording_target_fps here would keep
+        # the sensor throttled to the recording rate (the coupling this Spec
+        # removes).
         frame_source = create_frame_source(
             width=ACTIVE_PROFILE.camera_width,
             height=ACTIVE_PROFILE.camera_height,
-            fps=int(ACTIVE_PROFILE.recording_target_fps),
+            fps=int(ACTIVE_PROFILE.camera_stream_fps),
             camera_mode="video",
         )
     else:
@@ -914,6 +951,10 @@ def monitoring_start(
             fps=ACTIVE_PROFILE.camera_fps,
         )
     if frame_source is None:
+        # We suspended the preview for the handoff but never acquired the camera
+        # for monitoring; let the manager re-enable preview if it is safe.
+        if live_preview_manager is not None:
+            live_preview_manager.resume_after_failed_handoff()
         errors = ["La cámara no está disponible. Verifica la conexión y vuelve a intentar."]
         return templates.TemplateResponse(request, "agricultural/monitoring_setup.html", {
             "title": f"Nuevo Monitoreo — {module.name}",
@@ -954,6 +995,10 @@ def monitoring_start(
     except CameraStillBusyError:
         # Previous worker still releasing camera — tell farmer to wait
         frame_source.release()
+        # START failed before acquiring: let the manager re-enable preview only
+        # if it is verifiably safe (it revalidates internally).
+        if live_preview_manager is not None:
+            live_preview_manager.resume_after_failed_handoff()
         errors = ["El monitoreo anterior todavía está liberando la cámara. Espera unos segundos e intenta de nuevo."]
         return templates.TemplateResponse(request, "agricultural/monitoring_setup.html", {
             "title": f"Nuevo Monitoreo — {module.name}",
@@ -968,6 +1013,9 @@ def monitoring_start(
         })
     except Exception as e:
         frame_source.release()
+        # START failed: let the manager decide if it is safe to re-enable preview.
+        if live_preview_manager is not None:
+            live_preview_manager.resume_after_failed_handoff()
         # Handle various hardware/system errors
         error_str = str(e)
         if "cámara" in error_str.lower() or "camera" in error_str.lower():

@@ -118,7 +118,15 @@ class _FakeThermalMonitor:
         self.stopped += 1
 
 
-def _make_worker(frame_source, recorder, *, fps=10.0, thermal=None):
+class _AlwaysWriteSampler:
+    """Sampler that accepts every frame, preserving the Spec 019 'write every
+    frame' contracts these historical tests were written against."""
+
+    def should_write(self) -> bool:
+        return True
+
+
+def _make_worker(frame_source, recorder, *, fps=10.0, thermal=None, sampler=None):
     return VideoRecordingWorker(
         monitoring_id=1,
         frame_source=frame_source,
@@ -126,6 +134,8 @@ def _make_worker(frame_source, recorder, *, fps=10.0, thermal=None):
         monitoring_repo=object(),
         db_session=object(),
         configured_recording_fps=fps,
+        configured_camera_stream_fps=20.0,
+        recording_sampler=sampler if sampler is not None else _AlwaysWriteSampler(),
         thermal_monitor=thermal,
     )
 

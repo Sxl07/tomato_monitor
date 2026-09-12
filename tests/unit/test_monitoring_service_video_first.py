@@ -75,6 +75,9 @@ def _video_profile(**overrides):
         name="edge",
         video_first_enabled=True,
         recording_target_fps=5.0,
+        camera_stream_fps=20.0,
+        camera_width=960,
+        camera_height=720,
         video_codec_candidates=("mp4v", "avc1"),
         sparse_min_frames_between_detections=3,
         sparse_max_frames_without_detection=8,
@@ -202,10 +205,11 @@ class TestStartSessionVideoFirst:
         )
         assert service.CAMERA_UNAVAILABLE_MESSAGE == "La cámara no está disponible. Verifica la conexión."
 
-    def test_route_monitoring_start_uses_video_mode_and_recording_fps(self):
-        # Gap 3: the production route (video_first_enabled) must call
+    def test_route_monitoring_start_uses_video_mode_and_camera_stream_fps(self):
+        # Spec 023: the production route (video_first_enabled) must call
         # create_frame_source with camera_mode="video" and
-        # fps=ACTIVE_PROFILE.recording_target_fps. Verify by inspecting the
+        # fps=ACTIVE_PROFILE.camera_stream_fps (the PHYSICAL camera cadence,
+        # decoupled from recording_target_fps). Verify by inspecting the
         # monitoring_start source (deterministic, no HTTP/auth/DB needed).
         import ast
         from pathlib import Path
@@ -241,12 +245,17 @@ class TestStartSessionVideoFirst:
             "monitoring_start must call create_frame_source(camera_mode='video') "
             "in the video-first branch"
         )
-        # And its fps must derive from ACTIVE_PROFILE.recording_target_fps.
+        # Spec 023: its fps must derive from ACTIVE_PROFILE.camera_stream_fps
+        # (physical/preview cadence), NOT recording_target_fps.
         fps_src = video_mode_calls[0].get("fps")
         assert fps_src is not None
         fps_text = ast.dump(fps_src)
-        assert "recording_target_fps" in fps_text, (
-            "video-first create_frame_source fps must use recording_target_fps"
+        assert "camera_stream_fps" in fps_text, (
+            "video-first create_frame_source fps must use camera_stream_fps"
+        )
+        assert "recording_target_fps" not in fps_text, (
+            "video-first create_frame_source fps must NOT use recording_target_fps "
+            "(Spec 023 decouples physical cadence from recording cadence)"
         )
 
     def test_frame_source_factory_passes_video_mode_and_recording_fps(self):

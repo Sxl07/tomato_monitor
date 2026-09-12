@@ -1,18 +1,39 @@
 """API endpoints for monitoring UX: camera preview, status, activity log, last snapshot."""
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.dependencies import require_current_user_api
+from app.dependencies import (
+    get_live_preview_manager,
+    require_current_user_api,
+    require_monitoring_owner,
+)
 from src.application.services.camera_service import CameraService, CameraStatus
+from src.application.services.live_preview_manager import STREAM_STOPPED
 from src.application.services.log_service import LogService
+from src.infrastructure.config.settings import ACTIVE_PROFILE
 from src.infrastructure.persistence.database import DatabaseManager
 from src.infrastructure.persistence.repositories import SqlSnapshotRepository
 
 router = APIRouter(prefix="/api", tags=["monitoring-api"])
+
+#: MJPEG multipart boundary and media type (Spec 023 preview streams).
+_MJPEG_BOUNDARY = "frame"
+_MJPEG_MEDIA_TYPE = f"multipart/x-mixed-replace; boundary={_MJPEG_BOUNDARY}"
+
+
+def _mjpeg_part(jpeg: bytes) -> bytes:
+    """Build one multipart/x-mixed-replace part from JPEG bytes."""
+    return (
+        b"--" + _MJPEG_BOUNDARY.encode("ascii") + b"\r\n"
+        b"Content-Type: image/jpeg\r\n"
+        b"Content-Length: " + str(len(jpeg)).encode("ascii") + b"\r\n"
+        b"\r\n" + jpeg + b"\r\n"
+    )
 
 
 @router.get("/camera/preview")
@@ -32,13 +53,71 @@ async def camera_preview(request: Request, user=Depends(require_current_user_api
     return Response(content=frame_bytes, media_type="image/jpeg")
 
 
+@router.get("/camera/preview-stream")
+def camera_preview_stream(
+    request: Request,
+    user=Depends(require_current_user_api),
+    manager=Depends(get_live_preview_manager),
+):
+    """Fluid MJPEG preview BEFORE a monitoring starts (Spec 023).
+
+    Synchronous handler (Starlette runs it in a threadpool) so the blocking
+    preflight wait and the generator never touch the event loop. Returns 503
+    BEFORE the response headers when the camera cannot start or no frame is
+    produced in time; once a 200 StreamingResponse is returned, headers are
+    already sent and cannot be downgraded.
+    """
+    sub = manager.subscribe()
+    if sub is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Vista previa no disponible",
+                "reason": "La cámara no está disponible en este momento.",
+            },
+        )
+    token, generation = sub
+    first = manager.wait_for_preview(generation, 0, 2.0)
+    if first is None or first is STREAM_STOPPED:
+        manager.unsubscribe(token)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Vista previa no disponible",
+                "reason": "No se pudo obtener imagen de la cámara.",
+            },
+        )
+
+    def _generate():
+        try:
+            last_sequence, jpeg = first
+            yield _mjpeg_part(jpeg)  # reuse the preflight frame as the first
+            while True:
+                item = manager.wait_for_preview(generation, last_sequence, 1.0)
+                if item is STREAM_STOPPED:
+                    break
+                if item is None:
+                    continue  # timeout without a new frame; keep waiting
+                last_sequence, jpeg = item
+                yield _mjpeg_part(jpeg)
+        finally:
+            manager.unsubscribe(token)
+
+    return StreamingResponse(_generate(), media_type=_MJPEG_MEDIA_TYPE)
+
+
 @router.get("/monitoring/{monitoring_id}/preview")
 async def monitoring_preview(
     monitoring_id: int,
     request: Request,
-    user=Depends(require_current_user_api),
+    _owned_monitoring=Depends(require_monitoring_owner),
 ):
     """Return the last recorded frame during a video-first recording as JPEG.
+
+    Ownership (Spec 023): access requires the authenticated user to own the
+    monitoring (require_monitoring_owner already enforces authentication AND
+    ownership, returning 404 for a foreign or non-existent id). Auth is not run
+    twice.
 
     Single camera owner (Requirement 7): the VideoRecordingWorker owns the
     camera during recording. This endpoint NEVER opens the camera, never calls
@@ -88,6 +167,87 @@ async def monitoring_preview(
     return Response(content=frame_bytes, media_type="image/jpeg")
 
 
+@router.get("/monitoring/{monitoring_id}/preview-stream")
+def monitoring_preview_stream(
+    monitoring_id: int,
+    request: Request,
+    _owned_monitoring=Depends(require_monitoring_owner),
+):
+    """Fluid MJPEG preview DURING a video-first recording (Spec 023).
+
+    Ownership enforced by require_monitoring_owner (404 for foreign/missing).
+    Synchronous handler (threadpool): the JPEG encode and the small waits never
+    run on the event loop. NEVER opens the camera — it only reads thread-safe
+    snapshots from the recording worker via the registry. Returns 503 BEFORE the
+    headers when there is no worker / no first frame within a bounded wait.
+    """
+    registry = getattr(request.app.state, "monitoring_runtime_registry", None)
+    worker = registry.get_worker(monitoring_id) if registry is not None else None
+    snapshot_fn = getattr(worker, "get_preview_frame_snapshot", None)
+
+    # Bounded preflight: wait up to ~2s for the first snapshot so the UI does not
+    # fail just because it arrived a few ms before the first captured frame.
+    frame_interval = 1.0 / float(ACTIVE_PROFILE.camera_stream_fps)
+    deadline = time.monotonic() + 2.0
+    first_snapshot = None
+    while time.monotonic() < deadline:
+        if worker is None or not callable(snapshot_fn):
+            # Re-resolve in case the worker registered slightly later.
+            worker = registry.get_worker(monitoring_id) if registry is not None else None
+            snapshot_fn = getattr(worker, "get_preview_frame_snapshot", None)
+        if callable(snapshot_fn):
+            snap = snapshot_fn()
+            if snap is not None:
+                first_snapshot = snap
+                break
+        time.sleep(frame_interval)
+
+    if first_snapshot is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Vista previa no disponible",
+                "reason": "No hay una grabación activa para este monitoreo.",
+            },
+        )
+
+    initial_worker = worker
+
+    def _generate():
+        last_sequence, frame = first_snapshot
+        jpeg = CameraService.encode_frame_jpeg(frame)
+        if jpeg is not None:
+            yield _mjpeg_part(jpeg)
+        while True:
+            # Re-resolve the worker each iteration: if the registry unregistered
+            # or REPLACED it (new session), this stream must end naturally rather
+            # than keep serving stale frames from the old object. Never opens the
+            # camera / touches the FrameSource.
+            current_worker = (
+                registry.get_worker(monitoring_id) if registry is not None else None
+            )
+            if current_worker is None or current_worker is not initial_worker:
+                break
+            current_snapshot_fn = getattr(
+                current_worker, "get_preview_frame_snapshot", None
+            )
+            if not callable(current_snapshot_fn):
+                break
+            snap = current_snapshot_fn()
+            if snap is None:
+                break  # worker gone / no frame -> end the stream
+            sequence, frame = snap
+            if sequence <= last_sequence:
+                time.sleep(frame_interval)  # no new frame yet; no busy-loop
+                continue
+            last_sequence = sequence
+            jpeg = CameraService.encode_frame_jpeg(frame)
+            if jpeg is not None:
+                yield _mjpeg_part(jpeg)
+
+    return StreamingResponse(_generate(), media_type=_MJPEG_MEDIA_TYPE)
+
+
 @router.get("/camera/status")
 async def camera_status(request: Request, user=Depends(require_current_user_api)):
     """Return camera availability status as JSON.
@@ -98,6 +258,32 @@ async def camera_status(request: Request, user=Depends(require_current_user_api)
     camera_service: CameraService = request.app.state.camera_service
     result = camera_service.check_availability()
     return {"status": result.status.value, "reason": result.reason}
+
+
+@router.get("/camera/preview-diagnostics")
+async def camera_preview_diagnostics(
+    request: Request,
+    user=Depends(require_current_user_api),
+    manager=Depends(get_live_preview_manager),
+):
+    """Runtime diagnostics of the pre-monitoring live preview (Spec 023, Task 11).
+
+    Read-only: only calls ``LivePreviewManager.diagnostics()``. It NEVER opens
+    the camera, never creates a subscriber and never constructs a FrameSource.
+    """
+    d = manager.diagnostics()
+    return {
+        "camera_frames_produced": d.get("camera_frames_produced", 0),
+        "preview_frames_encoded": d.get("preview_frames_encoded", 0),
+        "active_subscribers": d.get("active_subscribers", 0),
+        "camera_capture_elapsed_seconds": d.get("camera_capture_elapsed_seconds", 0.0),
+        "effective_camera_stream_fps": d.get("effective_camera_stream_fps", 0.0),
+        "generation": d.get("generation", 0),
+        "state": {
+            "capture_state": d.get("capture_state"),
+            "subscriptions_suspended": d.get("subscriptions_suspended"),
+        },
+    }
 
 
 @router.get("/monitoring/{monitoring_id}/log")
