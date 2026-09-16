@@ -90,7 +90,38 @@ class OpticalFlowVisualTracker:
         self,
         frame_bgr: np.ndarray,
         detections: List[dict],
+        live_track_ids: Optional[set] = None,
     ) -> None:
+        """Re-anchor visual tracks from real detections (+ SPEC 026 retention).
+
+        For every detection received, the corresponding visual track is
+        (re)seeded from the real RetinaNet bbox on the current frame — this is
+        the historical behavior and re-anchors identities to detector truth.
+
+        SPEC 026 (Faceta 2 / CA-09): when ``live_track_ids`` is provided, visual
+        tracks whose ``track_id`` is NOT in this frame's detections but is still
+        ALIVE in ``SimpleTracker`` (i.e. present in ``live_track_ids``, missed but
+        not yet expired by ``max_missed``) are RETAINED so they keep being
+        propagated on the following sparse frames — instead of being destroyed,
+        which used to break identity continuity when the tomato reappeared.
+        Retained tracks whose ``track_id`` is no longer alive (expired by
+        ``max_missed``) are discarded, so ``max_missed`` semantics are preserved
+        and no "zombie" visual tracks linger.
+
+        Temporal-coherence invariant (CA-10): ``propagate()`` runs
+        ``calcOpticalFlowPyrLK(self.prev_gray, curr_gray, track.points, ...)``, so
+        ``track.points`` must correspond to the same frame as ``self.prev_gray``.
+        Retention conserves the EXISTING ``VisualTrackState`` (its points/bbox),
+        NOT a resampled one. The caller (``VideoAnalysisService``, variant A) runs
+        ``propagate(frame_detector)`` on the detector frame BEFORE this call, so a
+        retained track's ``points``/``bbox`` already correspond to the current
+        frame — the same frame this method sets as ``self.prev_gray``. Coherence
+        therefore holds and the next ``propagate()`` continues correctly.
+
+        When ``live_track_ids`` is ``None`` (legacy callers / flow disabled), the
+        behavior is exactly the previous one: ``self.tracks`` is rebuilt only from
+        the received detections (no retention).
+        """
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
         new_tracks: Dict[int, VisualTrackState] = {}
@@ -109,6 +140,19 @@ class OpticalFlowVisualTracker:
                 health_result=det.get("health_result"),
                 maturity_result=det.get("maturity_result"),
             )
+
+        # SPEC 026: retain live-but-undetected visual tracks so continuity holds
+        # across a detector miss. Only when the caller supplies the set of
+        # track_ids still alive in SimpleTracker (variant B). The retained state
+        # is the existing (already-propagated-to-this-frame) VisualTrackState,
+        # preserving the points ↔ prev_gray coherence (CA-10).
+        if live_track_ids is not None:
+            for track_id, state in self.tracks.items():
+                if track_id in new_tracks:
+                    continue
+                if track_id in live_track_ids:
+                    new_tracks[track_id] = state
+                # else: expired in SimpleTracker (max_missed) -> discard.
 
         self.tracks = new_tracks
         self.prev_gray = gray
