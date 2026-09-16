@@ -41,6 +41,29 @@ def _is_tomato_cherry(crop_type: str) -> bool:
 class AlertService:
     """Computes operational alerts from system state."""
 
+    def _module_context(
+        self,
+        module,
+        greenhouse_names_by_id: Optional[dict] = None,
+    ) -> str:
+        """Build a human-readable module context for alert messages.
+
+        When the greenhouse name is available, include it so modules with the
+        same name in different greenhouses are unambiguous. If the mapping is
+        absent or incomplete, keep the legacy module-only wording.
+        """
+        greenhouse_name = None
+        if greenhouse_names_by_id is not None:
+            greenhouse_id = getattr(module, "greenhouse_id", None)
+            greenhouse_name = greenhouse_names_by_id.get(greenhouse_id)
+
+        if greenhouse_name:
+            return (
+                f"módulo '{module.name}' del invernadero "
+                f"'{greenhouse_name}'"
+            )
+        return f"módulo '{module.name}'"
+
     def get_effective_frequency(self, module) -> Optional[int]:
         """Get effective monitoring frequency for a module.
 
@@ -88,6 +111,7 @@ class AlertService:
         monitorings_by_module: dict,
         export_packages: Optional[list] = None,
         today: Optional[date] = None,
+        greenhouse_names_by_id: Optional[dict] = None,
     ) -> list[OperationalAlert]:
         """Compute all operational alerts from current system state.
 
@@ -96,6 +120,8 @@ class AlertService:
             monitorings_by_module: Mapping of module_id → list of monitorings.
             export_packages: Optional list of ExportPackage entities.
             today: Override for current date (useful for testing).
+            greenhouse_names_by_id: Optional mapping of greenhouse_id → name,
+                used to disambiguate module alerts across greenhouses.
 
         Returns:
             List of OperationalAlert sorted by severity (critical first).
@@ -107,8 +133,22 @@ class AlertService:
 
         for module in modules:
             monitorings = monitorings_by_module.get(module.id, [])
-            alerts.extend(self._check_frequency_alerts(module, monitorings, today))
-            alerts.extend(self._check_error_alerts(module, monitorings))
+            module_context = self._module_context(module, greenhouse_names_by_id)
+            alerts.extend(
+                self._check_frequency_alerts(
+                    module,
+                    monitorings,
+                    today,
+                    module_context=module_context,
+                )
+            )
+            alerts.extend(
+                self._check_error_alerts(
+                    module,
+                    monitorings,
+                    module_context=module_context,
+                )
+            )
 
         if export_packages is not None:
             alerts.extend(self._check_export_alerts(export_packages))
@@ -118,9 +158,15 @@ class AlertService:
         return alerts
 
     def _check_frequency_alerts(
-        self, module, monitorings, today: date
+        self,
+        module,
+        monitorings,
+        today: date,
+        module_context: Optional[str] = None,
     ) -> list[OperationalAlert]:
         """Check if a module is overdue or pending monitoring."""
+        if module_context is None:
+            module_context = self._module_context(module)
         frequency = self.get_effective_frequency(module)
         if frequency is None:
             return []
@@ -137,7 +183,7 @@ class AlertService:
                     alert_type="monitoring_pending",
                     severity="warning",
                     title="Monitoreo pendiente",
-                    message=f"El módulo '{module.name}' no tiene monitoreos registrados.",
+                    message=f"El {module_context} no tiene monitoreos registrados.",
                     module_id=module.id,
                 )
             ]
@@ -155,7 +201,7 @@ class AlertService:
                     severity=severity,
                     title="Monitoreo vencido",
                     message=(
-                        f"El módulo '{module.name}' tiene "
+                        f"El {module_context} tiene "
                         f"{days_overdue} día(s) de retraso."
                     ),
                     module_id=module.id,
@@ -168,7 +214,7 @@ class AlertService:
                     severity="info",
                     title="Monitoreo programado hoy",
                     message=(
-                        f"El módulo '{module.name}' tiene monitoreo "
+                        f"El {module_context} tiene monitoreo "
                         f"programado para hoy."
                     ),
                     module_id=module.id,
@@ -176,8 +222,16 @@ class AlertService:
             ]
         return []
 
-    def _check_error_alerts(self, module, monitorings) -> list[OperationalAlert]:
+    def _check_error_alerts(
+        self,
+        module,
+        monitorings,
+        module_context: Optional[str] = None,
+    ) -> list[OperationalAlert]:
         """Check for monitorings that ended with error status."""
+        if module_context is None:
+            module_context = self._module_context(module)
+
         errors = [m for m in monitorings if m.status == "error"]
         alerts = []
         for m in errors:
@@ -187,7 +241,7 @@ class AlertService:
                     severity="critical",
                     title="Error en monitoreo",
                     message=(
-                        f"El monitoreo del módulo '{module.name}' finalizó "
+                        f"El monitoreo del {module_context} finalizó "
                         f"con error y requiere revisión."
                     ),
                     module_id=module.id,

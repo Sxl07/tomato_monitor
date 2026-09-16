@@ -45,10 +45,19 @@ class DashboardService:
         for module_monitorings in monitorings_by_module.values():
             all_monitorings.extend(module_monitorings)
 
-        # Compute alerts
+        # Compute alerts. Include greenhouse names so modules with the same
+        # name in different greenhouses are unambiguous in alert messages.
+        greenhouse_names_by_id = {
+            greenhouse.id: greenhouse.name
+            for greenhouse in greenhouses
+        }
         alert_service = AlertService()
         alerts = alert_service.compute_alerts(
-            modules, monitorings_by_module, export_packages, today
+            modules=modules,
+            monitorings_by_module=monitorings_by_module,
+            export_packages=export_packages,
+            today=today,
+            greenhouse_names_by_id=greenhouse_names_by_id,
         )
 
         # Count pending/overdue

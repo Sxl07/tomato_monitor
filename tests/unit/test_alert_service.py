@@ -18,6 +18,7 @@ from src.application.services.alert_service import AlertService
 class FakeModule:
     id: int
     name: str
+    greenhouse_id: int = 1
     crop_type: str = "Tomate Cherry"
     monitoring_frequency_days: Optional[int] = None
 
@@ -261,6 +262,127 @@ class TestComputeAlertsError:
         )
         assert len(alerts) == 2
         assert all(a.alert_type == "analysis_error" for a in alerts)
+
+
+# ---------------------------------------------------------------------------
+# Tests: greenhouse context in operational alerts
+# ---------------------------------------------------------------------------
+
+
+class TestAlertGreenhouseContext:
+    def setup_method(self):
+        self.service = AlertService()
+
+    def test_pending_alert_includes_greenhouse_name(self):
+        module = FakeModule(
+            id=1,
+            name="M1",
+            greenhouse_id=10,
+            monitoring_frequency_days=7,
+        )
+        alerts = self.service.compute_alerts(
+            modules=[module],
+            monitorings_by_module={1: []},
+            greenhouse_names_by_id={10: "Sofia"},
+            today=date(2025, 6, 20),
+        )
+        assert alerts[0].message == (
+            "El módulo 'M1' del invernadero 'Sofia' "
+            "no tiene monitoreos registrados."
+        )
+
+    def test_overdue_alert_includes_greenhouse_name(self):
+        module = FakeModule(
+            id=1,
+            name="M2",
+            greenhouse_id=10,
+            monitoring_frequency_days=7,
+        )
+        monitorings = [
+            FakeMonitoring(
+                id=1,
+                status="completed",
+                started_at=datetime(2025, 6, 10),
+            )
+        ]
+        alerts = self.service.compute_alerts(
+            modules=[module],
+            monitorings_by_module={1: monitorings},
+            greenhouse_names_by_id={10: "Sofia"},
+            today=date(2025, 6, 20),
+        )
+        assert alerts[0].message == (
+            "El módulo 'M2' del invernadero 'Sofia' "
+            "tiene 3 día(s) de retraso."
+        )
+
+    def test_due_today_alert_includes_greenhouse_name(self):
+        module = FakeModule(
+            id=1,
+            name="M3",
+            greenhouse_id=10,
+            monitoring_frequency_days=7,
+        )
+        monitorings = [
+            FakeMonitoring(
+                id=1,
+                status="completed",
+                started_at=datetime(2025, 6, 13),
+            )
+        ]
+        alerts = self.service.compute_alerts(
+            modules=[module],
+            monitorings_by_module={1: monitorings},
+            greenhouse_names_by_id={10: "Sofia"},
+            today=date(2025, 6, 20),
+        )
+        assert alerts[0].message == (
+            "El módulo 'M3' del invernadero 'Sofia' "
+            "tiene monitoreo programado para hoy."
+        )
+
+    def test_analysis_error_alert_includes_greenhouse_name(self):
+        module = FakeModule(
+            id=1,
+            name="M4",
+            greenhouse_id=10,
+            crop_type="Lechuga",
+        )
+        monitorings = [
+            FakeMonitoring(
+                id=12,
+                status="error",
+                started_at=datetime(2025, 6, 20),
+            )
+        ]
+        alerts = self.service.compute_alerts(
+            modules=[module],
+            monitorings_by_module={1: monitorings},
+            greenhouse_names_by_id={10: "Sofia"},
+            today=date(2025, 6, 20),
+        )
+        assert len(alerts) == 1
+        assert alerts[0].message == (
+            "El monitoreo del módulo 'M4' del invernadero 'Sofia' "
+            "finalizó con error y requiere revisión."
+        )
+
+    def test_missing_greenhouse_mapping_keeps_legacy_wording(self):
+        module = FakeModule(
+            id=1,
+            name="M1",
+            greenhouse_id=99,
+            monitoring_frequency_days=7,
+        )
+        alerts = self.service.compute_alerts(
+            modules=[module],
+            monitorings_by_module={1: []},
+            greenhouse_names_by_id={10: "Sofia"},
+            today=date(2025, 6, 20),
+        )
+        assert alerts[0].message == (
+            "El módulo 'M1' no tiene monitoreos registrados."
+        )
 
 
 # ---------------------------------------------------------------------------
