@@ -152,5 +152,49 @@ class SimpleTracker:
 
         return output
 
+    def apply_propagated_positions(self, propagated: List[dict]) -> None:
+        """Update ONLY the spatial bbox of already-existing tracks (SPEC 026).
+
+        Receives the propagated results produced by
+        ``OpticalFlowVisualTracker.propagate()`` (each dict with at least
+        ``track_id`` and ``bbox``) and refreshes the spatial position of the
+        corresponding existing tracks. This is how Optical Flow feedback keeps
+        ``SimpleTracker``'s spatial state current between sparse inferences so a
+        later real detection associates to the same track instead of spawning a
+        new id (identity fragmentation).
+
+        Deliberate, minimal semantics:
+          - Updates ONLY ``track.bbox``. Does NOT create tracks, does NOT touch
+            ``hits``, ``missed``, ``best_area``, ``score``, ``last_health``,
+            ``last_maturity``, ``has_been_processed`` or ``next_track_id``.
+          - A propagation is NOT a real detection: it must not be counted as
+            such, must not run health/maturity, and must not produce inspection
+            results or snapshots (those live at higher layers and are simply not
+            invoked here).
+          - Propagated ``track_id`` values that no longer exist in ``self.tracks``
+            (e.g. already expired by ``max_missed``) are ignored safely, without
+            raising and without creating a track.
+          - An empty list is a no-op (fault tolerance for ``propagate()``
+            returning ``[]``).
+
+        ``missed`` is intentionally left untouched: Optical Flow propagation is
+        not a detector confirmation, so resetting ``missed`` would let a merely
+        propagated track survive indefinitely and change ``max_missed``
+        semantics (which must only count against real inferences).
+        """
+        for item in propagated:
+            track_id = item.get("track_id")
+            if track_id is None:
+                continue
+            track = self.tracks.get(track_id)
+            if track is None:
+                # Unknown / already-expired track: ignore safely.
+                continue
+            bbox = item.get("bbox")
+            if bbox is None:
+                continue
+            x1, y1, x2, y2 = bbox
+            track.bbox = (int(x1), int(y1), int(x2), int(y2))
+
     def get_track(self, track_id: int) -> Optional[Track]:
         return self.tracks.get(track_id)

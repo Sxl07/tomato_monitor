@@ -993,16 +993,40 @@ class VideoAnalysisService:
                     # RECOVERABLE step: inference + flow update + crops + best
                     # staging + has_detections. A failure here counts the frame as
                     # failed but keeps the raw snapshot and continues.
+                    #
+                    # SPEC 026: the raw snapshot above is persisted FIRST and is
+                    # FATAL; the Optical Flow prediction on the detector frame
+                    # (variant A) is part of the RECOVERABLE analysis and MUST NOT
+                    # precede _persist_raw_snapshot.
                     try:
+                        # SPEC 026 (variant A / CA-10): predict Optical Flow up to
+                        # THIS detector frame BEFORE detection, so (a) the real
+                        # detections are associated against a same-frame predicted
+                        # position, and (b) any track that will be missed by the
+                        # detector already has points/bbox synchronized to this
+                        # frame (and self.prev_gray), keeping the temporal-
+                        # coherence invariant so it can be retained coherently.
+                        if flow_tracker is not None:
+                            predicted = flow_tracker.propagate(frame)
+                            components.tracker.apply_propagated_positions(predicted)
+
                         frame_result = process_frame_fn(frame, components, frame_name)
 
+                        detections = frame_result.get("detections", [])
+
                         if flow_tracker is not None:
+                            # SPEC 026 (Faceta 2 / CA-09): tell the visual tracker
+                            # which track_ids are still alive in SimpleTracker so
+                            # it re-anchors detected tracks AND retains live-but-
+                            # missed ones (instead of destroying them), while
+                            # discarding truly-expired ones.
+                            live_track_ids = set(components.tracker.tracks.keys())
                             flow_tracker.update_from_detection_result(
                                 frame,
-                                frame_result.get("detections", []),
+                                detections,
+                                live_track_ids,
                             )
 
-                        detections = frame_result.get("detections", [])
                         self._generate_crops(frame, detections, frame_idx)
                         staged_best = self._stage_best(detections, snapshot)
 
@@ -1044,7 +1068,13 @@ class VideoAnalysisService:
                 else:
                     frames_since_last_detection += 1
                     if flow_tracker is not None:
-                        flow_tracker.propagate(frame)
+                        # SPEC 026 (Faceta 1): feed the propagated positions back
+                        # into SimpleTracker so its spatial state stays current
+                        # between sparse inferences. This updates ONLY track.bbox
+                        # of existing tracks; it is not a detection, does not run
+                        # inference, and touches no counters.
+                        propagated = flow_tracker.propagate(frame)
+                        components.tracker.apply_propagated_positions(propagated)
 
                 frame_idx += 1
 

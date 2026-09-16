@@ -95,7 +95,19 @@ class ResettableFakeReader(VideoReaderPort):
 
 
 class _SentinelTracker:
-    """Stand-in for components.tracker; must remain untouched by the service."""
+    """Stand-in for components.tracker; must remain untouched by the service.
+
+    SPEC 026: the service now feeds Optical Flow predictions back to the tracker
+    via ``apply_propagated_positions`` (sparse frames, and detector frames under
+    variant A) and reads ``tracks`` to compute live_track_ids. This inert stub
+    accepts those interactions without maintaining real state.
+    """
+
+    tracks: dict = {}
+
+    def apply_propagated_positions(self, propagated):
+        # No-op: this sentinel holds no real tracks.
+        return None
 
 
 class FakeComponents:
@@ -133,8 +145,13 @@ class FlowSpy:
         self.updates = []
         self.propagations = []
 
-    def update_from_detection_result(self, frame, detections):
-        self.updates.append({"frame": frame, "detections": detections})
+    def update_from_detection_result(self, frame, detections, live_track_ids=None):
+        # SPEC 026: accept the optional live_track_ids arg (variant B).
+        self.updates.append({
+            "frame": frame,
+            "detections": detections,
+            "live_track_ids": live_track_ids,
+        })
 
     def propagate(self, frame):
         self.propagations.append(frame)
@@ -415,9 +432,12 @@ class TestFlow:
         svc = _make_service(reader, cfg, components_factory=factory, process_frame_fn=pf)
         svc.run()
 
-        # update on detector frames (0, 3); propagate on skip frames (1, 2).
+        # update_from_detection_result on detector frames (0, 3) -> 2.
         assert len(flow.updates) == 2
-        assert len(flow.propagations) == 2
+        # SPEC 026 (variant A): propagate now fires on EVERY detector frame
+        # (before detection, to keep the visual state coherent) AND on every
+        # skip frame. Detector frames 0,3 + skip frames 1,2 -> 4 propagate calls.
+        assert len(flow.propagations) == 4
         # single tracker reused: FlowSpy instance is the same for all calls (by construction).
 
 
@@ -492,7 +512,12 @@ class TestFullDetection:
 
         assert all(c["decision"].reason == "full_detection" for c in spy.calls)
         assert len(pf.calls) == 4  # every frame processed
-        assert flow.propagations == []  # never propagate in full detection
+        # SPEC 026 (variant A): in full detection every frame is a detector
+        # frame, and propagate now runs on each detector frame BEFORE detection
+        # to keep the visual state temporally coherent -> 4 propagate calls.
+        # (update_from_detection_result also runs on every frame -> 4 updates.)
+        assert len(flow.propagations) == 4
+        assert len(flow.updates) == 4
 
     def test_enable_sparse_false_also_full_detection(self, monkeypatch):
         spy = DecideSpy()
