@@ -258,12 +258,18 @@ async def greenhouse_list(request: Request, user=Depends(require_current_user_ht
 
     cards = build_greenhouse_cards(greenhouses, modules_by_gh, monitorings_by_module)
 
-    # Compute operational alerts
+    # Compute operational alerts. Include greenhouse names so alerts remain
+    # unambiguous when different greenhouses contain modules with the same name.
     from src.application.services.alert_service import AlertService
+    greenhouse_names_by_id = {
+        greenhouse.id: greenhouse.name
+        for greenhouse in greenhouses
+    }
     alert_service = AlertService()
     alerts = alert_service.compute_alerts(
         modules=all_modules,
         monitorings_by_module=monitorings_by_module,
+        greenhouse_names_by_id=greenhouse_names_by_id,
     )
 
     # Support error query param for flash-style messages
