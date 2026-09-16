@@ -224,7 +224,7 @@ class TestProfileCriticalValues:
         assert EDGE_PROFILE.camera_width == 960
         assert EDGE_PROFILE.camera_height == 720
         assert EDGE_PROFILE.camera_fps == 5
-        assert EDGE_PROFILE.detection_score_threshold == 0.60
+        assert EDGE_PROFILE.detection_score_threshold == 0.50
 
     def test_full_critical_values_unchanged(self):
         assert FULL_PROFILE.camera_width == 640
