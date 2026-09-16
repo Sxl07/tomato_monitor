@@ -146,10 +146,10 @@ EDGE_PROFILE = ExecutionProfile(
     inference_input_width=416,
     inference_input_height=312,
     skip_maturity=True,
-    # Detector score threshold selected experimentally (threshold sweep on
-    # Monitoring 21): 0.60 recovers true positives around 0.61–0.66 that 0.70
-    # discarded, without going as low as 0.50. Re-evaluate after retraining.
-    detection_score_threshold=0.60,
+    # Detector score threshold selected from field validation on four real
+    # monitoring sessions (45-48). A threshold of 0.50 recovered substantially
+    # more useful detections than 0.60. Re-evaluate after detector retraining.
+    detection_score_threshold=0.50,
     run_maturity_only_for_healthy=True,
     thermal_poll_interval_seconds=5.0,
     thermal_warning_temp=72.0,

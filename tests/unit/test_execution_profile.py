@@ -150,7 +150,7 @@ class TestEdgeVsFullProfileDifferences:
         # configured values, not an EDGE>=FULL policy.
         from src.infrastructure.config.settings import EDGE_PROFILE, FULL_PROFILE
 
-        assert EDGE_PROFILE.detection_score_threshold == 0.60
+        assert EDGE_PROFILE.detection_score_threshold == 0.50
         assert FULL_PROFILE.detection_score_threshold == 0.80
 
     def test_edge_lower_thermal_warning(self):
