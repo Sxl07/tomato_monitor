@@ -1,9 +1,17 @@
 {% extends "base_agricultural.html" %}
+{% from "agricultural/partials/icons.html" import icon %}
 
 {% block header_title %}Exportación de datos{% endblock %}
 
 {% block content %}
 <div class="export-page">
+
+    {% if error %}
+    <div class="alert alert-error" role="alert">{{ error }}</div>
+    {% endif %}
+    {% if success_message %}
+    <div class="alert alert-info" role="alert">{{ success_message }}</div>
+    {% endif %}
 
     <p class="text-secondary">Genera un respaldo ZIP con los datos e imágenes almacenados actualmente en este dispositivo.</p>
 
@@ -25,6 +33,7 @@
                             <p class="card-meta">
                                 {% if pkg.created_at %}{{ pkg.created_at | to_bogota }}{% endif %}
                                 — {{ pkg.records_count }} registros, {{ pkg.images_count }} imágenes
+                                {% if pkg.file_size_bytes %} — {{ "%.1f"|format(pkg.file_size_bytes / 1048576) }} MB{% endif %}
                             </p>
                         </div>
                         <div>
@@ -39,14 +48,28 @@
                             {% endif %}
                         </div>
                     </div>
-                    <div style="margin-top: 8px;">
+                    <div style="margin-top: 8px; display: flex; align-items: center; gap: 8px;">
                         <a href="/exportar/{{ pkg.id }}" class="btn btn-secondary">Ver detalle</a>
                         {% if pkg.status == 'completed' %}
-                        <a href="/exportar/{{ pkg.id }}/descargar" class="btn btn-primary" style="margin-left: 8px;">Descargar</a>
+                        <a href="/exportar/{{ pkg.id }}/descargar" class="btn btn-primary">Descargar</a>
+                        {% endif %}
+                        {% if pkg.status in ('completed', 'error') %}
+                        <button type="button" class="btn-icon btn-icon--danger" aria-label="Eliminar exportación"
+                                onclick="showConfirmDialog('confirm-delete-{{ pkg.id }}')">{{ icon('delete') }}</button>
                         {% endif %}
                     </div>
                 </div>
             </div>
+
+            {% if pkg.status in ('completed', 'error') %}
+            {% with dialog_id = "confirm-delete-" ~ pkg.id,
+                    dialog_message = "¿Eliminar esta exportación? Se eliminarán el archivo ZIP y el registro de esta exportación. Los monitoreos, imágenes y demás datos originales no se eliminarán.",
+                    confirm_url = "/exportar/" ~ pkg.id ~ "/eliminar",
+                    confirm_text = "Eliminar exportación",
+                    cancel_text = "Cancelar" %}
+            {% include "agricultural/partials/confirm_dialog.html" %}
+            {% endwith %}
+            {% endif %}
             {% endfor %}
         </div>
         {% else %}

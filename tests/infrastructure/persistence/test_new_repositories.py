@@ -295,6 +295,34 @@ class TestSqlExportPackageRepository:
         pending = repo.list_pending()
         assert len(pending) == 1
 
+    def test_delete_existing_removes_record(self, db_session):
+        user_id = self._create_user(db_session)
+        repo = SqlExportPackageRepository(db_session)
+
+        created = repo.create(ExportPackage(created_by_user_id=user_id, scope="full"))
+        repo.delete(created.id)
+
+        assert repo.get_by_id(created.id) is None
+
+    def test_delete_nonexistent_is_idempotent(self, db_session):
+        self._create_user(db_session)
+        repo = SqlExportPackageRepository(db_session)
+
+        # Must not raise for an id that does not exist.
+        repo.delete(999999)
+
+    def test_delete_only_target_package(self, db_session):
+        user_id = self._create_user(db_session)
+        repo = SqlExportPackageRepository(db_session)
+
+        keep = repo.create(ExportPackage(created_by_user_id=user_id, scope="full"))
+        remove = repo.create(ExportPackage(created_by_user_id=user_id, scope="module", scope_id=1))
+
+        repo.delete(remove.id)
+
+        assert repo.get_by_id(remove.id) is None
+        assert repo.get_by_id(keep.id) is not None
+
 
 class TestModuleMonitoringFrequencyPersistence:
     """Tests for Module.monitoring_frequency_days persistence."""

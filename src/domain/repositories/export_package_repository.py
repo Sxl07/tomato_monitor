@@ -37,3 +37,14 @@ class ExportPackageRepository(ABC):
     def list_pending(self) -> list[ExportPackage]:
         """Return all export packages with status 'pending' or 'generating'."""
         ...
+
+    @abstractmethod
+    def delete(self, id: int) -> None:
+        """Delete the export package record with the given id.
+
+        Removes ONLY the ExportPackage row from persistence. This method must
+        not perform any filesystem I/O (deleting the associated ZIP is
+        coordinated by the application layer). Deleting a nonexistent id is an
+        idempotent no-op and must not raise.
+        """
+        ...

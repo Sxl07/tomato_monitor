@@ -1577,6 +1577,8 @@ async def export_list(request: Request, user=Depends(require_current_user_html))
         "packages": packages,
         "show_back": True,
         "back_url": "/dashboard",
+        "error": request.query_params.get("error"),
+        "success_message": request.query_params.get("success"),
     })
 
 
@@ -1695,6 +1697,8 @@ async def export_detail(request: Request, id: int, user=Depends(require_current_
         "manifest": manifest,
         "show_back": True,
         "back_url": "/exportar",
+        "error": request.query_params.get("error"),
+        "success_message": request.query_params.get("success"),
     })
 
 
@@ -1740,6 +1744,60 @@ async def export_download(request: Request, id: int, user=Depends(require_curren
         path=str(file_path),
         media_type="application/zip",
         filename=file_path.name,
+    )
+
+
+@router.post("/exportar/{id}/eliminar")
+def export_delete(request: Request, id: int, user=Depends(require_current_user_html)):
+    """Delete an owned export package (ZIP file + record) via the app service.
+
+    Thin route: authenticate, obtain the repository, delegate coordination to
+    ``ExportDeletionService``, and translate the outcome into a Spanish
+    ``RedirectResponse``. All ownership, status, and filesystem-safety logic
+    lives in the service. Never a GET; never touches source data, sync, outbox,
+    or Supabase.
+    """
+    from urllib.parse import quote
+
+    from src.application.services.export_deletion_service import (
+        ExportDeletionService,
+        ExportNotFoundError,
+        ExportGeneratingError,
+        ExportStatusNotDeletableError,
+        UnsafeExportPathError,
+        ExportDeletionError,
+    )
+
+    export_repo = get_export_package_repository(request)
+    service = ExportDeletionService(export_repo)
+
+    try:
+        service.delete_export(package_id=id, user_id=user.id)
+    except ExportNotFoundError:
+        return RedirectResponse(
+            url="/exportar?error=Exportación+no+encontrada", status_code=303
+        )
+    except ExportGeneratingError as exc:
+        return RedirectResponse(
+            url=f"/exportar?error={quote(str(exc))}", status_code=303
+        )
+    except ExportStatusNotDeletableError as exc:
+        # pending or any other non-terminal status (fail-closed).
+        return RedirectResponse(
+            url=f"/exportar?error={quote(str(exc))}", status_code=303
+        )
+    except UnsafeExportPathError as exc:
+        return RedirectResponse(
+            url=f"/exportar?error={quote(str(exc))}", status_code=303
+        )
+    except ExportDeletionError as exc:
+        # Controlled filesystem/record failure: no traceback/500.
+        return RedirectResponse(
+            url=f"/exportar?error={quote(str(exc))}", status_code=303
+        )
+
+    return RedirectResponse(
+        url="/exportar?success=Exportación+eliminada", status_code=303
     )
 
 
