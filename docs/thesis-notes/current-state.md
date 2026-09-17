@@ -101,3 +101,102 @@ Datos medidos en RPi 5 (8 GB RAM, ARM64, CPU only) con refrigeración activa, pr
 - La instancia de `PipelineService` se crea en cada request HTTP, lo que implica recarga de modelos en memoria ante cada ejecución desde la UI.
 - No existe suite de tests automatizados; solo hay smoke tests individuales por componente.
 - Varios documentos clave están vacíos: ADRs, benchmarks, próximos pasos.
+
+---
+
+## 6. Dashboard analítico contextual (Spec 024)
+
+**Estado:** implementado y verificado por tests automatizados; pendiente de prueba
+física en Raspberry Pi.
+
+El dashboard operativo se transformó en un **dashboard analítico contextual** que
+permite observar la evolución del cultivo por invernadero/módulo usando únicamente
+datos persistidos (sin inferencia ni ML en render).
+
+### 6.1 Capacidades
+
+- **Filtros contextuales:** selector de invernadero + selector de módulo
+  (`Todos` / módulo específico) vía querystring (GET), sin fetch.
+- **Scope "Todos":** agregación por el último monitoreo válido de cada módulo; las
+  series de evolución se muestran como **una serie independiente por módulo** (no
+  se inventa un total histórico del invernadero).
+- **4 KPIs:** último monitoreo, frutos detectados (último válido, no suma
+  histórica), estado sanitario (ponderado por conteos), madurez predominante
+  (lista/"Mixto" en empate).
+- **Series temporales por módulo:** evolución de frutos, sanidad (`pct_healthy`) y
+  maturity index, sobre eje X de **fechas reales** (`started_at`), renderizadas en
+  SVG inline local (sin librerías, sin CDN).
+- **Semántica de cobertura de madurez:** los conteos por etapa y la cobertura se
+  derivan de `InspectionResult`; los `pct_*` de `MonitoringMetrics` solo se usan
+  como **fallback visual** cuando no hay `InspectionResult` (y no entran en el
+  índice ni en la cosecha).
+- **Maturity index** (promedio ordinal 0.0→1.0) y **harvestable_share** como
+  magnitudes separadas y rotuladas.
+- **Próxima ventana de cosecha:** WLS ponderado por cobertura, banda de residuales
+  ponderada, cruce con `MI_TARGET = 0.8`; devuelve una ventana temporal (no una
+  fecha exacta) con evidencia objetiva (nº de monitoreos, cobertura media). Ver
+  `docs/decisions/ADR-006-maturity-index-and-harvest-window.md`.
+
+### 6.2 Arquitectura
+
+- Servicios puros sin BD: `AnalyticsService`, `dashboard_aggregation`,
+  `dashboard_series`, `maturity_stats`, `maturity_index`, `harvest_estimator`,
+  `dashboard_scope_builder`. La ruta `/dashboard` obtiene datos vía repositorios y
+  los pasa a los servicios.
+- **Aislamiento multiusuario (Spec 022):** los invernaderos provienen de
+  `get_all_by_owner(user.id)`; módulos/monitoreos se resuelven descendiendo por
+  FK. Un `greenhouse_id`/`module_id` ajeno se trata como no encontrado y cae a un
+  scope propio seguro; sus ids nunca llegan a los repositorios bulk.
+- **Repositorios bulk:** `MonitoringMetricsRepository.get_by_monitoring_ids` e
+  `InspectionResultRepository.get_by_monitoring_ids` (SQL `IN (...)`), que
+  sustituyen el patrón N+1 (1 query de métricas + 1 de resultados por monitoreo)
+  por **2 consultas bulk** por render analítico.
+- **Sin cambios de esquema** (SQLite/Supabase/RLS/sync/recovery intactos); solo se
+  amplió la API de dos repositorios.
+
+### 6.3 UI (Raspberry Pi DSI 800×480)
+
+- Layout vertical con scroll: selectores → 4 KPIs (2×2) → tabs
+  (Evolución/Sanidad/Madurez, una gráfica visible a la vez) → próxima cosecha →
+  bloque operativo.
+- **Offline:** sin CDN ni dependencias web nuevas; el único fetch sigue siendo
+  `/api/sync/status` (badge de sincronización).
+- **Preservación operativa:** alertas operativas (con contexto de invernadero),
+  último monitoreo con links "Ver reporte"/"Ver ejecución", actividades recientes,
+  métricas y badges se conservan dentro de `<details class="analytics-operational">`.
+- JS local (`dashboard_analytics.js`): tabs, auto-submit de selectores y render
+  SVG (solo geometría de presentación; no recalcula analítica).
+
+### 6.4 Rendimiento (patrón de consultas por render de `/dashboard`)
+
+Con G = invernaderos del usuario, M = módulos totales, M_s = módulos del scope,
+C = monitoreos candidatos del scope:
+
+- Operativo (sin cambios): `get_all_by_owner` (1) + `get_by_greenhouse` (G) +
+  `get_by_module` (M) + `list_by_module` (M) + `list_all` tipos (1) +
+  `list_by_user` exports (1).
+- Analítico (Spec 024): `get_by_greenhouse` del scope (1 + 1 selector) +
+  `get_by_module` (M_s) + **`get_by_monitoring_ids` métricas (1 bulk)** +
+  **`get_by_monitoring_ids` resultados (1 bulk)**.
+
+El N+1 de métricas/resultados por monitoreo quedó eliminado. Los `get_by_module`/
+`list_by_module` por módulo del bloque operativo son preexistentes (flujo de
+`DashboardService`), no introducidos por Spec 024; se documentan como
+optimización futura opcional (deuda menor, sin impacto significativo en el
+volumen esperado de un despliegue de invernadero).
+
+### 6.5 Límite de puntos en gráficas SVG
+
+Decisión: **no limitar** el número de puntos por ahora. El render es SVG ligero
+sobre datos persistidos, sin inferencia, con un volumen de monitoreos por módulo
+esperablemente bajo. Un eventual límite futuro sería una decisión de
+**presentación** y no alteraría los cálculos históricos ni la tendencia WLS.
+
+### 6.6 Verificación
+
+- 240 tests dirigidos de Spec 024 en verde (DTOs, maturity stats/index,
+  aggregation, series, harvest estimator, repos bulk, analytics service, scope
+  builder, UI analítica, dashboard UI, dashboard service, alert service).
+- Suite completa: los fallos restantes son preexistentes (tests de rutas basados
+  en TestClient, ajenos a Spec 024); Spec 024 no introdujo regresiones y resolvió
+  4 fallos de `test_dashboard_ui.py` cuyos mocks estaban obsoletos.
