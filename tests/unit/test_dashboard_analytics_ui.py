@@ -626,3 +626,24 @@ class TestRendererSource:
         import re
         urls = re.findall(r"https?://[^\s\"']+", code)
         assert all(u.startswith("http://www.w3.org/2000/svg") for u in urls), urls
+
+
+class TestFiltersCssNarrowViewport:
+    """Guard against the RPi narrow-viewport bug where .analytics-filter kept a
+    200px flex-basis in a column layout, producing a huge vertical gap between
+    the greenhouse and module selectors."""
+
+    def _css(self):
+        with open("app/static/css/agricultural.css", "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_narrow_breakpoint_collapses_filter_height(self):
+        import re
+        css = self._css()
+        m = re.search(r"@media \(max-width: 520px\)\s*\{(.*?)\n\}", css, flags=re.DOTALL)
+        assert m, "narrow breakpoint not found"
+        block = m.group(1)
+        # In column layout, filters must shrink to natural height (no 200px basis).
+        assert "flex-direction: column" in block
+        assert "flex: 0 0 auto" in block  # neutralizes the 1 1 200px basis
+        assert "min-width: 0" in block

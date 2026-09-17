@@ -1623,4 +1623,11 @@ a + a,
 @media (max-width: 520px) {
     .analytics-kpis { grid-template-columns: 1fr; }
     .analytics-filters { flex-direction: column; }
+    /* In a column layout the 200px flex-basis would stretch each filter to
+       ~200px of HEIGHT. Collapse to natural label+select height, full width. */
+    .analytics-filter {
+        flex: 0 0 auto;
+        width: 100%;
+        min-width: 0;
+    }
 }
