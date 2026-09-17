@@ -3,130 +3,408 @@
 
 {% block header_title %}Dashboard{% endblock %}
 
+{% set maturity_labels = {
+    "green": "Verde",
+    "breaker": "Breaker",
+    "turning": "Turning",
+    "pink": "Pink",
+    "light_red": "Light Red",
+    "red": "Rojo"
+} %}
+
+{% macro series_to_json(series_list) -%}
+{%- set out = [] -%}
+{%- for s in series_list -%}
+    {%- set pts = [] -%}
+    {%- for p in s.points -%}
+        {%- set _ = pts.append({"label": p.label, "value": p.value, "note": p.note, "ts": p.started_at.isoformat()}) -%}
+    {%- endfor -%}
+    {%- set _ = out.append({"module_id": s.module_id, "module_name": s.module_name, "points": pts}) -%}
+{%- endfor -%}
+{{- out | tojson -}}
+{%- endmacro %}
+
 {% block content %}
-<div class="dashboard">
+<div class="analytics-dashboard">
 
-    <p class="text-secondary">Resumen operativo del cultivo</p>
-
-    <!-- Metric cards -->
-    <section class="dashboard-metrics">
-        <div class="metric-card">
-            <span class="metric-value">{{ greenhouse_count }}</span>
-            <span class="metric-label">Invernaderos</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-value">{{ module_count }}</span>
-            <span class="metric-label">Módulos</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-value">{{ pending_modules_count }}</span>
-            <span class="metric-label">Módulos pendientes</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-value">{{ overdue_modules_count }}</span>
-            <span class="metric-label">Módulos vencidos</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-value">{{ monitorings_this_week }}</span>
-            <span class="metric-label">Monitoreos esta semana</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-value">{{ total_snapshots }}</span>
-            <span class="metric-label">Snapshots</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-value">{{ total_detections }}</span>
-            <span class="metric-label">Tomates detectados</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-value">{{ pending_exports_count }}</span>
-            <span class="metric-label">Exportaciones pendientes</span>
-        </div>
+    {% if not analytics_greenhouses %}
+    {# ---- No greenhouses at all ---- #}
+    <section class="analytics-empty" role="status">
+        <p class="empty-text">No hay invernaderos registrados aún.</p>
+        <a href="/invernaderos/crear" class="btn btn-primary">Crear invernadero</a>
     </section>
+    {% else %}
 
-    <!-- Status indicators -->
-    <section class="dashboard-status">
-        {% if overdue_modules_count > 0 %}
-        <div class="status-badge status-critical">
-            {{ overdue_modules_count }} módulo(s) con monitoreo vencido
+    {# ================= Filters ================= #}
+    <form method="get" action="/dashboard" class="analytics-filters" id="analytics-filters">
+        <div class="analytics-filter">
+            <label for="analytics-greenhouse-select">Invernadero</label>
+            <select id="analytics-greenhouse-select" name="greenhouse_id"
+                    class="analytics-select" data-role="greenhouse-select">
+                {% for gh in analytics_greenhouses %}
+                <option value="{{ gh.id }}" {% if gh.id == analytics_selected_greenhouse_id %}selected{% endif %}>
+                    {{ gh.name }}
+                </option>
+                {% endfor %}
+            </select>
         </div>
-        {% endif %}
-        {% if pending_modules_count > 0 %}
-        <div class="status-badge status-warning">
-            {{ pending_modules_count }} módulo(s) pendiente(s) de monitoreo
+        <div class="analytics-filter">
+            <label for="analytics-module-select">Módulo</label>
+            <select id="analytics-module-select" name="module_id"
+                    class="analytics-select" data-role="module-select">
+                <option value="all" {% if not analytics_selected_module_id %}selected{% endif %}>Todos</option>
+                {% for m in analytics_scope_modules %}
+                <option value="{{ m.id }}" {% if m.id == analytics_selected_module_id %}selected{% endif %}>
+                    {{ m.name }}
+                </option>
+                {% endfor %}
+            </select>
         </div>
-        {% endif %}
-        {% if pending_exports_count > 0 %}
-        <div class="status-badge status-info">
-            {{ pending_exports_count }} exportación(es) pendiente(s)
-        </div>
-        {% endif %}
-        {% if supabase_configured %}
-        <div class="status-badge status-info" id="dashboard-remote-sync-badge" style="display: none;">
-            <span id="dashboard-remote-pending">0</span> pendiente(s) de sincronizar
-        </div>
-        {% endif %}
-    </section>
+        {# Non-JS fallback: explicit submit button. #}
+        <noscript>
+            <button type="submit" class="btn btn-primary analytics-filter-submit">Aplicar</button>
+        </noscript>
+    </form>
 
-    <!-- Last monitoring -->
-    <section class="dashboard-section">
-        <h2 class="section-header">Último monitoreo</h2>
-        {% if last_monitoring %}
-        <div class="card">
-            <div class="card-body">
-                <p><strong>Fecha:</strong> {{ last_monitoring.started_at | to_bogota }}</p>
-                <p><strong>Snapshots:</strong> {{ last_monitoring.total_snapshots }}</p>
-                <p><strong>Detecciones:</strong> {{ last_monitoring.total_detections }}</p>
-                <p><strong>Estado:</strong> {% if last_monitoring.status == 'ready_for_analysis' %}Pendiente de análisis{% else %}{{ last_monitoring.status }}{% endif %}</p>
-                {% if last_monitoring.status == 'completed' %}
-                <a href="/monitoreos/{{ last_monitoring.id }}/reporte" class="btn btn-primary" style="margin-top: 8px;">Ver reporte</a>
-                {% elif last_monitoring.status in ('running', 'paused', 'finishing', 'ready_for_analysis', 'analyzing', 'initializing') %}
-                <a href="/monitoreos/{{ last_monitoring.id }}/ejecucion" class="btn btn-primary" style="margin-top: 8px;">Ver ejecución</a>
+    {% if analytics %}
+    {% set kpis = analytics.kpis %}
+
+    {# ================= KPIs (2x2) ================= #}
+    <section class="analytics-kpis" aria-label="Indicadores">
+        <div class="analytics-kpi">
+            <span class="analytics-kpi__label">Último monitoreo</span>
+            <span class="analytics-kpi__value">
+                {% if kpis.last_monitoring_date %}{{ kpis.last_monitoring_date | to_bogota }}{% else %}—{% endif %}
+            </span>
+        </div>
+
+        <div class="analytics-kpi">
+            <span class="analytics-kpi__label">Frutos detectados</span>
+            <span class="analytics-kpi__value">
+                {% if kpis.fruits_detected is not none %}{{ kpis.fruits_detected }}{% else %}—{% endif %}
+            </span>
+            {% if kpis.fruits_delta is not none %}
+            <span class="analytics-kpi__sub {% if kpis.fruits_delta >= 0 %}analytics-kpi__sub--up{% else %}analytics-kpi__sub--down{% endif %}">
+                {{ "+" if kpis.fruits_delta >= 0 else "" }}{{ kpis.fruits_delta }} vs anterior
+            </span>
+            {% elif kpis.contributing_modules is not none %}
+            <span class="analytics-kpi__sub">Último dato disponible de cada módulo</span>
+            {% endif %}
+        </div>
+
+        <div class="analytics-kpi">
+            <span class="analytics-kpi__label">Estado sanitario</span>
+            <span class="analytics-kpi__value">
+                {% if kpis.health_pct_healthy is not none %}{{ kpis.health_pct_healthy | round(1) }} % sanos{% else %}—{% endif %}
+            </span>
+            {% if kpis.health_pct_unhealthy is not none %}
+            <span class="analytics-kpi__sub">{{ kpis.health_pct_unhealthy | round(1) }} % no sanos{% if kpis.health_other_pct and kpis.health_other_pct > 0 %} · {{ kpis.health_other_pct | round(1) }} % otros{% endif %}</span>
+            {% endif %}
+        </div>
+
+        <div class="analytics-kpi">
+            <span class="analytics-kpi__label">Madurez predominante</span>
+            <span class="analytics-kpi__value">
+                {% if not kpis.predominant_maturity %}
+                    Sin datos de madurez
+                {% elif kpis.predominant_maturity | length == 1 %}
+                    {{ maturity_labels[kpis.predominant_maturity[0]] }}
+                {% else %}
+                    Mixto — {% for s in kpis.predominant_maturity %}{{ maturity_labels[s] }}{% if not loop.last %} / {% endif %}{% endfor %}
                 {% endif %}
+            </span>
+        </div>
+    </section>
+
+    {# ---- Freshness note ("Todos") ---- #}
+    {% if kpis.contributing_modules is not none %}
+    <p class="analytics-freshness">
+        Último dato disponible de {{ kpis.contributing_modules }} módulo(s){% if kpis.freshness_from and kpis.freshness_to and kpis.freshness_from != kpis.freshness_to %} — entre {{ kpis.freshness_from | to_bogota }} y {{ kpis.freshness_to | to_bogota }}{% endif %}.
+    </p>
+    {% endif %}
+
+    {# ================= Tabs ================= #}
+    <div class="analytics-tabs" role="tablist" aria-label="Vistas analíticas">
+        <button type="button" class="analytics-tab" role="tab" id="tab-evolucion"
+                aria-selected="true" aria-controls="panel-evolucion" data-tab="evolucion">Evolución</button>
+        <button type="button" class="analytics-tab" role="tab" id="tab-sanidad"
+                aria-selected="false" aria-controls="panel-sanidad" data-tab="sanidad" tabindex="-1">Sanidad</button>
+        <button type="button" class="analytics-tab" role="tab" id="tab-madurez"
+                aria-selected="false" aria-controls="panel-madurez" data-tab="madurez" tabindex="-1">Madurez</button>
+    </div>
+
+    {# ---- Evolution panel ---- #}
+    <section class="analytics-panel" role="tabpanel" id="panel-evolucion"
+             aria-labelledby="tab-evolucion" data-panel="evolucion">
+        <h2 class="analytics-panel__title">Evolución de frutos detectados</h2>
+        {% if analytics_selected_module_id is none %}
+        <p class="analytics-note">Series por módulo; cada punto corresponde a un monitoreo real.</p>
+        {% endif %}
+        <div class="analytics-chart" role="img"
+             aria-label="Evolución de frutos detectados por monitoreo"
+             data-chart="evolution"
+             data-series='{{ series_to_json(analytics.evolution_series) }}'
+             data-y-label="Frutos"
+             data-y-mode="auto">
+            <p class="analytics-chart__empty">Sin datos suficientes para mostrar evolución.</p>
+        </div>
+    </section>
+
+    {# ---- Health panel ---- #}
+    <section class="analytics-panel" role="tabpanel" id="panel-sanidad"
+             aria-labelledby="tab-sanidad" data-panel="sanidad" hidden>
+        <h2 class="analytics-panel__title">Sanidad</h2>
+        {% if kpis.health_pct_healthy is not none %}
+        <p class="analytics-health-row">
+            <span class="analytics-health-row__item">Sanos {{ kpis.health_pct_healthy | round(1) }} %</span>
+            <span class="analytics-health-row__item">No sanos {{ kpis.health_pct_unhealthy | round(1) }} %</span>
+            {% if kpis.health_other_pct and kpis.health_other_pct > 0 %}
+            <span class="analytics-health-row__item">Otros {{ kpis.health_other_pct | round(1) }} %</span>
+            {% endif %}
+        </p>
+        {% endif %}
+        <div class="analytics-chart" role="img"
+             aria-label="Evolución del porcentaje de frutos sanos por monitoreo"
+             data-chart="health"
+             data-series='{{ series_to_json(analytics.health_series) }}'
+             data-y-label="% sanos"
+             data-y-mode="pct">
+            <p class="analytics-chart__empty">Sin datos de sanidad.</p>
+        </div>
+    </section>
+
+    {# ---- Maturity panel ---- #}
+    <section class="analytics-panel" role="tabpanel" id="panel-madurez"
+             aria-labelledby="tab-madurez" data-panel="madurez" hidden>
+        <h2 class="analytics-panel__title">Madurez</h2>
+
+        {# A) current distribution #}
+        {% if analytics.maturity_current_distribution %}
+        <div class="analytics-maturity-current">
+            {% set maturity_stages = analytics.maturity_current_distribution %}
+            {% include "agricultural/partials/maturity_bar.html" %}
+
+            {% if analytics.maturity_coverage_known %}
+            <p class="analytics-note">
+                Madurez clasificable: {{ kpis.maturity_covered }} de {{ kpis.maturity_total }} frutos.
+            </p>
+            {% else %}
+            <p class="analytics-note">Cobertura no disponible.</p>
+            {% endif %}
+
+            {% if kpis.harvestable_share is not none %}
+            <p class="analytics-note">
+                {{ (kpis.harvestable_share * 100) | round(1) }} % de los frutos con madurez clasificable están en Light Red/Red.
+            </p>
+            {% endif %}
+        </div>
+        {% else %}
+        <p class="empty-text">Sin datos de madurez.</p>
+        {% endif %}
+
+        {# B) maturity index evolution #}
+        <div class="analytics-chart" role="img"
+             aria-label="Evolución del índice de madurez por monitoreo"
+             data-chart="maturity"
+             data-series='{{ series_to_json(analytics.maturity_index_series) }}'
+             data-y-label="Índice"
+             data-y-mode="index">
+            <p class="analytics-chart__empty">Sin datos de madurez para mostrar evolución.</p>
+        </div>
+        <p class="analytics-note analytics-note--small">
+            Indicador ordinal operacional: Verde 0.0 → Rojo 1.0.
+        </p>
+    </section>
+
+    {# ================= Harvest ================= #}
+    <section class="analytics-harvest" aria-label="Próxima cosecha">
+        <h2 class="analytics-panel__title">Próxima cosecha</h2>
+        {% set h = analytics.harvest %}
+        {% if h.status is defined %}
+        {# ---- HarvestResult (module scope) ---- #}
+        {% if h.status == "window" %}
+            {% if h.is_degenerate_window or h.window_start == h.window_end %}
+            <p class="analytics-harvest__headline">Estimación central: alrededor del {{ h.window_start.strftime("%d/%m/%Y") }}</p>
+            <p class="analytics-note">Sin dispersión observada en los monitoreos utilizados.</p>
+            {% else %}
+            <p class="analytics-harvest__headline">Ventana estimada</p>
+            <p class="analytics-harvest__window">{{ h.window_start.strftime("%d/%m/%Y") }} — {{ h.window_end.strftime("%d/%m/%Y") }}</p>
+            {% endif %}
+            <p class="analytics-note">Estimación basada en {{ h.n_observations }} monitoreos.</p>
+            {% if h.mean_coverage_ratio is not none %}
+            <p class="analytics-note">Cobertura media de madurez: {{ (h.mean_coverage_ratio * 100) | round(0) | int }} %.</p>
+            {% endif %}
+        {% elif h.status == "target_reached" %}
+            <p class="analytics-harvest__headline">Nivel medio de madurez objetivo alcanzado.</p>
+            {% if kpis.harvestable_share is not none %}
+            <p class="analytics-note">{{ (kpis.harvestable_share * 100) | round(1) }} % de los frutos con madurez clasificable están en Light Red/Red.</p>
+            {% endif %}
+        {% else %}
+            {# insufficient / not_estimable: show the service message #}
+            <p class="analytics-harvest__headline">{{ h.message }}</p>
+            {% if h.reason %}
+            <p class="analytics-note">{{ h.reason }}</p>
+            {% endif %}
+        {% endif %}
+        {% else %}
+        {# ---- HarvestSummaryAll ("all" scope) ---- #}
+        {% if not (h.target_reached or h.upcoming or h.insufficient or h.not_estimable) %}
+            <p class="empty-text">Sin datos suficientes para estimar próxima cosecha.</p>
+        {% else %}
+            {% if h.target_reached %}
+            <div class="analytics-harvest__group">
+                <h3 class="analytics-harvest__group-title">Objetivo alcanzado</h3>
+                <ul>{% for name in h.target_reached %}<li>{{ name }}</li>{% endfor %}</ul>
             </div>
-        </div>
-        {% else %}
-        <p class="empty-text">No hay monitoreos registrados aún.</p>
+            {% endif %}
+            {% if h.upcoming %}
+            <div class="analytics-harvest__group">
+                <h3 class="analytics-harvest__group-title">Con ventana estimada</h3>
+                <ul>{% for name, ws, we in h.upcoming %}<li>{{ name }}: {{ ws.strftime("%d/%m") }} — {{ we.strftime("%d/%m") }}</li>{% endfor %}</ul>
+            </div>
+            {% endif %}
+            {% if h.insufficient %}
+            <div class="analytics-harvest__group">
+                <h3 class="analytics-harvest__group-title">Datos insuficientes</h3>
+                <ul>{% for name in h.insufficient %}<li>{{ name }}</li>{% endfor %}</ul>
+            </div>
+            {% endif %}
+            {% if h.not_estimable %}
+            <div class="analytics-harvest__group">
+                <h3 class="analytics-harvest__group-title">No estimable</h3>
+                <ul>{% for name in h.not_estimable %}<li>{{ name }}</li>{% endfor %}</ul>
+            </div>
+            {% endif %}
         {% endif %}
-    </section>
-
-    <!-- Alerts -->
-    <section class="dashboard-section">
-        <h2 class="section-header">{{ icon('warning') }} Alertas operativas</h2>
-        {% if alerts %}
-        {% for alert in alerts %}
-        <div class="alert {% if alert.severity == 'critical' %}alert-error{% elif alert.severity == 'warning' %}alert-warning{% else %}alert-info{% endif %}" role="alert">
-            <strong>{{ alert.title }}</strong>: {{ alert.message }}
-        </div>
-        {% endfor %}
-        {% else %}
-        <p class="empty-text">No hay alertas operativas pendientes.</p>
         {% endif %}
+        <p class="analytics-disclaimer">
+            Estimación derivada de los monitoreos visuales del sistema; no es un pronóstico agronómico.
+        </p>
     </section>
+    {% endif %}{# analytics #}
 
-    <!-- Recent activities -->
-    <section class="dashboard-section">
-        <h2 class="section-header">Actividades recientes</h2>
-        {% if recent_activities %}
-        <div class="card-list">
-            {% for activity in recent_activities %}
+    {% endif %}{# greenhouses exist #}
+
+    {# ================= Operational block (preserved) ================= #}
+    <details class="analytics-operational">
+        <summary>Información operativa</summary>
+
+        <section class="dashboard-metrics">
+            <div class="metric-card">
+                <span class="metric-value">{{ greenhouse_count }}</span>
+                <span class="metric-label">Invernaderos</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-value">{{ module_count }}</span>
+                <span class="metric-label">Módulos</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-value">{{ pending_modules_count }}</span>
+                <span class="metric-label">Módulos pendientes</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-value">{{ overdue_modules_count }}</span>
+                <span class="metric-label">Módulos vencidos</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-value">{{ monitorings_this_week }}</span>
+                <span class="metric-label">Monitoreos esta semana</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-value">{{ total_snapshots }}</span>
+                <span class="metric-label">Snapshots</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-value">{{ total_detections }}</span>
+                <span class="metric-label">Tomates detectados</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-value">{{ pending_exports_count }}</span>
+                <span class="metric-label">Exportaciones pendientes</span>
+            </div>
+        </section>
+
+        <section class="dashboard-status">
+            {% if overdue_modules_count > 0 %}
+            <div class="status-badge status-critical">
+                {{ overdue_modules_count }} módulo(s) con monitoreo vencido
+            </div>
+            {% endif %}
+            {% if pending_modules_count > 0 %}
+            <div class="status-badge status-warning">
+                {{ pending_modules_count }} módulo(s) pendiente(s) de monitoreo
+            </div>
+            {% endif %}
+            {% if pending_exports_count > 0 %}
+            <div class="status-badge status-info">
+                {{ pending_exports_count }} exportación(es) pendiente(s)
+            </div>
+            {% endif %}
+            {% if supabase_configured %}
+            <div class="status-badge status-info" id="dashboard-remote-sync-badge" style="display: none;">
+                <span id="dashboard-remote-pending">0</span> pendiente(s) de sincronizar
+            </div>
+            {% endif %}
+        </section>
+
+        <section class="dashboard-section">
+            <h2 class="section-header">Último monitoreo</h2>
+            {% if last_monitoring %}
             <div class="card">
                 <div class="card-body">
-                    <p class="card-title">{{ activity.activity_type_name }}</p>
-                    <p class="card-meta">{{ activity.occurred_at | to_bogota }} — {{ activity.category }}</p>
+                    <p><strong>Fecha:</strong> {{ last_monitoring.started_at | to_bogota }}</p>
+                    <p><strong>Snapshots:</strong> {{ last_monitoring.total_snapshots }}</p>
+                    <p><strong>Detecciones:</strong> {{ last_monitoring.total_detections }}</p>
+                    <p><strong>Estado:</strong> {% if last_monitoring.status == 'ready_for_analysis' %}Pendiente de análisis{% else %}{{ last_monitoring.status }}{% endif %}</p>
+                    {% if last_monitoring.status == 'completed' %}
+                    <a href="/monitoreos/{{ last_monitoring.id }}/reporte" class="btn btn-primary" style="margin-top: 8px;">Ver reporte</a>
+                    {% elif last_monitoring.status in ('running', 'paused', 'finishing', 'ready_for_analysis', 'analyzing', 'initializing') %}
+                    <a href="/monitoreos/{{ last_monitoring.id }}/ejecucion" class="btn btn-primary" style="margin-top: 8px;">Ver ejecución</a>
+                    {% endif %}
                 </div>
             </div>
+            {% else %}
+            <p class="empty-text">No hay monitoreos registrados aún.</p>
+            {% endif %}
+        </section>
+
+        <section class="dashboard-section">
+            <h2 class="section-header">{{ icon('warning') }} Alertas operativas</h2>
+            {% if alerts %}
+            {% for alert in alerts %}
+            <div class="alert {% if alert.severity == 'critical' %}alert-error{% elif alert.severity == 'warning' %}alert-warning{% else %}alert-info{% endif %}" role="alert">
+                <strong>{{ alert.title }}</strong>: {{ alert.message }}
+            </div>
             {% endfor %}
-        </div>
-        {% else %}
-        <p class="empty-text">No hay actividades recientes.</p>
-        {% endif %}
-    </section>
+            {% else %}
+            <p class="empty-text">No hay alertas operativas pendientes.</p>
+            {% endif %}
+        </section>
+
+        <section class="dashboard-section">
+            <h2 class="section-header">Actividades recientes</h2>
+            {% if recent_activities %}
+            <div class="card-list">
+                {% for activity in recent_activities %}
+                <div class="card">
+                    <div class="card-body">
+                        <p class="card-title">{{ activity.activity_type_name }}</p>
+                        <p class="card-meta">{{ activity.occurred_at | to_bogota }} — {{ activity.category }}</p>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="empty-text">No hay actividades recientes.</p>
+            {% endif %}
+        </section>
+    </details>
 
 </div>
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/dashboard_analytics.js" defer></script>
 {% if supabase_configured %}
 <script>
 (function() {

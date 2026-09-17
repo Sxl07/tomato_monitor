@@ -1343,3 +1343,291 @@ a + a,
     color: var(--color-danger);
     border-color: var(--color-danger);
 }
+
+/* ==========================================================================
+   Spec 024 — Analytical Dashboard (prefixed .analytics-*)
+   Optimized for 800x480 landscape, touch-first, vertical scroll allowed.
+   Reuses existing design tokens; does not modify generic rules.
+   ========================================================================== */
+
+.analytics-dashboard {
+    padding: var(--safe-margin);
+    max-width: var(--content-max-width);
+    margin: 0 auto;
+}
+
+.analytics-empty {
+    text-align: center;
+    padding: 32px var(--safe-margin);
+}
+
+/* ---- Filters ---- */
+.analytics-filters {
+    display: flex;
+    gap: var(--touch-spacing);
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+
+.analytics-filter {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 200px;
+    min-width: 160px;
+}
+
+.analytics-filter label {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+    margin-bottom: 4px;
+}
+
+.analytics-select {
+    min-height: var(--touch-min);
+    font-size: var(--font-size-body);
+    font-family: var(--font-family);
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    background: var(--color-surface);
+    color: var(--color-text);
+}
+
+.analytics-filter-submit {
+    align-self: flex-end;
+}
+
+/* ---- KPIs (2x2) ---- */
+.analytics-kpis {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--touch-spacing);
+    margin-bottom: 8px;
+}
+
+.analytics-kpi {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    padding: 12px 14px;
+    min-height: 72px;
+}
+
+.analytics-kpi__label {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+}
+
+.analytics-kpi__value {
+    font-size: var(--font-size-h2);
+    font-weight: 600;
+    color: var(--color-text);
+    line-height: 1.25;
+}
+
+.analytics-kpi__sub {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+    margin-top: 2px;
+}
+
+.analytics-kpi__sub--up { color: var(--color-primary-dark); }
+.analytics-kpi__sub--down { color: var(--color-danger-dark); }
+
+.analytics-freshness {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+    margin: 0 0 12px;
+}
+
+/* ---- Tabs ---- */
+.analytics-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.analytics-tab {
+    flex: 1 1 0;
+    min-height: var(--touch-min);
+    font-size: var(--font-size-body);
+    font-family: var(--font-family);
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    padding: 8px 4px;
+}
+
+.analytics-tab[aria-selected="true"] {
+    color: var(--color-primary-dark);
+    border-bottom-color: var(--color-primary);
+    font-weight: 600;
+}
+
+.analytics-tab:focus-visible {
+    outline: 2px solid var(--color-primary-dark);
+    outline-offset: -2px;
+}
+
+/* ---- Panels & charts ---- */
+.analytics-panel {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    padding: 12px 14px;
+    margin-bottom: 12px;
+}
+
+.analytics-panel[hidden] { display: none; }
+
+.analytics-panel__title {
+    font-size: var(--font-size-h2);
+    margin: 0 0 8px;
+}
+
+.analytics-note {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+    margin: 6px 0 0;
+}
+
+.analytics-note--small { font-size: 13px; }
+
+.analytics-chart {
+    width: 100%;
+    min-height: 200px;
+    position: relative;
+}
+
+.analytics-chart svg {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.analytics-chart__empty {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-small);
+    text-align: center;
+    padding: 24px 0;
+    margin: 0;
+}
+
+.analytics-chart__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+    font-size: var(--font-size-small);
+}
+
+.analytics-chart__legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.analytics-chart__legend-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    display: inline-block;
+}
+
+.analytics-health-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 0 0 8px;
+}
+
+.analytics-health-row__item {
+    font-size: var(--font-size-body);
+    font-weight: 600;
+}
+
+.analytics-maturity-current {
+    margin-bottom: 12px;
+}
+
+/* ---- Harvest ---- */
+.analytics-harvest {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    padding: 12px 14px;
+    margin-bottom: 12px;
+}
+
+.analytics-harvest__headline {
+    font-size: var(--font-size-body);
+    font-weight: 600;
+    margin: 0 0 4px;
+}
+
+.analytics-harvest__window {
+    font-size: var(--font-size-h2);
+    font-weight: 700;
+    color: var(--color-primary-dark);
+    margin: 0 0 4px;
+}
+
+.analytics-harvest__group { margin-top: 8px; }
+
+.analytics-harvest__group-title {
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin: 0 0 2px;
+}
+
+.analytics-harvest__group ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.analytics-disclaimer {
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    font-style: italic;
+    margin: 10px 0 0;
+}
+
+/* ---- Operational block ---- */
+.analytics-operational {
+    margin-top: 8px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius);
+    background: var(--color-surface);
+    padding: 4px 12px 12px;
+}
+
+.analytics-operational > summary {
+    min-height: var(--touch-min);
+    display: flex;
+    align-items: center;
+    font-size: var(--font-size-body);
+    font-weight: 600;
+    cursor: pointer;
+    padding: 8px 0;
+}
+
+/* Single-column KPIs on very narrow portrait, keep 2x2 on 800x480 landscape. */
+@media (max-width: 520px) {
+    .analytics-kpis { grid-template-columns: 1fr; }
+    .analytics-filters { flex-direction: column; }
+    /* In a column layout the 200px flex-basis would stretch each filter to
+       ~200px of HEIGHT. Collapse to natural label+select height, full width. */
+    .analytics-filter {
+        flex: 0 0 auto;
+        width: 100%;
+        min-width: 0;
+    }
+}

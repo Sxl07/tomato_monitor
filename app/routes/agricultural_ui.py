@@ -38,6 +38,7 @@ from app.dependencies import (
     get_monitoring_repository,
     get_snapshot_repository,
     get_monitoring_metrics_repository,
+    get_inspection_result_repository,
     get_monitoring_service,
     get_activity_type_repository,
     get_activity_log_repository,
@@ -210,7 +211,7 @@ async def dashboard(request: Request, user=Depends(require_current_user_html)):
         if getattr(p, "status", None) == "pending"
     ]
 
-    # Build context
+    # Build operational context (unchanged).
     dashboard_service = DashboardService()
     context = dashboard_service.build_context(
         greenhouses=greenhouses,
@@ -220,10 +221,55 @@ async def dashboard(request: Request, user=Depends(require_current_user_html)):
         export_packages=export_packages,
     )
 
+    # --- Analytical context (Spec 024) ---
+    # Built via bulk repository reads with strict user isolation: only the
+    # already owner-scoped `greenhouses` seed the scope; module/monitoring ids
+    # are derived by descending from the selected owned greenhouse, never from
+    # the querystring directly. The template is NOT modified in this iteration;
+    # the analytics context is provided for the upcoming UI work.
+    from src.application.services.analytics_service import AnalyticsService
+    from src.application.services.dashboard_scope_builder import build_scope_data
+
+    metrics_repo = get_monitoring_metrics_repository(request)
+    inspection_repo = get_inspection_result_repository(request)
+
+    greenhouse_id_param = request.query_params.get("greenhouse_id")
+    module_id_param = request.query_params.get("module_id")
+
+    scope_data = build_scope_data(
+        greenhouses=greenhouses,
+        module_repo=module_repo,
+        monitoring_repo=monitoring_repo,
+        metrics_repo=metrics_repo,
+        inspection_repo=inspection_repo,
+        greenhouse_id_param=greenhouse_id_param,
+        module_id_param=module_id_param,
+    )
+    analytics = (
+        AnalyticsService().build_analytics(scope_data)
+        if scope_data is not None
+        else None
+    )
+
+    # Selector data for the (future) UI: the user's greenhouses and, for the
+    # selected greenhouse, its modules. Always owner-scoped.
+    selected_greenhouse_id = scope_data.greenhouse_id if scope_data else None
+    selected_module_id = scope_data.selected_module_id if scope_data else None
+    scope_modules = (
+        module_repo.get_by_greenhouse(selected_greenhouse_id)
+        if selected_greenhouse_id is not None
+        else []
+    )
+
     return templates.TemplateResponse(request, "agricultural/dashboard.html", {
         "title": "Dashboard",
         "show_back": False,
         "supabase_configured": _is_supabase_configured(request),
+        "analytics": analytics,
+        "analytics_greenhouses": greenhouses,
+        "analytics_scope_modules": scope_modules,
+        "analytics_selected_greenhouse_id": selected_greenhouse_id,
+        "analytics_selected_module_id": selected_module_id,
         **context,
     })
 

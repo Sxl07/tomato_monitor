@@ -96,6 +96,23 @@ class SqlMonitoringMetricsRepository(MonitoringMetricsRepository):
             return None
         return self._to_entity(model)
 
+    def get_by_monitoring_ids(
+        self, ids: list[int]
+    ) -> dict[int, MonitoringMetrics]:
+        """Bulk-fetch metrics for several monitorings in a single query.
+
+        Uses ``monitoring_id IN (:ids)``. Empty ``ids`` -> {}. Monitoring ids
+        without metrics are absent from the returned dict.
+        """
+        if not ids:
+            return {}
+        models = (
+            self._session.query(MonitoringMetricsModel)
+            .filter(MonitoringMetricsModel.monitoring_id.in_(ids))
+            .all()
+        )
+        return {m.monitoring_id: self._to_entity(m) for m in models}
+
     def find_by_remote_id(self, remote_id: str) -> Optional[MonitoringMetrics]:
         """Return the metrics mapped to the given remote_id, or None."""
         model = (

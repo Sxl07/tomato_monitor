@@ -85,6 +85,33 @@ class SqlInspectionResultRepository(InspectionResultRepository):
         )
         return [self._to_entity(m) for m in models]
 
+    def get_by_monitoring_ids(
+        self, ids: list[int]
+    ) -> dict[int, list[DetectionInspectionResult]]:
+        """Bulk-fetch inspection results for several monitorings in one query.
+
+        Uses a single JOIN + ``monitoring_id IN (:ids)`` query and groups the
+        results by monitoring_id in Python. Empty ``ids`` -> {}. Monitoring ids
+        with no results are absent from the returned dict.
+        """
+        if not ids:
+            return {}
+        rows = (
+            self._session.query(
+                SnapshotModel.monitoring_id, InspectionResultModel
+            )
+            .join(
+                SnapshotModel,
+                InspectionResultModel.snapshot_id == SnapshotModel.id,
+            )
+            .filter(SnapshotModel.monitoring_id.in_(ids))
+            .all()
+        )
+        grouped: dict[int, list[DetectionInspectionResult]] = {}
+        for monitoring_id, model in rows:
+            grouped.setdefault(monitoring_id, []).append(self._to_entity(model))
+        return grouped
+
     def find_by_remote_id(
         self, remote_id: str
     ) -> Optional[DetectionInspectionResult]:

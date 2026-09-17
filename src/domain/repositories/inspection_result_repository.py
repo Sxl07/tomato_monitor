@@ -47,6 +47,25 @@ class InspectionResultRepository(ABC):
         """
         ...
 
+    @abstractmethod
+    def get_by_monitoring_ids(
+        self, ids: list[int]
+    ) -> dict[int, list[DetectionInspectionResult]]:
+        """Bulk-fetch inspection results for several monitorings in one query.
+
+        Resolves ``monitoring_id`` via the snapshots join and groups results by
+        monitoring.
+
+        Args:
+            ids: List of monitoring ids. An empty list returns {}.
+
+        Returns:
+            Mapping monitoring_id -> list of results. Monitoring ids without any
+            result are absent from the dict (never empty-list placeholders,
+            though callers should treat a missing key as "no results").
+        """
+        ...
+
     # --- Recovery primitives (Spec 022, block D1) ---
 
     @abstractmethod
