@@ -340,6 +340,81 @@ class TestExportServiceGeneratesValidZip:
             assert "reports/monitoring_1/pipeline_metrics.json" in zf.namelist()
 
 
+class TestExportFilenameCollision:
+    """Regression tests: distinct packages must not share a file_path (Spec 025)."""
+
+    def _generate(self, service, tmp_path, export_package=None):
+        return service.generate_export(
+            greenhouses=[], modules=[], monitorings=[],
+            metrics_by_monitoring={}, snapshots_by_monitoring={},
+            activity_types=[], activity_logs=[],
+            output_dir=str(tmp_path), base_snapshots_dir=str(tmp_path / "mon"),
+            export_package=export_package,
+        )
+
+    def test_distinct_ids_same_second_do_not_collide(self, tmp_path, monkeypatch):
+        """Two packages with distinct ids at the SAME timestamp get distinct paths."""
+        import src.application.services.export_service as export_module
+        from src.domain.entities.export_package import ExportPackage
+
+        fixed = datetime(2026, 9, 17, 6, 30, 0, tzinfo=timezone.utc)
+
+        class _FixedDatetime:
+            @staticmethod
+            def now(tz=None):
+                return fixed
+
+        # Force an identical timestamp for both generations.
+        monkeypatch.setattr(export_module, "datetime", _FixedDatetime)
+
+        service = ExportService()
+        pkg1 = ExportPackage(created_by_user_id=1, scope="full", id=101, status="generating")
+        pkg2 = ExportPackage(created_by_user_id=1, scope="full", id=102, status="generating")
+
+        result1 = self._generate(service, tmp_path, export_package=pkg1)
+        result2 = self._generate(service, tmp_path, export_package=pkg2)
+
+        assert result1.file_path != result2.file_path
+        assert Path(result1.file_path).exists()
+        assert Path(result2.file_path).exists()
+        assert "101" in Path(result1.file_path).name
+        assert "102" in Path(result2.file_path).name
+
+    def test_fallback_without_package_uses_microseconds(self, tmp_path, monkeypatch):
+        """Without a package id, the filename uses a microsecond-resolution
+        timestamp (not seconds-only), so near-simultaneous generations do not
+        collide. No sleeps required."""
+        import src.application.services.export_service as export_module
+
+        # Two calls in the same second but different microseconds.
+        times = iter([
+            datetime(2026, 9, 17, 6, 30, 0, 111111, tzinfo=timezone.utc),
+            datetime(2026, 9, 17, 6, 30, 0, 222222, tzinfo=timezone.utc),
+        ])
+
+        class _SeqDatetime:
+            @staticmethod
+            def now(tz=None):
+                return next(times)
+
+        monkeypatch.setattr(export_module, "datetime", _SeqDatetime)
+
+        service = ExportService()
+        result1 = self._generate(service, tmp_path, export_package=None)
+        result2 = self._generate(service, tmp_path, export_package=None)
+
+        # Filename shape: tomato_monitor_export_YYYYmmdd_HHMMSS_ffffff.zip
+        name1 = Path(result1.file_path).name
+        assert name1.startswith("tomato_monitor_export_")
+        stem = name1[len("tomato_monitor_export_"):].removesuffix(".zip")
+        assert len(stem.split("_")) == 3  # date, HHMMSS, microseconds
+        assert stem.endswith("111111")
+
+        assert result1.file_path != result2.file_path
+        assert Path(result1.file_path).exists()
+        assert Path(result2.file_path).exists()
+
+
 class TestEntityToDict:
     """Test the _entity_to_dict helper."""
 

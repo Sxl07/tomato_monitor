@@ -220,6 +220,7 @@ class TestExportPathSafetyHelper:
 
         package = SimpleNamespace(
             id=123,
+            created_by_user_id=1,
             status="completed",
             file_path=str(outside),
         )
@@ -230,3 +231,223 @@ class TestExportPathSafetyHelper:
             response = authenticated_client.get("/exportar/123/descargar", follow_redirects=False)
 
         assert response.status_code in (302, 303)
+
+
+class TestExportDeleteRoute:
+    """Tests for POST /exportar/{id}/eliminar (Spec 025)."""
+
+    def test_delete_delegates_to_service_success(self, authenticated_client):
+        """Successful deletion redirects to /exportar with a success message."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("app.routes.agricultural_ui.get_export_package_repository", return_value=MagicMock()):
+            with patch(
+                "src.application.services.export_deletion_service.ExportDeletionService.delete_export",
+                return_value=None,
+            ):
+                resp = authenticated_client.post("/exportar/5/eliminar", follow_redirects=False)
+
+        assert resp.status_code == 303
+        location = resp.headers.get("location", "")
+        assert location.startswith("/exportar")
+        assert "success" in location
+
+    def test_delete_not_found_redirects_with_error(self, authenticated_client):
+        """A not-found/foreign package redirects with 'no encontrada' error."""
+        from unittest.mock import MagicMock, patch
+        from src.application.services.export_deletion_service import ExportNotFoundError
+
+        with patch("app.routes.agricultural_ui.get_export_package_repository", return_value=MagicMock()):
+            with patch(
+                "src.application.services.export_deletion_service.ExportDeletionService.delete_export",
+                side_effect=ExportNotFoundError("Exportación no encontrada"),
+            ):
+                resp = authenticated_client.post("/exportar/9999/eliminar", follow_redirects=False)
+
+        assert resp.status_code == 303
+        location = resp.headers.get("location", "")
+        assert "error" in location
+        assert "encontrada" in location
+
+    def test_delete_generating_blocked(self, authenticated_client):
+        """A generating package cannot be deleted; redirects with error."""
+        from unittest.mock import MagicMock, patch
+        from src.application.services.export_deletion_service import ExportGeneratingError
+
+        with patch("app.routes.agricultural_ui.get_export_package_repository", return_value=MagicMock()):
+            with patch(
+                "src.application.services.export_deletion_service.ExportDeletionService.delete_export",
+                side_effect=ExportGeneratingError("generando"),
+            ):
+                resp = authenticated_client.post("/exportar/7/eliminar", follow_redirects=False)
+
+        assert resp.status_code == 303
+        assert "error" in resp.headers.get("location", "")
+
+    def test_delete_pending_blocked(self, authenticated_client):
+        """A pending package cannot be deleted; redirects with error."""
+        from unittest.mock import MagicMock, patch
+        from src.application.services.export_deletion_service import (
+            ExportStatusNotDeletableError,
+        )
+
+        with patch("app.routes.agricultural_ui.get_export_package_repository", return_value=MagicMock()):
+            with patch(
+                "src.application.services.export_deletion_service.ExportDeletionService.delete_export",
+                side_effect=ExportStatusNotDeletableError("en curso"),
+            ):
+                resp = authenticated_client.post("/exportar/6/eliminar", follow_redirects=False)
+
+        assert resp.status_code == 303
+        assert "error" in resp.headers.get("location", "")
+
+    def test_delete_unsafe_path_controlled_error(self, authenticated_client):
+        """An unsafe path yields a controlled 303 error, never a 500."""
+        from unittest.mock import MagicMock, patch
+        from src.application.services.export_deletion_service import UnsafeExportPathError
+
+        with patch("app.routes.agricultural_ui.get_export_package_repository", return_value=MagicMock()):
+            with patch(
+                "src.application.services.export_deletion_service.ExportDeletionService.delete_export",
+                side_effect=UnsafeExportPathError("ruta no segura"),
+            ):
+                resp = authenticated_client.post("/exportar/8/eliminar", follow_redirects=False)
+
+        assert resp.status_code == 303
+        assert "error" in resp.headers.get("location", "")
+
+    def test_delete_filesystem_failure_controlled_error(self, authenticated_client):
+        """A filesystem/record deletion failure yields a controlled 303, no 500."""
+        from unittest.mock import MagicMock, patch
+        from src.application.services.export_deletion_service import ExportFileDeletionError
+
+        with patch("app.routes.agricultural_ui.get_export_package_repository", return_value=MagicMock()):
+            with patch(
+                "src.application.services.export_deletion_service.ExportDeletionService.delete_export",
+                side_effect=ExportFileDeletionError("no se pudo"),
+            ):
+                resp = authenticated_client.post("/exportar/9/eliminar", follow_redirects=False)
+
+        assert resp.status_code == 303
+        assert "error" in resp.headers.get("location", "")
+
+
+class TestExportListDeleteUI:
+    """Tests for the delete action rendered in the export list."""
+
+    def _create_export(self, authenticated_client):
+        resp = authenticated_client.post("/exportar", follow_redirects=False)
+        return resp.headers["location"].rstrip("/").split("/")[-1]
+
+    def test_list_shows_trash_action_and_class(self, authenticated_client):
+        """List renders the trash action with the correct stylesheet class."""
+        self._create_export(authenticated_client)
+        resp = authenticated_client.get("/exportar")
+        assert resp.status_code == 200
+        assert "btn-icon--danger" in resp.text
+        assert 'aria-label="Eliminar exportación"' in resp.text
+
+    def test_list_shows_confirmation_dialog(self, authenticated_client):
+        """List renders the confirmation dialog with correct wording and actions."""
+        self._create_export(authenticated_client)
+        resp = authenticated_client.get("/exportar")
+        assert "¿Eliminar esta exportación?" in resp.text
+        assert "datos originales no se eliminarán" in resp.text
+        assert "Eliminar exportación" in resp.text
+        assert "Cancelar" in resp.text
+        assert "showConfirmDialog" in resp.text
+
+    def test_list_preserves_detail_and_download(self, authenticated_client):
+        """List keeps Ver detalle and Descargar for completed exports."""
+        self._create_export(authenticated_client)
+        resp = authenticated_client.get("/exportar")
+        assert "Ver detalle" in resp.text
+        # Generate button preserved too.
+        assert "Generar exportación ZIP" in resp.text
+
+    def test_list_empty_state(self, authenticated_client):
+        """When the user has no exports the empty state is shown."""
+        from unittest.mock import MagicMock, patch
+
+        mock_repo = MagicMock()
+        mock_repo.list_by_user.return_value = []
+        with patch("app.routes.agricultural_ui.get_export_package_repository", return_value=mock_repo):
+            resp = authenticated_client.get("/exportar")
+        assert resp.status_code == 200
+        assert "No hay exportaciones registradas." in resp.text
+
+    def test_list_renders_success_feedback(self, authenticated_client):
+        """List renders success feedback from query params."""
+        resp = authenticated_client.get("/exportar?success=Exportación+eliminada")
+        assert resp.status_code == 200
+        assert "Exportación eliminada" in resp.text
+
+    def test_list_renders_error_feedback(self, authenticated_client):
+        """List renders error feedback from query params."""
+        resp = authenticated_client.get("/exportar?error=No+se+pudo+eliminar")
+        assert resp.status_code == 200
+        assert "No se pudo eliminar" in resp.text
+
+    def _render_with_status(self, authenticated_client, status):
+        """Render /exportar with a single package of the given status."""
+        from types import SimpleNamespace
+        from datetime import datetime
+        from unittest.mock import MagicMock, patch
+
+        pkg = SimpleNamespace(
+            id=1,
+            created_by_user_id=1,
+            status=status,
+            file_path="outputs/exports/x.zip" if status == "completed" else None,
+            file_size_bytes=1024 if status == "completed" else None,
+            records_count=3,
+            images_count=2,
+            created_at=datetime(2026, 1, 1, 12, 0, 0),
+        )
+        mock_repo = MagicMock()
+        mock_repo.list_by_user.return_value = [pkg]
+        with patch("app.routes.agricultural_ui.get_export_package_repository", return_value=mock_repo):
+            return authenticated_client.get("/exportar")
+
+    def test_completed_shows_delete(self, authenticated_client):
+        resp = self._render_with_status(authenticated_client, "completed")
+        assert resp.status_code == 200
+        assert "/exportar/1/eliminar" in resp.text
+        assert 'aria-label="Eliminar exportación"' in resp.text
+
+    def test_error_shows_delete(self, authenticated_client):
+        resp = self._render_with_status(authenticated_client, "error")
+        assert resp.status_code == 200
+        assert "/exportar/1/eliminar" in resp.text
+
+    def test_pending_does_not_show_delete(self, authenticated_client):
+        resp = self._render_with_status(authenticated_client, "pending")
+        assert resp.status_code == 200
+        assert "/exportar/1/eliminar" not in resp.text
+
+    def test_generating_does_not_show_delete(self, authenticated_client):
+        resp = self._render_with_status(authenticated_client, "generating")
+        assert resp.status_code == 200
+        assert "/exportar/1/eliminar" not in resp.text
+
+
+class TestExportDetailFeedback:
+    """Tests for feedback rendering in the export detail (no delete button)."""
+
+    def test_detail_renders_download_error(self, authenticated_client):
+        """Detail renders the download error passed via query params."""
+        create_resp = authenticated_client.post("/exportar", follow_redirects=False)
+        pkg_id = create_resp.headers["location"].rstrip("/").split("/")[-1]
+
+        resp = authenticated_client.get(f"/exportar/{pkg_id}?error=Archivo+no+disponible")
+        assert resp.status_code == 200
+        assert "Archivo no disponible" in resp.text
+
+    def test_detail_has_no_delete_button(self, authenticated_client):
+        """Detail must NOT include a delete action (delete lives only in list)."""
+        create_resp = authenticated_client.post("/exportar", follow_redirects=False)
+        pkg_id = create_resp.headers["location"].rstrip("/").split("/")[-1]
+
+        resp = authenticated_client.get(f"/exportar/{pkg_id}")
+        assert resp.status_code == 200
+        assert "/eliminar" not in resp.text

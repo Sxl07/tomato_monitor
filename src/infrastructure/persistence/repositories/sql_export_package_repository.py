@@ -82,6 +82,23 @@ class SqlExportPackageRepository(ExportPackageRepository):
         )
         return [self._to_entity(m) for m in models]
 
+    def delete(self, id: int) -> None:
+        """Delete the ExportPackage record with the given id.
+
+        Removes only the SQLite row. Performs no filesystem I/O. Deleting a
+        nonexistent id is an idempotent no-op.
+        """
+        model = (
+            self._session.query(ExportPackageModel)
+            .filter(ExportPackageModel.id == id)
+            .first()
+        )
+        if model is None:
+            return
+        self._session.delete(model)
+        self._session.flush()
+        self._session.commit()
+
     def _to_entity(self, model: ExportPackageModel) -> ExportPackage:
         return ExportPackage(
             id=model.id,

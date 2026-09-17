@@ -6,6 +6,13 @@
 {% block content %}
 <div class="export-detail-page">
 
+    {% if error %}
+    <div class="alert alert-error" role="alert" style="margin-bottom: 16px;">{{ error }}</div>
+    {% endif %}
+    {% if success_message %}
+    <div class="alert alert-info" role="alert" style="margin-bottom: 16px;">{{ success_message }}</div>
+    {% endif %}
+
     <!-- Status -->
     <div style="margin-bottom: 16px;">
         {% if package.status == 'completed' %}
