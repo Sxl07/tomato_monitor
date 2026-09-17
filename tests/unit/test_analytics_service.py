@@ -99,6 +99,35 @@ class TestAllScope:
         assert isinstance(ctx.harvest, HarvestSummaryAll)
 
 
+class TestCurrentDistribution:
+    """§3: maturity_current_distribution presentation data (three states)."""
+
+    def test_real_counts_distribution_computed_by_service(self, service):
+        # covered=10: green 2, red 8 -> 20% / 80% over covered subset
+        counts = MaturityCounts(green=2, red=8)
+        m = ModuleScopeData(1, "M1", [_mvm(1, 1, 10, 8, 2, counts=counts)])
+        ctx = service.build_analytics(_module_scope(m))
+        dist = ctx.maturity_current_distribution
+        assert dist is not None
+        assert dist["green"] == pytest.approx(20.0)
+        assert dist["red"] == pytest.approx(80.0)
+        assert sum(dist.values()) == pytest.approx(100.0)
+
+    def test_fallback_distribution_uses_original_pcts(self, service):
+        fb = MaturityDistributionFallback(pct_green=30.0, pct_red=70.0)
+        m = ModuleScopeData(1, "M1", [_mvm(1, 1, 10, 8, 2, fallback=fb)])
+        ctx = service.build_analytics(_module_scope(m))
+        dist = ctx.maturity_current_distribution
+        assert dist is not None
+        assert dist["green"] == pytest.approx(30.0)
+        assert dist["red"] == pytest.approx(70.0)
+
+    def test_no_maturity_distribution_none(self, service):
+        m = ModuleScopeData(1, "M1", [_mvm(1, 1, 10, 8, 2)])
+        ctx = service.build_analytics(_module_scope(m))
+        assert ctx.maturity_current_distribution is None
+
+
 class TestEmptyScope:
     def test_empty_module_scope(self, service):
         scope = ScopeData(1, "GH1", "module", None, [])

@@ -288,6 +288,12 @@ class AnalyticsContext:
     maturity_coverage_known: bool = False
     maturity_current_counts: Optional[MaturityCounts] = None
     maturity_current_fallback: Optional[MaturityDistributionFallback] = None
+    # Presentation-ready per-stage percentages (0-100), computed by the service
+    # so Jinja never derives counts/percentages itself:
+    #   - real counts  -> distribution_pcts(counts)
+    #   - fallback      -> fallback.as_dict()
+    #   - no maturity   -> None
+    maturity_current_distribution: Optional[dict[str, float]] = None
     evolution_series: list[ModuleSeries] = field(default_factory=list)
     health_series: list[ModuleSeries] = field(default_factory=list)
     maturity_index_series: list[ModuleSeries] = field(default_factory=list)

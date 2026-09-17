@@ -26,6 +26,7 @@ from src.application.dtos.dashboard_analytics_dtos import (
 from src.application.services import dashboard_aggregation as aggregation
 from src.application.services import dashboard_series as series_builder
 from src.application.services import harvest_estimator
+from src.application.services import maturity_stats
 
 
 class AnalyticsService:
@@ -39,6 +40,7 @@ class AnalyticsService:
         maturity_index = series_builder.maturity_index_series(scope)
 
         coverage_known, counts, fallback = self._current_maturity(scope)
+        distribution = self._current_distribution(counts, fallback)
 
         if scope.scope_kind == "module":
             module = scope.modules[0] if scope.modules else None
@@ -56,6 +58,7 @@ class AnalyticsService:
             maturity_coverage_known=coverage_known,
             maturity_current_counts=counts,
             maturity_current_fallback=fallback,
+            maturity_current_distribution=distribution,
             evolution_series=evolution,
             health_series=health,
             maturity_index_series=maturity_index,
@@ -101,3 +104,21 @@ class AnalyticsService:
             # contributing modules had real counts.
             return True, counts, None
         return False, None, None
+
+    def _current_distribution(
+        self,
+        counts: Optional[MaturityCounts],
+        fallback: Optional[MaturityDistributionFallback],
+    ) -> Optional[dict[str, float]]:
+        """Presentation-ready per-stage percentages (0-100), or None.
+
+        Real counts -> distribution_pcts (percentages over the covered subset).
+        Fallback     -> the persisted pct_* as-is (visual only).
+        Neither      -> None ("Sin datos de madurez").
+        Never reconstructs counts from pct_*.
+        """
+        if counts is not None:
+            return maturity_stats.distribution_pcts(counts)
+        if fallback is not None:
+            return fallback.as_dict()
+        return None
