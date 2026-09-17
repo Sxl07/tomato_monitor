@@ -100,8 +100,15 @@ def _mock_activity_type(id=1, code="riego", name="Riego", category="mantenimient
 
 def _setup_mocks(greenhouses=None, modules=None, monitorings_by_module=None,
                  activity_logs=None, activity_types=None, export_packages=None):
-    """Create mock repos for the dashboard route."""
+    """Create mock repos for the dashboard route.
+
+    Spec 024: the route uses owner-scoped reads (get_all_by_owner /
+    list_by_user) and the analytics scope builder issues bulk metrics/inspection
+    reads. Mocks reflect the real method names the route calls.
+    """
     gh_repo = MagicMock()
+    # Route uses get_all_by_owner(user.id) (Spec 022 isolation), not get_all.
+    gh_repo.get_all_by_owner.return_value = greenhouses or []
     gh_repo.get_all.return_value = greenhouses or []
 
     module_repo = MagicMock()
@@ -119,14 +126,28 @@ def _setup_mocks(greenhouses=None, modules=None, monitorings_by_module=None,
 
     activity_log_repo = MagicMock()
     activity_log_repo.list_recent.return_value = activity_logs or []
+    activity_log_repo.list_by_module.return_value = []
 
     activity_type_repo = MagicMock()
     activity_type_repo.list_all.return_value = activity_types or []
 
     export_repo = MagicMock()
+    # Route uses list_by_user(user.id) (Spec 022 isolation), not list_pending.
+    export_repo.list_by_user.return_value = export_packages or []
     export_repo.list_pending.return_value = export_packages or []
 
-    return gh_repo, module_repo, monitoring_repo, activity_log_repo, activity_type_repo, export_repo
+    # Spec 024 analytics: bulk repos return empty dicts by default so the
+    # analytics scope builder produces empty/insufficient analytics without
+    # touching the database.
+    metrics_repo = MagicMock()
+    metrics_repo.get_by_monitoring_ids.return_value = {}
+    inspection_repo = MagicMock()
+    inspection_repo.get_by_monitoring_ids.return_value = {}
+
+    return (
+        gh_repo, module_repo, monitoring_repo, activity_log_repo,
+        activity_type_repo, export_repo, metrics_repo, inspection_repo,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -139,14 +160,16 @@ class TestDashboardRoute:
 
     def test_dashboard_returns_200(self):
         """GET /dashboard returns 200 when authenticated."""
-        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo = _setup_mocks()
+        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo, metrics_repo, inspection_repo = _setup_mocks()
 
         with patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=gh_repo), \
              patch("app.routes.agricultural_ui.get_module_repository", return_value=module_repo), \
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=monitoring_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=log_repo), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=type_repo), \
-             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo):
+             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo), \
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=metrics_repo), \
+             patch("app.routes.agricultural_ui.get_inspection_result_repository", return_value=inspection_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/dashboard")
 
@@ -158,7 +181,7 @@ class TestDashboardRoute:
         mod = _mock_module()
         mon = _mock_monitoring(snapshots=10, detections=45)
 
-        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo = _setup_mocks(
+        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo, metrics_repo, inspection_repo = _setup_mocks(
             greenhouses=[gh],
             modules=[mod],
             monitorings_by_module={mod.id: [mon]},
@@ -169,7 +192,9 @@ class TestDashboardRoute:
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=monitoring_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=log_repo), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=type_repo), \
-             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo):
+             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo), \
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=metrics_repo), \
+             patch("app.routes.agricultural_ui.get_inspection_result_repository", return_value=inspection_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/dashboard")
 
@@ -183,7 +208,7 @@ class TestDashboardRoute:
         mod = _mock_module()
         gh = _mock_greenhouse()
 
-        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo = _setup_mocks(
+        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo, metrics_repo, inspection_repo = _setup_mocks(
             greenhouses=[gh],
             modules=[mod],
             monitorings_by_module={mod.id: []},  # No monitorings → pending alert
@@ -194,7 +219,9 @@ class TestDashboardRoute:
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=monitoring_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=log_repo), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=type_repo), \
-             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo):
+             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo), \
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=metrics_repo), \
+             patch("app.routes.agricultural_ui.get_inspection_result_repository", return_value=inspection_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/dashboard")
 
@@ -202,21 +229,34 @@ class TestDashboardRoute:
         assert "pendiente" in response.text.lower()
 
     def test_dashboard_shows_recent_activities(self):
-        """Dashboard shows recent activity entries."""
+        """Dashboard shows recent activity entries.
+
+        Spec 024/022: the route gathers activities by descending the user's
+        modules via activity_log_repo.list_by_module(module_id), so the mock
+        must provide a greenhouse + module and wire list_by_module.
+        """
+        gh = _mock_greenhouse()
+        mod = _mock_module()
         log = _mock_activity_log()
         at = _mock_activity_type()
 
-        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo = _setup_mocks(
+        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo, metrics_repo, inspection_repo = _setup_mocks(
+            greenhouses=[gh],
+            modules=[mod],
             activity_logs=[log],
             activity_types=[at],
         )
+        # Route reads activities per module.
+        log_repo.list_by_module.side_effect = lambda mid: [log] if mid == mod.id else []
 
         with patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=gh_repo), \
              patch("app.routes.agricultural_ui.get_module_repository", return_value=module_repo), \
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=monitoring_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=log_repo), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=type_repo), \
-             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo):
+             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo), \
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=metrics_repo), \
+             patch("app.routes.agricultural_ui.get_inspection_result_repository", return_value=inspection_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/dashboard")
 
@@ -226,14 +266,16 @@ class TestDashboardRoute:
 
     def test_dashboard_empty_state(self):
         """Dashboard renders correctly with no data at all."""
-        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo = _setup_mocks()
+        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo, metrics_repo, inspection_repo = _setup_mocks()
 
         with patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=gh_repo), \
              patch("app.routes.agricultural_ui.get_module_repository", return_value=module_repo), \
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=monitoring_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=log_repo), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=type_repo), \
-             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo):
+             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo), \
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=metrics_repo), \
+             patch("app.routes.agricultural_ui.get_inspection_result_repository", return_value=inspection_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/dashboard")
 
@@ -247,7 +289,7 @@ class TestDashboardRoute:
         mod = _mock_module()
         gh = _mock_greenhouse()
 
-        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo = _setup_mocks(
+        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo, metrics_repo, inspection_repo = _setup_mocks(
             greenhouses=[gh],
             modules=[mod],
             monitorings_by_module={mod.id: [mon]},
@@ -258,7 +300,9 @@ class TestDashboardRoute:
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=monitoring_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=log_repo), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=type_repo), \
-             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo):
+             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo), \
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=metrics_repo), \
+             patch("app.routes.agricultural_ui.get_inspection_result_repository", return_value=inspection_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/dashboard")
 
@@ -277,14 +321,16 @@ class TestHomeRedirect:
 
     def test_home_redirects_to_dashboard(self):
         """GET / redirects to /dashboard when authenticated."""
-        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo = _setup_mocks()
+        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo, metrics_repo, inspection_repo = _setup_mocks()
 
         with patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=gh_repo), \
              patch("app.routes.agricultural_ui.get_module_repository", return_value=module_repo), \
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=monitoring_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=log_repo), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=type_repo), \
-             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo):
+             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo), \
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=metrics_repo), \
+             patch("app.routes.agricultural_ui.get_inspection_result_repository", return_value=inspection_repo):
             client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
             response = client.get("/")
 
@@ -341,14 +387,16 @@ class TestDashboardNoProhibitedMetrics:
 
     def test_no_prohibited_metrics_empty_dashboard(self):
         """Empty dashboard does not contain any prohibited metric terms."""
-        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo = _setup_mocks()
+        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo, metrics_repo, inspection_repo = _setup_mocks()
 
         with patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=gh_repo), \
              patch("app.routes.agricultural_ui.get_module_repository", return_value=module_repo), \
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=monitoring_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=log_repo), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=type_repo), \
-             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo):
+             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo), \
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=metrics_repo), \
+             patch("app.routes.agricultural_ui.get_inspection_result_repository", return_value=inspection_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/dashboard")
 
@@ -362,7 +410,7 @@ class TestDashboardNoProhibitedMetrics:
         mod = _mock_module()
         mon = _mock_monitoring(snapshots=10, detections=45)
 
-        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo = _setup_mocks(
+        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo, metrics_repo, inspection_repo = _setup_mocks(
             greenhouses=[gh],
             modules=[mod],
             monitorings_by_module={mod.id: [mon]},
@@ -373,7 +421,9 @@ class TestDashboardNoProhibitedMetrics:
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=monitoring_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=log_repo), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=type_repo), \
-             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo):
+             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo), \
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=metrics_repo), \
+             patch("app.routes.agricultural_ui.get_inspection_result_repository", return_value=inspection_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/dashboard")
 
@@ -398,7 +448,7 @@ class TestDashboardAlertsEmptyState:
         mod.monitoring_frequency_days = None
         mon = _mock_monitoring(status="completed", started_at=datetime(2025, 6, 19, 10, 0))
 
-        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo = _setup_mocks(
+        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo, metrics_repo, inspection_repo = _setup_mocks(
             greenhouses=[_mock_greenhouse()],
             modules=[mod],
             monitorings_by_module={mod.id: [mon]},
@@ -409,7 +459,9 @@ class TestDashboardAlertsEmptyState:
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=monitoring_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=log_repo), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=type_repo), \
-             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo):
+             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo), \
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=metrics_repo), \
+             patch("app.routes.agricultural_ui.get_inspection_result_repository", return_value=inspection_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/dashboard")
 
@@ -425,7 +477,7 @@ class TestDashboardLastMonitoringLinks:
         mod = _mock_module()
         mon = _mock_monitoring(id=42, status="completed", started_at=datetime(2025, 6, 19, 10, 0))
 
-        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo = _setup_mocks(
+        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo, metrics_repo, inspection_repo = _setup_mocks(
             greenhouses=[_mock_greenhouse()],
             modules=[mod],
             monitorings_by_module={mod.id: [mon]},
@@ -436,7 +488,9 @@ class TestDashboardLastMonitoringLinks:
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=monitoring_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=log_repo), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=type_repo), \
-             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo):
+             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo), \
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=metrics_repo), \
+             patch("app.routes.agricultural_ui.get_inspection_result_repository", return_value=inspection_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/dashboard")
 
@@ -449,7 +503,7 @@ class TestDashboardLastMonitoringLinks:
         mod = _mock_module()
         mon = _mock_monitoring(id=55, status="analyzing", started_at=datetime(2025, 6, 19, 14, 0))
 
-        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo = _setup_mocks(
+        gh_repo, module_repo, monitoring_repo, log_repo, type_repo, export_repo, metrics_repo, inspection_repo = _setup_mocks(
             greenhouses=[_mock_greenhouse()],
             modules=[mod],
             monitorings_by_module={mod.id: [mon]},
@@ -460,7 +514,9 @@ class TestDashboardLastMonitoringLinks:
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=monitoring_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=log_repo), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=type_repo), \
-             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo):
+             patch("app.routes.agricultural_ui.get_export_package_repository", return_value=export_repo), \
+             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=metrics_repo), \
+             patch("app.routes.agricultural_ui.get_inspection_result_repository", return_value=inspection_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/dashboard")
 

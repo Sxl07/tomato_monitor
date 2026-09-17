@@ -46,6 +46,21 @@ class MonitoringMetricsRepository(ABC):
         """Return the metrics for the given monitoring, or None if not found."""
         ...
 
+    @abstractmethod
+    def get_by_monitoring_ids(
+        self, ids: list[int]
+    ) -> dict[int, MonitoringMetrics]:
+        """Bulk-fetch metrics for several monitorings in a single query.
+
+        Args:
+            ids: List of monitoring ids. An empty list returns {}.
+
+        Returns:
+            Mapping monitoring_id -> MonitoringMetrics. Monitoring ids without
+            metrics are simply absent from the dict (never None values).
+        """
+        ...
+
     # --- Recovery primitives (Spec 022, block D1) ---
 
     @abstractmethod
