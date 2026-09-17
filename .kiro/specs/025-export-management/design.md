@@ -370,8 +370,23 @@ Modificar:
   `success`.
 - `tests/unit/test_export_routes.py` — tests de la ruta/UI.
 
-No se toca: `ExportService`, formato ZIP, manifest, esquema, `DeletionService`
-agrícola, `_is_safe_export_path`.
+No se toca: formato ZIP, manifest, esquema, `DeletionService` agrícola,
+`_is_safe_export_path`.
+
+### Microfix de colisión de filenames (ExportService)
+
+`ExportService` generaba el nombre del ZIP solo con timestamp de segundos
+(`%Y%m%d_%H%M%S`), por lo que dos `ExportPackage` distintos generados en el
+mismo segundo producían el mismo `file_path` y el segundo sobrescribía al
+primero (confirmado en RPi con ids 9001/9002). Fix acotado a la estrategia de
+nombre:
+
+- Si `export_package` y `export_package.id` no son `None`:
+  `tomato_monitor_export_{id}_{%Y%m%d_%H%M%S}.zip`.
+- Fallback (sin paquete/id): `tomato_monitor_export_{%Y%m%d_%H%M%S_%f}.zip`
+  (microsegundos).
+
+No cambia el contenido interno del ZIP ni el manifest; no añade dependencias.
 
 ---
 

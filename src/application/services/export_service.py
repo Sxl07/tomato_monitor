@@ -132,10 +132,20 @@ class ExportService:
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
-        # Generate filename with timestamp
+        # Generate a collision-safe filename.
+        #
+        # Two distinct ExportPackage ids must never produce the same file_path,
+        # even when generated within the same second. When a package id is
+        # available we embed it in the filename. Otherwise (no package/id) we
+        # fall back to a microsecond-resolution timestamp.
         now = datetime.now(timezone.utc)
-        timestamp_str = now.strftime("%Y%m%d_%H%M%S")
-        zip_filename = f"tomato_monitor_export_{timestamp_str}.zip"
+        package_id = getattr(export_package, "id", None) if export_package else None
+        if package_id is not None:
+            timestamp_str = now.strftime("%Y%m%d_%H%M%S")
+            zip_filename = f"tomato_monitor_export_{package_id}_{timestamp_str}.zip"
+        else:
+            timestamp_str = now.strftime("%Y%m%d_%H%M%S_%f")
+            zip_filename = f"tomato_monitor_export_{timestamp_str}.zip"
         zip_path = out_path / zip_filename
 
         records_count = 0

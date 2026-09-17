@@ -80,3 +80,13 @@ Resultado final de tests dirigidos (Python 3.14.3, sin venv, `py -m pytest`):
 - [x] 11. Verificación final
   - [x] 11.1 Tests dirigidos verdes; `git diff --check` limpio; sin cambio de
     esquema, sin nuevas dependencias, sin Supabase/RLS/outbox/sync.
+
+- [x] 12. Microfix de colisión de filenames (ExportService)
+  - [x] 12.1 Nombre del ZIP incluye el `export_package.id` cuando existe;
+    fallback con microsegundos (`%Y%m%d_%H%M%S_%f`) cuando no hay paquete/id.
+    Solo cambia la estrategia de nombre; no toca contenido/manifest/esquema.
+  - [x] 12.2 Regresión en `test_export_service.py`: ids 101/102 con el mismo
+    datetime → paths distintos, ambos ZIP existen, cada filename contiene su id;
+    fallback con microsegundos no colisiona (sin sleeps).
+    Resultado: `test_export_service.py` → 17 passed; set dirigido Spec 025 →
+    **90 passed, 1 skipped**; `git diff --check` limpio.
