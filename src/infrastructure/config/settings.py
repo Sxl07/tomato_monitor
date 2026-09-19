@@ -143,13 +143,13 @@ EDGE_PROFILE = ExecutionProfile(
     scene_gate_timeout_frames=75,
     scene_gate_orb_threshold=35,
     scene_gate_hsv_threshold=0.38,
-    inference_input_width=416,
-    inference_input_height=312,
+    inference_input_width=512,
+    inference_input_height=384,
     skip_maturity=True,
-    # Detector score threshold selected from field validation on four real
-    # monitoring sessions (45-48). A threshold of 0.50 recovered substantially
-    # more useful detections than 0.60. Re-evaluate after detector retraining.
-    detection_score_threshold=0.50,
+    # Final V6 operating point selected from validation and deployment-development
+    # data before opening the held-out test set. Threshold 0.475 prioritizes recall
+    # for operational targets with projected max side >= 16 px.
+    detection_score_threshold=0.475,
     run_maturity_only_for_healthy=True,
     thermal_poll_interval_seconds=5.0,
     thermal_warning_temp=72.0,

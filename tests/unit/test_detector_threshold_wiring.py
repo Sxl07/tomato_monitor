@@ -106,9 +106,9 @@ def detector_mod(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 class TestProfileThresholds:
-    def test_edge_threshold_is_050(self):
+    def test_edge_threshold_is_0475(self):
         from src.infrastructure.config.settings import EDGE_PROFILE
-        assert EDGE_PROFILE.detection_score_threshold == 0.50
+        assert EDGE_PROFILE.detection_score_threshold == 0.475
 
     def test_full_threshold_is_080(self):
         from src.infrastructure.config.settings import FULL_PROFILE

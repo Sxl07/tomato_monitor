@@ -27,14 +27,24 @@ def build_tomato_detector(
     weights_path = Path(model_weights) if model_weights else DETECTION_MODEL_PATH
 
     cfg = get_cfg()
-    cfg_path = os.path.join(
-        os.path.dirname(detectron2.__file__),
-        "model_zoo",
-        "configs",
-        "COCO-Detection",
-        "retinanet_R_50_FPN_1x.yaml",
-    )
-    cfg.merge_from_file(cfg_path)
+
+    # Prefer the training/deployment config stored next to the checkpoint.
+    # This is required for retrained variants that use custom RetinaNet
+    # settings such as the small-anchor configuration.
+    model_config_path = weights_path.with_name("config.yaml")
+
+    if model_config_path.exists():
+        cfg.merge_from_file(str(model_config_path))
+    else:
+        # Backward-compatible fallback for legacy checkpoints.
+        cfg_path = os.path.join(
+            os.path.dirname(detectron2.__file__),
+            "model_zoo",
+            "configs",
+            "COCO-Detection",
+            "retinanet_R_50_FPN_1x.yaml",
+        )
+        cfg.merge_from_file(cfg_path)
 
     cfg.MODEL.RETINANET.NUM_CLASSES = 1
     cfg.MODEL.WEIGHTS = str(weights_path)
