@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 
 from src.domain.entities.inspection_result import DetectionInspectionResult
+from src.domain.entities.maturity_assessment import normalize_maturity_for_persistence
 from src.domain.entities.snapshot import Snapshot
 from src.domain.repositories.inspection_result_repository import InspectionResultRepository
 from src.domain.repositories.snapshot_repository import SnapshotRepository
@@ -575,10 +576,14 @@ class SnapshotAnalysisService:
             health_label = health_result.get("label", "unknown")
             health_confidence = health_result.get("confidence", 0.0)
 
-            # Extract maturity data
+            # Extract maturity data. Normalize non-estimable / out-of-range
+            # values (e.g. "unknown") to NULL so only the six valid USDA
+            # stages are ever persisted.
             maturity_result = det.get("maturity_result") or {}
-            maturity_stage = maturity_result.get("usda_stage")
-            maturity_percent = maturity_result.get("maturity_percent")
+            maturity_stage, maturity_percent = normalize_maturity_for_persistence(
+                maturity_result.get("usda_stage"),
+                maturity_result.get("maturity_percent"),
+            )
 
             # If analysis_skip_maturity, null out maturity fields (safety net)
             if self._analysis_skip_maturity:

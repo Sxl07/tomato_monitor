@@ -49,6 +49,7 @@ from app.dependencies import (
 from src.application.services.model_service import ModelService
 from src.infrastructure.config.settings import DETECTION_MODEL_PATH
 from src.domain.entities.greenhouse import Greenhouse
+from src.domain.entities.maturity_assessment import VALID_USDA_STAGES
 from src.domain.entities.module import Module
 from src.domain.exceptions import DuplicateModuleError
 from src.application.utils.jinja_filters import register_filters
@@ -1036,6 +1037,7 @@ def monitoring_start(
             frame_source=frame_source,
             db_session=db_session,
             log_service=log_service,
+            created_by_user_id=user.id,
         )
     except ActiveSessionError as e:
         # Redirect to the existing active monitoring's execution screen
@@ -1139,8 +1141,18 @@ async def monitoring_report(request: Request, id: int, user=Depends(require_curr
     snapshot_repo = get_snapshot_repository(request)
     snapshots = snapshot_repo.get_by_monitoring(id)
 
-    # Build context
-    report_metrics = build_report_metrics(metrics) if metrics else None
+    # Count detections whose maturity was estimable (non-NULL stage) so the
+    # report can communicate non-estimable maturity. The six USDA percentages
+    # remain computed over this covered subset only (semantics unchanged).
+    report_metrics = None
+    if metrics:
+        inspection_repo = get_inspection_result_repository(request)
+        results = inspection_repo.get_by_monitoring(id)
+        maturity_covered = sum(
+            1 for r in results
+            if getattr(r, "maturity_stage", None) in VALID_USDA_STAGES
+        )
+        report_metrics = build_report_metrics(metrics, maturity_covered)
     gallery = build_snapshot_gallery(snapshots, id)
 
     # Format header date/time

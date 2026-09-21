@@ -28,8 +28,30 @@
     {# --- Maturity bar --- #}
     <div class="report-section">
         <h2 class="section-heading">Distribución de madurez</h2>
+        {% if metrics.maturity_covered == 0 %}
+        {# Case A: no tomato had an estimable maturity. Show a fully gray bar
+           (UI-only, not a persisted category) plus an informative message. #}
+        <div class="maturity-bar" role="img" aria-label="Madurez no estimable">
+            <div class="maturity-bar-segment maturity-bar-segment--unknown"
+                 style="width: 100%;"
+                 title="Madurez no estimable"></div>
+        </div>
+        <p class="maturity-coverage-note">
+            No fue posible estimar la madurez de los tomates detectados en este monitoreo.
+        </p>
+        {% else %}
         {% set maturity_stages = metrics.maturity_stages %}
         {% include "agricultural/partials/maturity_bar.html" %}
+        {% if metrics.maturity_uncovered > 0 %}
+        {# Case B: partial coverage. Keep the six-stage bar and add a note; the
+           USDA percentages are NOT altered (denominator stays the covered set). #}
+        <p class="maturity-coverage-note">
+            Madurez estimada en {{ metrics.maturity_covered }} de {{ metrics.total_tomatoes }} tomates ({{ metrics.pct_maturity_covered | round(1) }} %).
+            En {{ metrics.maturity_uncovered }} tomates no fue posible obtener una estimación confiable.
+        </p>
+        {% endif %}
+        {# Case C: full coverage → no extra note. #}
+        {% endif %}
     </div>
 
     {% else %}

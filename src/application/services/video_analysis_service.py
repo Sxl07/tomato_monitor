@@ -35,6 +35,7 @@ from src.application.interfaces.video_reader_port import (
     VideoReaderPort,
 )
 from src.domain.entities.inspection_result import DetectionInspectionResult
+from src.domain.entities.maturity_assessment import normalize_maturity_for_persistence
 from src.domain.entities.snapshot import Snapshot
 
 # decide_run_detector is a pure, dependency-light module (no cv2/torch/detectron2),
@@ -470,6 +471,12 @@ class VideoAnalysisService:
 
             health = det.get("health_result") or {}
             maturity = det.get("maturity_result") or {}
+            # Normalize non-estimable / out-of-range maturity (e.g. "unknown")
+            # to NULL so only the six valid USDA stages are ever persisted.
+            maturity_stage, maturity_percent = normalize_maturity_for_persistence(
+                maturity.get("usda_stage"),
+                maturity.get("maturity_percent"),
+            )
 
             existing = self._best_by_track.get(track_id)
             staged_existing = staged.get(track_id)
@@ -489,8 +496,8 @@ class VideoAnalysisService:
                     best_area=area,
                     health_label=health.get("label", "unknown"),
                     health_confidence=health.get("confidence", 0.0),
-                    maturity_stage=maturity.get("usda_stage"),
-                    maturity_percent=maturity.get("maturity_percent"),
+                    maturity_stage=maturity_stage,
+                    maturity_percent=maturity_percent,
                 )
         return staged
 

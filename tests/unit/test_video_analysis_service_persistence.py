@@ -669,3 +669,50 @@ assert hasattr(svc, "TrackBestResult")
             cwd=repo_root, capture_output=True, text=True,
         )
         assert result.returncode == 0, result.stderr
+
+
+# --------------------------------------------------------------------------- #
+# Regression: non-estimable maturity ("unknown") normalized to NULL
+# --------------------------------------------------------------------------- #
+
+class TestUnknownMaturityNormalizedToNull:
+    def test_unknown_stage_persisted_as_null(self, monkeypatch):
+        reader = FakeReader(1)
+        insp = InspectionRepoSpy()
+
+        def pf(frame, components, name):
+            return {"detections": [_det(1, (0, 0, 10, 10), stage="unknown")]}
+
+        svc = _make_service(
+            reader, _config(), process_frame_fn=pf,
+            snapshot_repo=SnapshotRepoSpy(), inspection_repo=insp,
+            db_session=DbSpy(), monkeypatch=monkeypatch,
+        )
+        svc.run()
+
+        assert len(insp.created) == 1
+        _sid, result = insp.created[0]
+        assert result.maturity_stage is None
+        assert result.maturity_percent is None
+        # And it is excluded from maturity coverage counts.
+        best = svc.best_by_track[1]
+        assert best.maturity_stage is None
+        assert best.maturity_percent is None
+
+    def test_valid_stage_still_persisted(self, monkeypatch):
+        reader = FakeReader(1)
+        insp = InspectionRepoSpy()
+
+        def pf(frame, components, name):
+            return {"detections": [_det(1, (0, 0, 10, 10), stage="red")]}
+
+        svc = _make_service(
+            reader, _config(), process_frame_fn=pf,
+            snapshot_repo=SnapshotRepoSpy(), inspection_repo=insp,
+            db_session=DbSpy(), monkeypatch=monkeypatch,
+        )
+        svc.run()
+
+        _sid, result = insp.created[0]
+        assert result.maturity_stage == "red"
+        assert result.maturity_percent == 90.0

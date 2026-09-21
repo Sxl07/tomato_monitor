@@ -206,3 +206,101 @@ class TestServiceLevelTransitions:
 
         with pytest.raises(InvalidTransitionError):
             mon_repo.update_status(monitoring.id, "running")
+
+
+class TestCreatedByUserIdPersistence:
+    """start_session must persist created_by_user_id for creator traceability.
+
+    This is a traceability field only. Ownership/authorization continues to be
+    derived from Greenhouse.owner_user_id and is not affected by this field.
+    """
+
+    def _make_user(self, db_session, email: str) -> int:
+        from src.infrastructure.persistence.models import UserModel
+
+        user = UserModel(
+            full_name="Operario Test",
+            email=email,
+            password_hash="x",
+        )
+        db_session.add(user)
+        db_session.commit()
+        return user.id
+
+    def _build_service(self, db_session):
+        from unittest.mock import MagicMock
+
+        from src.application.services.monitoring_service import MonitoringService
+        from src.infrastructure.persistence.repositories.sql_snapshot_repository import (
+            SqlSnapshotRepository,
+        )
+        from src.infrastructure.persistence.repositories.sql_inspection_result_repository import (
+            SqlInspectionResultRepository,
+        )
+        from src.infrastructure.persistence.repositories.sql_monitoring_metrics_repository import (
+            SqlMonitoringMetricsRepository,
+        )
+
+        registry = MagicMock()
+        # Guard methods must be falsy so start_session proceeds to create the
+        # entity. reserve_capture must not be exactly False (only an explicit
+        # False rejects the start).
+        registry.has_live_worker_for_module.return_value = False
+        registry.reserve_capture.return_value = True
+        registry.cleanup_dead.return_value = None
+
+        return MonitoringService(
+            monitoring_repo=SqlMonitoringRepository(db_session),
+            snapshot_repo=SqlSnapshotRepository(db_session),
+            inspection_result_repo=SqlInspectionResultRepository(db_session),
+            metrics_repo=SqlMonitoringMetricsRepository(db_session),
+            module_repo=SqlModuleRepository(db_session),
+            runtime_registry=registry,
+        )
+
+    def test_start_session_persists_created_by_user_id(self, db_session, monkeypatch):
+        from src.application.services.monitoring_service import MonitoringService
+
+        user_id = self._make_user(db_session, "creator@test.local")
+
+        gh_repo = SqlGreenhouseRepository(db_session)
+        mod_repo = SqlModuleRepository(db_session)
+        gh = gh_repo.create(Greenhouse(name="GH Creator", owner_user_id=user_id))
+        module = mod_repo.create(gh.id, Module(greenhouse_id=gh.id, name="Mod Creator"))
+
+        service = self._build_service(db_session)
+        # Do not spawn a real capture worker/thread; the field is set before this.
+        monkeypatch.setattr(
+            MonitoringService, "_start_capture_first",
+            lambda self, monitoring, frame_source, db_session, log_service: None,
+        )
+
+        monitoring = service.start_session(
+            module_id=module.id,
+            width_m=1.0,
+            length_m=1.0,
+            notes=None,
+            frame_source=object(),
+            db_session=db_session,
+            created_by_user_id=user_id,
+        )
+
+        assert monitoring.created_by_user_id == user_id
+
+        # Re-read from persistence to confirm it was stored, not just returned.
+        persisted = SqlMonitoringRepository(db_session).get_by_id(monitoring.id)
+        assert persisted.created_by_user_id == user_id
+
+    def test_ownership_isolation_still_holds(self, db_session):
+        """Greenhouse.owner_user_id isolation is independent of created_by_user_id."""
+        owner_id = self._make_user(db_session, "owner@test.local")
+        other_id = self._make_user(db_session, "other@test.local")
+
+        gh_repo = SqlGreenhouseRepository(db_session)
+        gh = gh_repo.create(Greenhouse(name="GH Owned", owner_user_id=owner_id))
+
+        # The owner can fetch their greenhouse; another user cannot.
+        assert gh_repo.get_by_id_for_owner(gh.id, owner_id) is not None
+        assert gh_repo.get_by_id_for_owner(gh.id, other_id) is None
+        assert [g.id for g in gh_repo.get_all_by_owner(owner_id)] == [gh.id]
+        assert gh_repo.get_all_by_owner(other_id) == []

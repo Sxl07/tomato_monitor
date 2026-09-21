@@ -88,6 +88,13 @@ class ReportMetrics:
     pct_unhealthy: float
     maturity_stages: dict[str, float]  # stage_name → percentage
     snapshots_with_detections: int
+    # Maturity coverage (Case A/B/C rendering). The six USDA percentages above
+    # are computed over the COVERED subset only; these fields expose how many of
+    # the detected tomatoes had an estimable maturity so the UI can communicate
+    # non-estimable maturity WITHOUT adding a seventh persisted category.
+    maturity_covered: int = 0
+    maturity_uncovered: int = 0
+    pct_maturity_covered: float = 0.0
 
 
 @dataclass
@@ -362,7 +369,9 @@ def validate_dimensions(
     return (True, None)
 
 
-def build_report_metrics(metrics: object) -> ReportMetrics:
+def build_report_metrics(
+    metrics: object, maturity_covered: Optional[int] = None
+) -> ReportMetrics:
     """Build context for the monitoring report metric cards.
 
     Maps MonitoringMetricsModel fields to a ReportMetrics dataclass,
@@ -371,6 +380,11 @@ def build_report_metrics(metrics: object) -> ReportMetrics:
     Args:
         metrics: A MonitoringMetricsModel instance with all percentage
             and count fields.
+        maturity_covered: Number of detected tomatoes with an estimable
+            (non-NULL) maturity stage. When None, coverage is inferred from
+            the six USDA percentages: if all are zero and there are tomatoes,
+            coverage is 0. This is a display-only value; it does NOT change the
+            persisted six-stage distribution semantics.
 
     Returns:
         ReportMetrics dataclass with all fields mapped directly.
@@ -384,14 +398,31 @@ def build_report_metrics(metrics: object) -> ReportMetrics:
         "red": metrics.pct_red,
     }
 
+    total = metrics.total_tomatoes
+
+    if maturity_covered is None:
+        # Fall back to inferring presence of coverage from the percentages.
+        # We can only distinguish "some coverage" from "none"; without a count
+        # we treat any non-zero distribution as full coverage.
+        has_any_stage = any(v > 0 for v in maturity_stages.values())
+        covered = total if (has_any_stage and total > 0) else 0
+    else:
+        covered = max(0, min(int(maturity_covered), total))
+
+    uncovered = max(0, total - covered)
+    pct_covered = (covered / total * 100.0) if total > 0 else 0.0
+
     return ReportMetrics(
-        total_tomatoes=metrics.total_tomatoes,
+        total_tomatoes=total,
         healthy_count=metrics.healthy_count,
         unhealthy_count=metrics.unhealthy_count,
         pct_healthy=metrics.pct_healthy,
         pct_unhealthy=metrics.pct_unhealthy,
         maturity_stages=maturity_stages,
         snapshots_with_detections=metrics.snapshots_with_detections,
+        maturity_covered=covered,
+        maturity_uncovered=uncovered,
+        pct_maturity_covered=pct_covered,
     )
 
 
