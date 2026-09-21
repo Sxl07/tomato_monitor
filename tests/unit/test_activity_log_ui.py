@@ -65,6 +65,26 @@ def _mock_module(module_id=1, gh_id=1):
     return m
 
 
+def _owned_gh_repo(gh_id=1, owner_user_id=1):
+    """Greenhouse repo mock honoring the productive ownership contract.
+
+    The routes resolve module ownership via module -> greenhouse -> owner using
+    ``get_by_id_for_owner(greenhouse_id, user.id)``. This mock returns the
+    greenhouse only for the matching owner (explicit ownership, not truthiness),
+    so the authenticated fixture user (id=1) owns the module's greenhouse.
+    """
+    gh = SimpleNamespace(id=gh_id, owner_user_id=owner_user_id, name="Invernadero Test")
+
+    def _get_by_id_for_owner(greenhouse_id, uid):
+        if uid == owner_user_id and greenhouse_id == gh_id:
+            return gh
+        return None
+
+    repo = MagicMock()
+    repo.get_by_id_for_owner.side_effect = _get_by_id_for_owner
+    return repo
+
+
 def _mock_activity_types():
     types = []
     at1 = ActivityType(code="riego", name="Riego", category="mantenimiento",
@@ -95,6 +115,7 @@ class TestActivityFormGet:
         mock_type_repo.list_active.return_value = _mock_activity_types()
 
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=mock_type_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/modulos/1/actividades/registrar")
@@ -114,6 +135,7 @@ class TestActivityFormGet:
         mock_type_repo.list_active.return_value = _mock_activity_types()
 
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=mock_type_repo):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/modulos/1/actividades/registrar")
@@ -166,6 +188,7 @@ class TestActivityFormPost:
         mock_log_repo.create.side_effect = _create
 
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=mock_type_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=mock_log_repo):
             client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
@@ -198,6 +221,7 @@ class TestActivityFormPost:
         mock_log_repo = MagicMock()
 
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=mock_type_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=mock_log_repo):
             client = TestClient(app, raise_server_exceptions=False)
@@ -230,6 +254,7 @@ class TestActivityFormPost:
         mock_log_repo = MagicMock()
 
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=mock_type_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=mock_log_repo):
             client = TestClient(app, raise_server_exceptions=False)
@@ -270,6 +295,7 @@ class TestActivityFormPost:
         mock_log_repo.create.side_effect = _create
 
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=mock_type_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=mock_log_repo):
             client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
@@ -325,6 +351,7 @@ class TestActivityFormPost:
         mock_log_repo.create.side_effect = _create
 
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=mock_type_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=mock_log_repo):
             client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
@@ -365,6 +392,7 @@ class TestActivityFormPost:
         mock_log_repo = MagicMock()
 
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=mock_type_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=mock_log_repo):
             client = TestClient(app, raise_server_exceptions=False)
@@ -417,6 +445,7 @@ class TestActivityListGet:
         mock_log_repo.list_by_module.return_value = [log]
 
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=mock_type_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=mock_log_repo):
             client = TestClient(app, raise_server_exceptions=False)
@@ -439,6 +468,7 @@ class TestActivityListGet:
         mock_log_repo.list_by_module.return_value = []
 
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()), \
              patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=mock_type_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=mock_log_repo):
             client = TestClient(app, raise_server_exceptions=False)
@@ -474,6 +504,7 @@ class TestModuleDetailActivityLinks:
         mock_activity_type_repo.list_all.return_value = []
 
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()), \
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=mock_monitoring_repo), \
              patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=mock_metrics_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=mock_activity_log_repo), \

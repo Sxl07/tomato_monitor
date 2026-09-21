@@ -136,13 +136,16 @@ class TestMonitoringStartBugCondition:
         mock_frame_source = MagicMock()
 
         with patch("app.routes.agricultural_ui.get_module_repository") as mock_get_module_repo, \
+             patch("app.routes.agricultural_ui._module_owned_by_user", return_value=mock_module), \
              patch("app.routes.agricultural_ui.get_monitoring_service") as mock_get_monitoring_svc, \
              patch("src.application.services.frame_source_factory.create_frame_source") as mock_create_fs, \
              patch("app.routes.agricultural_ui.ModelService") as mock_model_svc_cls, \
              patch("app.dependencies.get_log_service") as mock_get_log_svc, \
              patch("app.routes.agricultural_ui.DETECTION_MODEL_PATH", Path("/fake/model.pth")):
 
-            # Configure mocks
+            # Configure mocks. Ownership resolves via the mocked helper (module
+            # -> greenhouse -> owner); this test validates delegation, not
+            # ownership (covered by test_route_owner_isolation).
             mock_repo = MagicMock()
             mock_repo.get_by_id.return_value = mock_module
             mock_get_module_repo.return_value = mock_repo
@@ -198,7 +201,8 @@ class TestMonitoringAbortBugCondition:
         mock_monitoring.module_id = 1
         mock_monitoring_service.abort_session.return_value = mock_monitoring
 
-        with patch("app.routes.agricultural_ui.get_monitoring_service") as mock_get_svc:
+        with patch("app.routes.agricultural_ui.get_monitoring_service") as mock_get_svc, \
+             patch("app.routes.agricultural_ui._monitoring_owned_by_user", return_value=mock_monitoring):
             mock_get_svc.return_value = mock_monitoring_service
 
             response = test_client.post("/monitoreos/5/abortar")
@@ -230,7 +234,8 @@ class TestMonitoringAbortBugCondition:
         mock_monitoring.module_id = 1
         mock_monitoring_service.abort_session.return_value = mock_monitoring
 
-        with patch("app.routes.agricultural_ui.get_monitoring_service") as mock_get_svc:
+        with patch("app.routes.agricultural_ui.get_monitoring_service") as mock_get_svc, \
+             patch("app.routes.agricultural_ui._monitoring_owned_by_user", return_value=mock_monitoring):
             mock_get_svc.return_value = mock_monitoring_service
 
             response = test_client.post(f"/monitoreos/{monitoring_id}/abortar")

@@ -42,6 +42,27 @@ def client(app):
     return TestClient(app, raise_server_exceptions=False, follow_redirects=False)
 
 
+@pytest.fixture(autouse=True)
+def _owned_monitoring():
+    """Make the ownership check resolve for the authenticated test user.
+
+    These tests validate the finalize-capture delegation, not ownership. The
+    route first calls ``_monitoring_owned_by_user`` (module -> greenhouse ->
+    owner). We mock that helper to return the requested monitoring so the route
+    proceeds to the behavior under test. Ownership itself is covered by
+    ``test_route_owner_isolation.py``.
+    """
+    from types import SimpleNamespace
+
+    def _owned(request, monitoring_id, user):
+        return SimpleNamespace(id=monitoring_id, module_id=1, status="analyzing")
+
+    with patch(
+        "app.routes.agricultural_ui._monitoring_owned_by_user", side_effect=_owned
+    ):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # 1. POST success — analyzing
 # ---------------------------------------------------------------------------

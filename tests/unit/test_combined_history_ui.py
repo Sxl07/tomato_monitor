@@ -127,7 +127,16 @@ class TestModuleDetailRoute:
         mock_activity_type_repo = MagicMock()
         mock_activity_type_repo.list_all.return_value = [at_obj]
 
+        # Ownership: the module's greenhouse (id=1) belongs to the test user
+        # (id=1). Routes resolve ownership via get_by_id_for_owner.
+        gh = SimpleNamespace(id=1, owner_user_id=1, name="Invernadero Test")
+        mock_greenhouse_repo = MagicMock()
+        mock_greenhouse_repo.get_by_id_for_owner.side_effect = (
+            lambda gid, uid: gh if (gid == 1 and uid == 1) else None
+        )
+
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=mock_greenhouse_repo), \
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=mock_monitoring_repo), \
              patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=mock_metrics_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=mock_activity_log_repo), \
@@ -206,8 +215,15 @@ class TestCombinedHistoryLinks:
         self._mock_activity_log_repo.list_by_module.return_value = []
         self._mock_activity_type_repo = MagicMock()
         self._mock_activity_type_repo.list_all.return_value = []
+        # Ownership: greenhouse (id=1) belongs to the test user (id=1).
+        gh = SimpleNamespace(id=1, owner_user_id=1, name="Invernadero Test")
+        self._mock_greenhouse_repo = MagicMock()
+        self._mock_greenhouse_repo.get_by_id_for_owner.side_effect = (
+            lambda gid, uid: gh if (gid == 1 and uid == 1) else None
+        )
         self._patches = [
             patch("app.routes.agricultural_ui.get_module_repository", return_value=self._mock_module_repo),
+            patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=self._mock_greenhouse_repo),
             patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=self._mock_metrics_repo),
             patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=self._mock_activity_log_repo),
             patch("app.routes.agricultural_ui.get_activity_type_repository", return_value=self._mock_activity_type_repo),

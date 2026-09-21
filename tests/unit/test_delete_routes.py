@@ -129,6 +129,30 @@ class FakeModuleRepo:
         return self._module
 
 
+class FakeGreenhouseRepo:
+    """Ownership repo fake: returns the greenhouse only for the owning user.
+
+    Mirrors the productive SqlGreenhouseRepository.get_by_id_for_owner contract
+    so the route's ownership chain (module -> greenhouse -> owner) resolves for
+    the authenticated test user. Ownership is explicit, not truthiness-based.
+    """
+
+    def __init__(self, greenhouse: object, owner_user_id: int = 1):
+        self._greenhouse = greenhouse
+        self._owner_user_id = owner_user_id
+
+    def get_by_id_for_owner(self, greenhouse_id: int, owner_user_id: int):
+        if owner_user_id != self._owner_user_id:
+            return None
+        if getattr(self._greenhouse, "id", None) != greenhouse_id:
+            return None
+        return self._greenhouse
+
+
+def _owned_greenhouse(greenhouse_id: int = 3, owner_user_id: int = 1):
+    return SimpleNamespace(id=greenhouse_id, owner_user_id=owner_user_id, name="Invernadero 1")
+
+
 def _fake_monitoring(monitoring_id: int = 10, module_id: int = 5, status: str = "completed"):
     return SimpleNamespace(
         id=monitoring_id,
@@ -161,9 +185,15 @@ class TestMonitoringDeleteDelegation:
     def test_success_delegates_once_and_redirects_to_module(self):
         fake_service = FakeDeletionService()
         monitoring = _fake_monitoring(monitoring_id=10, module_id=5)
+        module = _fake_module(module_id=5, greenhouse_id=3)
         with patch(f"{MODULE}.get_deletion_service", return_value=fake_service), patch(
             f"{MODULE}.get_monitoring_repository",
             return_value=FakeMonitoringRepo(monitoring),
+        ), patch(
+            f"{MODULE}.get_module_repository", return_value=FakeModuleRepo(module)
+        ), patch(
+            f"{MODULE}.get_greenhouse_repository",
+            return_value=FakeGreenhouseRepo(_owned_greenhouse(3)),
         ):
             with _client_no_redirect() as client:
                 resp = client.post("/monitoreos/10/eliminar")
@@ -196,6 +226,9 @@ class TestModuleDeleteDelegation:
         with patch(f"{MODULE}.get_deletion_service", return_value=fake_service), patch(
             f"{MODULE}.get_module_repository",
             return_value=FakeModuleRepo(module),
+        ), patch(
+            f"{MODULE}.get_greenhouse_repository",
+            return_value=FakeGreenhouseRepo(_owned_greenhouse(3)),
         ):
             with _client_no_redirect() as client:
                 resp = client.post("/modulos/5/eliminar")
@@ -227,7 +260,10 @@ class TestModuleDeleteDelegation:
 class TestGreenhouseDeleteDelegation:
     def test_success_delegates_once_and_redirects_to_greenhouse_list(self):
         fake_service = FakeDeletionService()
-        with patch(f"{MODULE}.get_deletion_service", return_value=fake_service):
+        with patch(f"{MODULE}.get_deletion_service", return_value=fake_service), patch(
+            f"{MODULE}.get_greenhouse_repository",
+            return_value=FakeGreenhouseRepo(_owned_greenhouse(7)),
+        ):
             with _client_no_redirect() as client:
                 resp = client.post("/invernaderos/7/eliminar")
 
@@ -255,9 +291,15 @@ class TestMonitoringDeleteRejection:
     def test_rejection_redirects_back_to_report_with_error(self, error: DeletionError):
         fake_service = FakeDeletionService(raises=error)
         monitoring = _fake_monitoring(monitoring_id=10, module_id=5)
+        module = _fake_module(module_id=5, greenhouse_id=3)
         with patch(f"{MODULE}.get_deletion_service", return_value=fake_service), patch(
             f"{MODULE}.get_monitoring_repository",
             return_value=FakeMonitoringRepo(monitoring),
+        ), patch(
+            f"{MODULE}.get_module_repository", return_value=FakeModuleRepo(module)
+        ), patch(
+            f"{MODULE}.get_greenhouse_repository",
+            return_value=FakeGreenhouseRepo(_owned_greenhouse(3)),
         ):
             with _client_no_redirect() as client:
                 resp = client.post("/monitoreos/10/eliminar")
@@ -287,6 +329,9 @@ class TestModuleDeleteRejection:
         with patch(f"{MODULE}.get_deletion_service", return_value=fake_service), patch(
             f"{MODULE}.get_module_repository",
             return_value=FakeModuleRepo(module),
+        ), patch(
+            f"{MODULE}.get_greenhouse_repository",
+            return_value=FakeGreenhouseRepo(_owned_greenhouse(3)),
         ):
             with _client_no_redirect() as client:
                 resp = client.post("/modulos/5/eliminar")
@@ -310,7 +355,10 @@ class TestGreenhouseDeleteRejection:
     )
     def test_rejection_redirects_back_to_greenhouse_with_error(self, error: DeletionError):
         fake_service = FakeDeletionService(raises=error)
-        with patch(f"{MODULE}.get_deletion_service", return_value=fake_service):
+        with patch(f"{MODULE}.get_deletion_service", return_value=fake_service), patch(
+            f"{MODULE}.get_greenhouse_repository",
+            return_value=FakeGreenhouseRepo(_owned_greenhouse(7)),
+        ):
             with _client_no_redirect() as client:
                 resp = client.post("/invernaderos/7/eliminar")
 
@@ -347,6 +395,9 @@ class TestVisibleDeleteAction:
         ), patch(
             f"{MODULE}.get_module_repository", return_value=FakeModuleRepo(module)
         ), patch(
+            f"{MODULE}.get_greenhouse_repository",
+            return_value=FakeGreenhouseRepo(_owned_greenhouse(3)),
+        ), patch(
             f"{MODULE}.get_monitoring_metrics_repository", return_value=empty_metrics_repo
         ), patch(
             f"{MODULE}.get_snapshot_repository", return_value=empty_snapshot_repo
@@ -375,6 +426,9 @@ class TestVisibleDeleteAction:
             return_value=FakeMonitoringRepo(monitoring),
         ), patch(
             f"{MODULE}.get_module_repository", return_value=FakeModuleRepo(module)
+        ), patch(
+            f"{MODULE}.get_greenhouse_repository",
+            return_value=FakeGreenhouseRepo(_owned_greenhouse(3)),
         ), patch(
             f"{MODULE}.get_monitoring_metrics_repository", return_value=empty_metrics_repo
         ), patch(

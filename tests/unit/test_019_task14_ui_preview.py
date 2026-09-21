@@ -60,6 +60,7 @@ class TestStartActionNoFileSelection:
 
         mock_module = MagicMock(id=1, name="Módulo Test")
         with patch("app.routes.agricultural_ui.get_module_repository") as m_repo, \
+             patch("app.routes.agricultural_ui._module_owned_by_user", return_value=mock_module), \
              patch("app.routes.agricultural_ui.ModelService") as m_model:
             repo = MagicMock()
             repo.get_by_id.return_value = mock_module
@@ -88,14 +89,16 @@ class TestStartActionNoFileSelection:
             captured.update(kwargs)
             return MagicMock()
 
+        owned_module = MagicMock(id=1, name="M")
         with patch("app.routes.agricultural_ui.get_module_repository") as m_repo, \
+             patch("app.routes.agricultural_ui._module_owned_by_user", return_value=owned_module), \
              patch("app.routes.agricultural_ui.get_monitoring_service") as m_svc, \
              patch("src.application.services.frame_source_factory.create_frame_source",
                    side_effect=_fake_create_fs), \
              patch("app.routes.agricultural_ui.ModelService") as m_model, \
              patch("app.dependencies.get_log_service", return_value=MagicMock()):
             repo = MagicMock()
-            repo.get_by_id.return_value = MagicMock(id=1, name="M")
+            repo.get_by_id.return_value = owned_module
             m_repo.return_value = repo
             svc = MagicMock()
             svc.start_session.return_value = MagicMock(id=42)
@@ -143,7 +146,9 @@ class TestStartActionNoFileSelection:
         profile.recording_target_fps = 5.0
         profile.camera_fps = 30
 
+        owned_module = MagicMock(id=1, name="M")
         with patch("app.routes.agricultural_ui.get_module_repository") as m_repo, \
+             patch("app.routes.agricultural_ui._module_owned_by_user", return_value=owned_module), \
              patch("app.routes.agricultural_ui.get_monitoring_service") as m_svc, \
              patch("src.application.services.frame_source_factory.create_frame_source",
                    side_effect=_fake_create_fs), \
@@ -151,7 +156,7 @@ class TestStartActionNoFileSelection:
              patch("app.dependencies.get_log_service", return_value=MagicMock()), \
              patch("src.infrastructure.config.settings.ACTIVE_PROFILE", profile):
             repo = MagicMock()
-            repo.get_by_id.return_value = MagicMock(id=1, name="M")
+            repo.get_by_id.return_value = owned_module
             m_repo.return_value = repo
             svc = MagicMock()
             svc.start_session.return_value = MagicMock(id=7)
