@@ -60,6 +60,14 @@ class TestLoginPage:
         assert response.status_code == 200
         assert "Iniciar sesión" in response.text
 
+    def test_login_page_shows_agriscope_branding(self, client):
+        response = client.get("/login", follow_redirects=False)
+        assert response.status_code == 200
+        # Product branding appears in the <title> and the main heading.
+        assert "AgriScope" in response.text
+        assert "<title>Iniciar sesión — AgriScope</title>" in response.text
+        assert "Tomato Monitor" not in response.text
+
     def test_login_page_redirects_when_authenticated(self, auth_client):
         response = auth_client.get("/login", follow_redirects=False)
         assert response.status_code == 302
@@ -220,6 +228,15 @@ class TestGetRegistroConfigured:
         assert 'name="email"' in response.text
         assert 'name="password"' in response.text
         assert 'name="confirm_password"' in response.text
+
+    def test_shows_agriscope_branding(self, client):
+        with patch("app.routes.auth.get_supabase_config", return_value="config-object"):
+            response = client.get("/registro", follow_redirects=False)
+        assert response.status_code == 200
+        # Product branding appears in the <title> and the main heading.
+        assert "AgriScope" in response.text
+        assert "<title>Crear cuenta — AgriScope</title>" in response.text
+        assert "Tomato Monitor" not in response.text
 
 
 class TestGetRegistroNoConfig:

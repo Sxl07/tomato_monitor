@@ -621,6 +621,19 @@ img {
     background-color: var(--maturity-red);
 }
 
+/* UI-only representation of non-estimable maturity (Case A). This is NOT a
+   persisted USDA category — it only renders a gray bar when no detected tomato
+   had an estimable maturity. */
+.maturity-bar-segment--unknown {
+    background-color: #9E9E9E;
+}
+
+.maturity-coverage-note {
+    margin-top: 8px;
+    font-size: var(--font-size-small);
+    color: var(--color-text-secondary);
+}
+
 .maturity-legend {
     display: flex;
     flex-wrap: wrap;

@@ -255,6 +255,7 @@ class MonitoringService:
         frame_source: FrameSource,
         db_session: Session,
         log_service: Optional[LogService] = None,
+        created_by_user_id: Optional[int] = None,
     ) -> Monitoring:
         """Create a monitoring session and spawn the background capture worker.
 
@@ -266,6 +267,10 @@ class MonitoringService:
             frame_source: Camera or video frame source.
             db_session: SQLAlchemy session for the worker to commit results.
             log_service: Optional LogService for emitting activity log entries.
+            created_by_user_id: Optional id of the authenticated operator who
+                created the monitoring. Recorded for traceability of the creator
+                only; it does not participate in ownership/authorization, which
+                is derived from Greenhouse.owner_user_id.
 
         Returns:
             The created Monitoring entity with status 'initializing'.
@@ -332,6 +337,7 @@ class MonitoringService:
                 width_m=width_m,
                 length_m=length_m,
                 notes=notes,
+                created_by_user_id=created_by_user_id,
             )
             monitoring = self._monitoring_repo.create(module_id, monitoring)
 

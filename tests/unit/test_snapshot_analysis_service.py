@@ -707,6 +707,83 @@ class TestSkipMaturity:
 
 
 # ---------------------------------------------------------------------------
+# Regression: non-estimable maturity ("unknown") normalized to NULL
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownMaturityNormalizedToNull:
+    """usda_stage="unknown" must persist as None and not count for coverage."""
+
+    def test_unknown_stage_persisted_as_null(self):
+        snapshots = [_make_snapshot(id=1, monitoring_id=1, frame_index=0)]
+        results = [
+            _make_frame_result([_make_detection(
+                track_id=1, maturity_stage="unknown", maturity_percent=0.0
+            )]),
+        ]
+
+        service, _, inspection_repo, _, _, _ = _build_service(
+            snapshots=snapshots, process_frame_results=results,
+        )
+
+        dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
+        with patch("cv2.imread", return_value=dummy_img), \
+             patch("cv2.imwrite", return_value=True), \
+             patch("os.makedirs"):
+            result = service.run()
+
+        best = result.best_results_by_track[1]
+        assert best.maturity_stage is None
+        assert best.maturity_percent is None
+        _, persisted = inspection_repo.created[0]
+        assert persisted.maturity_stage is None
+        assert persisted.maturity_percent is None
+
+    def test_unknown_stage_excluded_from_maturity_counts(self):
+        snapshots = [_make_snapshot(id=1, monitoring_id=1, frame_index=0)]
+        results = [
+            _make_frame_result([_make_detection(
+                track_id=1, maturity_stage="unknown", maturity_percent=0.0
+            )]),
+        ]
+
+        service, _, _, _, _, _ = _build_service(
+            snapshots=snapshots, process_frame_results=results,
+        )
+
+        dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
+        with patch("cv2.imread", return_value=dummy_img), \
+             patch("cv2.imwrite", return_value=True), \
+             patch("os.makedirs"):
+            result = service.run()
+
+        # No maturity coverage attributed to an unknown estimate.
+        assert sum(result.maturity_counts.values()) == 0
+
+    def test_valid_stage_still_persisted(self):
+        snapshots = [_make_snapshot(id=1, monitoring_id=1, frame_index=0)]
+        results = [
+            _make_frame_result([_make_detection(
+                track_id=1, maturity_stage="red", maturity_percent=100.0
+            )]),
+        ]
+
+        service, _, inspection_repo, _, _, _ = _build_service(
+            snapshots=snapshots, process_frame_results=results,
+        )
+
+        dummy_img = np.zeros((480, 640, 3), dtype=np.uint8)
+        with patch("cv2.imread", return_value=dummy_img), \
+             patch("cv2.imwrite", return_value=True), \
+             patch("os.makedirs"):
+            service.run()
+
+        _, persisted = inspection_repo.created[0]
+        assert persisted.maturity_stage == "red"
+        assert persisted.maturity_percent == 100.0
+
+
+# ---------------------------------------------------------------------------
 # Test 14: Progress updates after each snapshot
 # ---------------------------------------------------------------------------
 

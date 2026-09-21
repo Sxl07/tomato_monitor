@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>{{ title or "Monitor de Tomates" }}</title>
+    <title>{{ title or "AgriScope" }}</title>
     <link rel="stylesheet" href="/static/css/agricultural.css">
 </head>
 <body>
@@ -13,7 +13,7 @@
             {% if show_back %}
             <a href="{{ back_url }}" class="back-button" aria-label="Volver">←</a>
             {% endif %}
-            <h1 class="header-title">{% block header_title %}Monitor de Tomates{% endblock %}</h1>
+            <h1 class="header-title">{% block header_title %}AgriScope{% endblock %}</h1>
             <div class="header-actions">
                 {% block header_actions %}{% endblock %}
                 <form method="post" action="/logout" class="logout-form">
