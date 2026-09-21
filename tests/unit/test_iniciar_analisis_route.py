@@ -45,6 +45,24 @@ def client():
     return TestClient(app, raise_server_exceptions=False)
 
 
+@pytest.fixture(autouse=True)
+def _owned_monitoring():
+    """Resolve ownership for the authenticated test user.
+
+    These tests validate the iniciar-analisis delegation, not ownership. The
+    route first calls ``_monitoring_owned_by_user`` (module -> greenhouse ->
+    owner); mock it to return the requested monitoring so the route proceeds to
+    the behavior under test. Ownership is covered by test_route_owner_isolation.
+    """
+    def _owned(request, monitoring_id, user):
+        return SimpleNamespace(id=monitoring_id, module_id=1, status="ready_for_analysis")
+
+    with patch(
+        "app.routes.agricultural_ui._monitoring_owned_by_user", side_effect=_owned
+    ):
+        yield
+
+
 def test_missing_confirmation_field_is_not_422(client):
     """Absent field must NOT trigger FastAPI 422; the app handles it (303 redirect)."""
     svc = MagicMock()

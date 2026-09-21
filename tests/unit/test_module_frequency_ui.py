@@ -72,6 +72,22 @@ def _mock_module(module_id=1, gh_id=1, frequency=14):
     return m
 
 
+def _owned_gh_repo(gh_id=1, owner_user_id=1):
+    """Greenhouse repo mock honoring the productive ownership contract.
+
+    Routes resolve module ownership via module -> greenhouse -> owner using
+    ``get_by_id_for_owner(greenhouse_id, user.id)``. Returns the greenhouse only
+    for the matching owner (explicit ownership, not truthiness).
+    """
+    gh = _mock_greenhouse(gh_id)
+    gh.owner_user_id = owner_user_id
+    repo = MagicMock()
+    repo.get_by_id_for_owner.side_effect = (
+        lambda gid, uid: gh if (gid == gh_id and uid == owner_user_id) else None
+    )
+    return repo
+
+
 # ---------------------------------------------------------------------------
 # Form field presence tests
 # ---------------------------------------------------------------------------
@@ -82,8 +98,9 @@ class TestModuleFormFrequencyField:
 
     def test_create_form_contains_frequency_field(self):
         """GET module create form includes monitoring_frequency_days input."""
-        mock_gh_repo = MagicMock()
-        mock_gh_repo.get_by_id.return_value = _mock_greenhouse()
+        # Ownership resolves through get_by_id_for_owner(gh_id, user.id), the
+        # method the create route actually uses (explicit, not truthiness).
+        mock_gh_repo = _owned_gh_repo()
 
         with patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=mock_gh_repo):
             client = TestClient(app, raise_server_exceptions=False)
@@ -95,8 +112,9 @@ class TestModuleFormFrequencyField:
 
     def test_create_form_shows_default_7(self):
         """Create form defaults monitoring_frequency_days to 7."""
-        mock_gh_repo = MagicMock()
-        mock_gh_repo.get_by_id.return_value = _mock_greenhouse()
+        # Ownership resolves through get_by_id_for_owner(gh_id, user.id), the
+        # method the create route actually uses (explicit, not truthiness).
+        mock_gh_repo = _owned_gh_repo()
 
         with patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=mock_gh_repo):
             client = TestClient(app, raise_server_exceptions=False)
@@ -111,7 +129,8 @@ class TestModuleFormFrequencyField:
         mock_module_repo = MagicMock()
         mock_module_repo.get_by_id.return_value = _mock_module(frequency=14)
 
-        with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo):
+        with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()):
             client = TestClient(app, raise_server_exceptions=False)
             response = client.get("/modulos/1/editar")
 
@@ -129,8 +148,9 @@ class TestModuleFormFrequencySubmission:
 
     def test_create_with_valid_frequency(self):
         """POST create with monitoring_frequency_days=14 succeeds."""
-        mock_gh_repo = MagicMock()
-        mock_gh_repo.get_by_id.return_value = _mock_greenhouse()
+        # Ownership resolves through get_by_id_for_owner(gh_id, user.id), the
+        # method the create route actually uses (explicit, not truthiness).
+        mock_gh_repo = _owned_gh_repo()
         mock_module_repo = MagicMock()
         created_module = _mock_module(module_id=5, frequency=14)
         mock_module_repo.create.return_value = created_module
@@ -157,8 +177,9 @@ class TestModuleFormFrequencySubmission:
 
     def test_create_with_zero_frequency_shows_error(self):
         """POST create with monitoring_frequency_days=0 returns template with error."""
-        mock_gh_repo = MagicMock()
-        mock_gh_repo.get_by_id.return_value = _mock_greenhouse()
+        # Ownership resolves through get_by_id_for_owner(gh_id, user.id), the
+        # method the create route actually uses (explicit, not truthiness).
+        mock_gh_repo = _owned_gh_repo()
 
         with patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=mock_gh_repo):
             client = TestClient(app, raise_server_exceptions=False)
@@ -178,8 +199,9 @@ class TestModuleFormFrequencySubmission:
 
     def test_create_with_negative_frequency_shows_error(self):
         """POST create with monitoring_frequency_days=-5 returns error."""
-        mock_gh_repo = MagicMock()
-        mock_gh_repo.get_by_id.return_value = _mock_greenhouse()
+        # Ownership resolves through get_by_id_for_owner(gh_id, user.id), the
+        # method the create route actually uses (explicit, not truthiness).
+        mock_gh_repo = _owned_gh_repo()
 
         with patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=mock_gh_repo):
             client = TestClient(app, raise_server_exceptions=False)
@@ -199,8 +221,9 @@ class TestModuleFormFrequencySubmission:
 
     def test_create_with_non_numeric_frequency_shows_error(self):
         """POST create with monitoring_frequency_days=abc returns error."""
-        mock_gh_repo = MagicMock()
-        mock_gh_repo.get_by_id.return_value = _mock_greenhouse()
+        # Ownership resolves through get_by_id_for_owner(gh_id, user.id), the
+        # method the create route actually uses (explicit, not truthiness).
+        mock_gh_repo = _owned_gh_repo()
 
         with patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=mock_gh_repo):
             client = TestClient(app, raise_server_exceptions=False)
@@ -225,7 +248,8 @@ class TestModuleFormFrequencySubmission:
         mock_module_repo.get_by_id.return_value = existing
         mock_module_repo.update.return_value = existing
 
-        with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo):
+        with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()):
             client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
             response = client.post(
                 "/modulos/1/editar",
@@ -259,7 +283,8 @@ class TestGreenhouseListAlerts:
 
         mock_gh_repo = MagicMock()
         gh = _mock_greenhouse()
-        mock_gh_repo.get_all.return_value = [gh]
+        # The list route scopes greenhouses to the authenticated owner.
+        mock_gh_repo.get_all_by_owner.return_value = [gh]
 
         mock_module_repo = MagicMock()
         module = _mock_module(frequency=7)
@@ -285,7 +310,8 @@ class TestGreenhouseListAlerts:
     def test_greenhouse_list_no_unsupported_metrics(self):
         """Greenhouse list does not show unsupported agronomic metrics."""
         mock_gh_repo = MagicMock()
-        mock_gh_repo.get_all.return_value = []
+        # The list route scopes greenhouses to the authenticated owner.
+        mock_gh_repo.get_all_by_owner.return_value = []
         mock_module_repo = MagicMock()
         mock_module_repo.get_by_greenhouse.return_value = []
         mock_monitoring_repo = MagicMock()
@@ -331,6 +357,7 @@ class TestModuleDetailFrequencyStatus:
         mock_activity_type_repo.list_all.return_value = []
 
         with patch("app.routes.agricultural_ui.get_module_repository", return_value=mock_module_repo), \
+             patch("app.routes.agricultural_ui.get_greenhouse_repository", return_value=_owned_gh_repo()), \
              patch("app.routes.agricultural_ui.get_monitoring_repository", return_value=mock_monitoring_repo), \
              patch("app.routes.agricultural_ui.get_monitoring_metrics_repository", return_value=mock_metrics_repo), \
              patch("app.routes.agricultural_ui.get_activity_log_repository", return_value=mock_activity_log_repo), \

@@ -493,7 +493,11 @@ class TestNonExistentMonitoringAbortPreservation:
 
         app.dependency_overrides[require_current_user_html] = _override_html
 
-        with patch("app.routes.agricultural_ui.get_monitoring_service", return_value=mock_monitoring_service):
+        # A non-existent monitoring resolves to None through the ownership check
+        # (module -> greenhouse -> owner), which is what triggers the not-found
+        # redirect in the current model.
+        with patch("app.routes.agricultural_ui.get_monitoring_service", return_value=mock_monitoring_service), \
+             patch("app.routes.agricultural_ui._monitoring_owned_by_user", return_value=None):
 
             client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
             response = client.post(f"/monitoreos/{monitoring_id}/abortar")

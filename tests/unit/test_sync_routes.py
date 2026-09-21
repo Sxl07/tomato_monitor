@@ -124,9 +124,12 @@ class TestSyncLocalTrigger:
         db_manager = app.state.db_manager
         session = db_manager.get_session()
         try:
-            # Create greenhouse and module with unique names
+            # Create greenhouse and module with unique names. The greenhouse must
+            # be owned by the authenticated user (test_user.id == 1); otherwise
+            # get_all_by_owner(user.id) correctly excludes it and there are no
+            # pending records to sync.
             gh_name = f"SyncTest GH {uuid.uuid4().hex[:8]}"
-            gh = GreenhouseModel(name=gh_name, location="Test")
+            gh = GreenhouseModel(name=gh_name, location="Test", owner_user_id=1)
             session.add(gh)
             session.flush()
 
