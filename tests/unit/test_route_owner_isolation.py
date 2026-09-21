@@ -192,6 +192,34 @@ class TestRouteOwnerIsolation:
         )
         _redirects_to_greenhouses(resp)
 
+    def test_b_cannot_open_a_monitoring_setup(self, isolation_ctx):
+        """User B cannot open the monitoring setup for user A's module."""
+        client, ids = isolation_ctx
+        resp = client.get(
+            f"/modulos/{ids['mod_a']}/monitoreo/nuevo",
+            follow_redirects=False,
+        )
+        _redirects_to_greenhouses(resp)
+
+    def test_b_cannot_finalize_a_monitoring_capture(self, isolation_ctx):
+        """User B cannot finalize the capture of user A's monitoring."""
+        client, ids = isolation_ctx
+        resp = client.post(
+            f"/monitoreos/{ids['mon_a']}/finalizar-captura",
+            follow_redirects=False,
+        )
+        _redirects_to_greenhouses(resp)
+
+    def test_b_cannot_start_analysis_for_a_monitoring(self, isolation_ctx):
+        """User B cannot start deferred analysis for user A's monitoring."""
+        client, ids = isolation_ctx
+        resp = client.post(
+            f"/monitoreos/{ids['mon_a']}/iniciar-analisis",
+            data={"power_source_confirmed": "true"},
+            follow_redirects=False,
+        )
+        _redirects_to_greenhouses(resp)
+
     def test_b_greenhouse_list_excludes_a(self, isolation_ctx):
         client, ids = isolation_ctx
         resp = client.get("/invernaderos")
