@@ -12,8 +12,8 @@ Covers cases A-J plus a profile critical-values guard:
     I. profile selection unchanged — covered by test_execution_profile.py (not duplicated).
     J. settings importable without torch/detectron2/cv2/picamera2.
 
-Critical profile values: EDGE camera resolution = 960x720, EDGE detection
-threshold = 0.475 (frozen final V6 operating point), EDGE fps stays 5. FULL
+Critical profile values: EDGE camera resolution = 960x720, active EDGE detection
+threshold = 0.60 (post-v1.0.0 presentation refinement), EDGE fps stays 5. FULL
 keeps its values, including detection threshold 0.80.
 
 Follows the existing torch-mock pattern used by test_execution_profile.py so
@@ -214,16 +214,16 @@ assert settings.FULL_PROFILE.video_first_enabled is True
 
 
 # Critical profile values: EDGE camera resolution was raised to 960x720 and the
-# EDGE detection threshold is frozen at the final V6 operating point 0.475;
+# active EDGE detection threshold is 0.60 (post-v1.0.0 refinement);
 # EDGE fps stays 5. FULL values remain unchanged (threshold 0.80).
 class TestProfileCriticalValues:
     def test_edge_critical_values(self):
-        # EDGE capture at 960x720 and detection threshold 0.475 (frozen V6);
+        # EDGE capture at 960x720 and active detection threshold 0.60;
         # fps stays 5.
         assert EDGE_PROFILE.camera_width == 960
         assert EDGE_PROFILE.camera_height == 720
         assert EDGE_PROFILE.camera_fps == 5
-        assert EDGE_PROFILE.detection_score_threshold == 0.475
+        assert EDGE_PROFILE.detection_score_threshold == 0.60
 
     def test_full_critical_values_unchanged(self):
         assert FULL_PROFILE.camera_width == 640
