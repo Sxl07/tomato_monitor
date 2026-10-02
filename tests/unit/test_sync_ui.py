@@ -378,17 +378,21 @@ class TestPortraitTouchTargets:
         assert "min-height: 48px" in response.text
 
     def test_password_controls_fit_portrait_width(self):
-        """Password controls share a row and retain touch-sized buttons."""
+        """The eye controls sit inside full-width password inputs."""
         with TestClient(app) as client:
             app.state.supabase_config = _make_supabase_config()
             response = client.get("/sincronizacion")
 
         assert response.status_code == 200
         assert response.text.count('class="password-field"') == 2
+        assert response.text.count('class="password-icon-eye"') == 2
+        assert response.text.count('class="password-icon-eye-off"') == 2
         css = Path("app/static/css/agricultural.css").read_text(encoding="utf-8")
+        assert "position: relative" in css
         assert ".password-field .form-input" in css
-        assert "min-width: 0" in css
-        assert ".password-toggle" in css
+        assert "padding-right: 56px" in css
+        assert '.password-toggle[aria-pressed="true"] .password-icon-eye-off' in css
+        assert "width: 44px" in css
 
 
 def test_remote_sync_password_cleared_only_after_success():
@@ -409,6 +413,7 @@ def test_password_visibility_script_has_no_storage():
     assert 'input.type = visible ? "text" : "password"' in source
     assert 'button.setAttribute("aria-pressed"' in source
     assert 'button.setAttribute("aria-label"' in source
+    assert "button.textContent" not in source
     for name in ("password_visibility.js", "remote_sync.js", "cloud_recovery.js"):
         script = (js_dir / name).read_text(encoding="utf-8")
         assert all(storage not in script for storage in (

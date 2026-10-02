@@ -1,4 +1,5 @@
 {% extends "base_agricultural.html" %}
+{% from "partials/password_toggle.html" import password_toggle %}
 
 {% block header_title %}Sincronización{% endblock %}
 
@@ -53,9 +54,7 @@
                             placeholder="Tu contraseña"
                             class="form-input"
                         >
-                        <button type="button" class="btn btn-secondary password-toggle"
-                                aria-controls="sync-password" aria-label="Mostrar contraseña"
-                                aria-pressed="false" data-password-toggle>Mostrar</button>
+                        {{ password_toggle("sync-password") }}
                     </div>
                     <button
                         type="button"
@@ -194,9 +193,7 @@
                             placeholder="Tu contraseña"
                             class="form-input"
                         >
-                        <button type="button" class="btn btn-secondary password-toggle"
-                                aria-controls="recovery-password" aria-label="Mostrar contraseña"
-                                aria-pressed="false" data-password-toggle>Mostrar</button>
+                        {{ password_toggle("recovery-password") }}
                     </div>
 
                     <div style="display: flex; gap: 8px;">

@@ -9,7 +9,6 @@
         button.addEventListener("click", function () {
             var visible = input.type === "password";
             input.type = visible ? "text" : "password";
-            button.textContent = visible ? "Ocultar" : "Mostrar";
             button.setAttribute("aria-label", visible ? "Ocultar contraseña" : "Mostrar contraseña");
             button.setAttribute("aria-pressed", visible ? "true" : "false");
         });

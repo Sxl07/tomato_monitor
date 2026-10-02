@@ -496,6 +496,8 @@ def test_auth_password_controls_start_masked_and_target_each_input(client):
         markup.feed(response.text)
         assert set(markup.inputs) == set(markup.toggles) == expected
         assert '/static/js/password_visibility.js' in response.text
+        assert response.text.count('class="password-icon-eye"') == len(expected)
+        assert response.text.count('class="password-icon-eye-off"') == len(expected)
         for field_id in expected:
             field = markup.inputs[field_id]
             toggle = markup.toggles[field_id]

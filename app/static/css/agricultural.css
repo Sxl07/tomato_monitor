@@ -320,22 +320,53 @@ img {
     background-color: var(--color-bg);
 }
 
-/* Password visibility controls share the existing form and button styles. */
+/* Keep the visibility control inside the input without covering text. */
 .password-field {
-    display: flex;
-    align-items: stretch;
-    gap: 8px;
+    position: relative;
+    width: 100%;
 }
 
 .password-field .form-input {
-    flex: 1;
-    min-width: 0;
+    width: 100%;
+    padding-right: 56px;
 }
 
 .password-toggle {
-    flex: none;
-    min-width: 76px;
-    padding: 10px 12px;
+    position: absolute;
+    top: 50%;
+    right: 2px;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--border-radius);
+    background: transparent;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+}
+
+.password-toggle:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -3px;
+}
+
+.password-toggle svg {
+    width: 22px;
+    height: 22px;
+    pointer-events: none;
+}
+
+.password-icon-eye-off,
+.password-toggle[aria-pressed="true"] .password-icon-eye {
+    display: none;
+}
+
+.password-toggle[aria-pressed="true"] .password-icon-eye-off {
+    display: block;
 }
 
 /* Icon button (header actions like edit, delete, add) */

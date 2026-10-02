@@ -1,3 +1,4 @@
+{% from "partials/password_toggle.html" import password_toggle %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -25,7 +26,7 @@
                 <label for="password">Contraseña</label>
                 <div class="password-field">
                     <input type="password" id="password" name="password" required autocomplete="current-password" class="form-input">
-                    <button type="button" class="btn btn-secondary password-toggle" aria-controls="password" aria-label="Mostrar contraseña" aria-pressed="false" data-password-toggle>Mostrar</button>
+                    {{ password_toggle("password") }}
                 </div>
             </div>
             <button type="submit" class="btn btn-primary btn-full" style="margin-top: 16px; width: 100%;">Iniciar sesión</button>
