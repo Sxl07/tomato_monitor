@@ -23,6 +23,7 @@ class DashboardService:
         recent_activities: list | None = None,
         export_packages: list | None = None,
         today: date | None = None,
+        alerts: list | None = None,
     ) -> dict:
         """Build dashboard context dictionary from pre-fetched data.
 
@@ -33,6 +34,7 @@ class DashboardService:
             recent_activities: Pre-enriched activity dicts (with type name, category, etc.).
             export_packages: List of ExportPackage entities.
             today: Override for current date (useful for testing).
+            alerts: Existing full operational alert list, when already computed.
 
         Returns:
             Dictionary with all dashboard indicators.
@@ -47,18 +49,19 @@ class DashboardService:
 
         # Compute alerts. Include greenhouse names so modules with the same
         # name in different greenhouses are unambiguous in alert messages.
-        greenhouse_names_by_id = {
-            greenhouse.id: greenhouse.name
-            for greenhouse in greenhouses
-        }
-        alert_service = AlertService()
-        alerts = alert_service.compute_alerts(
-            modules=modules,
-            monitorings_by_module=monitorings_by_module,
-            export_packages=export_packages,
-            today=today,
-            greenhouse_names_by_id=greenhouse_names_by_id,
-        )
+        if alerts is None:
+            greenhouse_names_by_id = {
+                greenhouse.id: greenhouse.name
+                for greenhouse in greenhouses
+            }
+            alert_service = AlertService()
+            alerts = alert_service.compute_alerts(
+                modules=modules,
+                monitorings_by_module=monitorings_by_module,
+                export_packages=export_packages,
+                today=today,
+                greenhouse_names_by_id=greenhouse_names_by_id,
+            )
 
         # Count pending/overdue
         pending_count = sum(
@@ -109,5 +112,6 @@ class DashboardService:
             "total_detections": total_detections,
             "recent_activities": (recent_activities or [])[:5],
             "pending_exports_count": pending_exports,
+            "alert_count": len(alerts),
             "alerts": alerts[:5],
         }

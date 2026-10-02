@@ -168,6 +168,17 @@ class TestKpis:
         assert "Estado sanitario" in html
         assert "Madurez predominante" in html
 
+    def test_health_label_describes_selected_scope(self):
+        module = self._base(_kpi(health_pct_healthy=80.0, health_pct_unhealthy=20.0))
+        module["analytics_selected_module_id"] = 3
+        assert "Estado sanitario del último monitoreo" in _render(module)
+
+        all_modules = self._base(_kpi(health_pct_healthy=80.0, health_pct_unhealthy=20.0))
+        all_modules["analytics_selected_module_id"] = None
+        html = _render(all_modules)
+        assert "Estado sanitario · último de cada módulo" in html
+        assert "Evolución del porcentaje de frutos sanos por monitoreo" in html
+
     def test_fruits_delta_module(self):
         kpi = _kpi(fruits_detected=30, fruits_delta=10)
         html = _render(self._base(kpi))

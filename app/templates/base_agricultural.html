@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>{{ title or "AgriScope" }}</title>
     <link rel="stylesheet" href="/static/css/agricultural.css?v=20261002-2">
+    <link rel="stylesheet" href="/static/css/operational_alerts.css?v=20261002-1">
 </head>
 <body>
     <header class="app-header">
@@ -16,6 +17,37 @@
             <h1 class="header-title">{% block header_title %}AgriScope{% endblock %}</h1>
             <div class="header-actions">
                 {% block header_actions %}{% endblock %}
+                <details class="header-alerts" id="header-alerts" data-loaded="{{ 'true' if header_alert_count is defined else 'false' }}">
+                    <summary class="header-alerts__toggle" aria-label="Alertas operativas">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                             aria-hidden="true" focusable="false">
+                            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/>
+                            <path d="M10 21h4"/>
+                        </svg>
+                        <span class="header-alerts__badge" id="header-alert-count" {% if header_alert_count is not defined or header_alert_count == 0 %}hidden{% endif %}>{% if header_alert_count is defined and header_alert_count > 0 %}{{ '99+' if header_alert_count > 99 else header_alert_count }}{% endif %}</span>
+                    </summary>
+                    <div class="header-alerts__popover" role="region" aria-label="Alertas operativas">
+                        <h2>Alertas operativas</h2>
+                        <div id="header-alert-list">
+                            {% if header_alerts is defined %}
+                                {% if header_alerts %}
+                                    {% for alert in header_alerts %}
+                                    <div class="header-alerts__item header-alerts__item--{{ alert.severity }}">
+                                        <strong>{{ alert.title }}</strong>
+                                        <p>{{ alert.message }}</p>
+                                    </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <p class="header-alerts__empty">No hay alertas operativas pendientes.</p>
+                                {% endif %}
+                            {% else %}
+                                <p class="header-alerts__empty">Cargando alertas...</p>
+                            {% endif %}
+                        </div>
+                        <a class="header-alerts__link" href="/dashboard#informacion-operativa">Ver información operativa</a>
+                    </div>
+                </details>
                 <form method="post" action="/logout" class="logout-form">
                     <button type="submit" class="btn-logout" aria-label="Cerrar sesión">Cerrar sesión</button>
                 </form>
@@ -37,5 +69,6 @@
     </nav>
 
     {% block scripts %}{% endblock %}
+    <script src="/static/js/operational_alerts.js?v=20261002-1" defer></script>
 </body>
 </html>

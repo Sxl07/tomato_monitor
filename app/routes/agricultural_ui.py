@@ -24,6 +24,7 @@ from app.context_builders import (
     _format_date_spanish,
     _format_time,
 )
+from app.operational_alerts import load_operational_alerts
 from src.application.validators import (
     ValidationError,
     validate_greenhouse_name,
@@ -212,6 +213,16 @@ async def dashboard(request: Request, user=Depends(require_current_user_html)):
         if getattr(p, "status", None) == "pending"
     ]
 
+    # Reuse the same full alert result for the dashboard and global header.
+    full_alerts = load_operational_alerts(
+        request,
+        user,
+        greenhouses=greenhouses,
+        modules=modules,
+        monitorings_by_module=monitorings_by_module,
+        export_packages=export_packages,
+    )
+
     # Build operational context (unchanged).
     dashboard_service = DashboardService()
     context = dashboard_service.build_context(
@@ -220,6 +231,7 @@ async def dashboard(request: Request, user=Depends(require_current_user_html)):
         monitorings_by_module=monitorings_by_module,
         recent_activities=recent_activities,
         export_packages=export_packages,
+        alerts=full_alerts,
     )
 
     # --- Analytical context (Spec 024) ---
@@ -271,6 +283,8 @@ async def dashboard(request: Request, user=Depends(require_current_user_html)):
         "analytics_scope_modules": scope_modules,
         "analytics_selected_greenhouse_id": selected_greenhouse_id,
         "analytics_selected_module_id": selected_module_id,
+        "header_alert_count": len(full_alerts),
+        "header_alerts": full_alerts[:5],
         **context,
     })
 

@@ -19,6 +19,7 @@ from app.routes.agricultural_ui import router as agricultural_router
 from app.routes.monitoring_api import router as monitoring_api_router
 from app.routes.sync_api import router as sync_api_router
 from app.routes.recovery_api import router as recovery_api_router
+from app.routes.operational_alert_api import router as operational_alert_api_router
 from app.dependencies import _AuthRedirectException
 from src.application.services.log_service import LogService
 from src.infrastructure.config.logging_config import configure_logging
@@ -263,4 +264,5 @@ app.include_router(sessions_router, prefix="/sessions", tags=["sessions"])
 app.include_router(monitoring_router)
 app.include_router(monitoring_api_router)
 app.include_router(sync_api_router)
+app.include_router(operational_alert_api_router)
 app.include_router(recovery_api_router)
