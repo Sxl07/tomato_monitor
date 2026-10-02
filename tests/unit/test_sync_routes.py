@@ -1,5 +1,8 @@
 """Unit tests for sync routes (GET /sincronizacion, POST /sincronizacion/local)."""
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
 
 
@@ -47,6 +50,50 @@ class TestSyncStatusPage:
         assert "Pendientes" in response.text
         assert "Exportados" in response.text
         assert "Sincronizados" in response.text
+
+    def test_local_zip_counts_follow_current_user_hierarchy(
+        self, authenticated_client, monkeypatch
+    ):
+        """Only the current user's monitoring and activity reach ZIP status."""
+        from app.routes import agricultural_ui
+
+        greenhouse_repo = MagicMock()
+        greenhouse_repo.get_all_by_owner.return_value = [SimpleNamespace(id=10)]
+        module_repo = MagicMock()
+        module_repo.get_by_greenhouse.return_value = [SimpleNamespace(id=20)]
+        monitoring_repo = MagicMock()
+        monitoring_repo.get_by_module.return_value = [
+            SimpleNamespace(sync_status="pending")
+        ]
+        activity_repo = MagicMock()
+        activity_repo.list_by_module.return_value = [
+            SimpleNamespace(sync_status="exported")
+        ]
+
+        monkeypatch.setattr(
+            agricultural_ui, "get_greenhouse_repository", lambda request: greenhouse_repo
+        )
+        monkeypatch.setattr(
+            agricultural_ui, "get_module_repository", lambda request: module_repo
+        )
+        monkeypatch.setattr(
+            agricultural_ui, "get_monitoring_repository", lambda request: monitoring_repo
+        )
+        monkeypatch.setattr(
+            agricultural_ui, "get_activity_log_repository", lambda request: activity_repo
+        )
+
+        response = authenticated_client.get("/sincronizacion")
+
+        assert response.status_code == 200
+        assert "Monitoreos:</strong> 1 pendiente(s), 0 exportado(s)" in response.text
+        assert "Actividades:</strong> 0 pendiente(s), 1 exportado(s)" in response.text
+        greenhouse_repo.get_all_by_owner.assert_called_once_with(1)
+        module_repo.get_by_greenhouse.assert_called_once_with(10)
+        monitoring_repo.get_by_module.assert_called_once_with(20)
+        activity_repo.list_by_module.assert_called_once_with(20)
+        monitoring_repo.list_all.assert_not_called()
+        activity_repo.list_all.assert_not_called()
 
     def test_sync_page_shows_local_explanation(self, authenticated_client):
         """Sync page explains this is local ZIP sync."""

@@ -41,6 +41,25 @@ _ENTITY_MODELS: dict[str, type] = {
     "activity_log": ActivityLogModel,
 }
 
+# Each path follows the entity's foreign keys back to its greenhouse.
+_OWNER_JOINS = {
+    GreenhouseModel: (),
+    ModuleModel: (ModuleModel.greenhouse,),
+    MonitoringModel: (MonitoringModel.module, ModuleModel.greenhouse),
+    MonitoringMetricsModel: (
+        MonitoringMetricsModel.monitoring, MonitoringModel.module,
+        ModuleModel.greenhouse,
+    ),
+    SnapshotModel: (
+        SnapshotModel.monitoring, MonitoringModel.module, ModuleModel.greenhouse,
+    ),
+    InspectionResultModel: (
+        InspectionResultModel.snapshot, SnapshotModel.monitoring,
+        MonitoringModel.module, ModuleModel.greenhouse,
+    ),
+    ActivityLogModel: (ActivityLogModel.module, ModuleModel.greenhouse),
+}
+
 # Retryable sync statuses (persisted "syncing" is stale after crash/restart).
 _RETRYABLE_STATUSES = ("pending", "error", "syncing")
 
@@ -419,8 +438,8 @@ class SyncStateRepository:
         finally:
             session.close()
 
-    def get_sync_status_counts(self) -> "SyncStatusCounts":
-        """Return aggregated sync status counts across all syncable entity types.
+    def get_sync_status_counts(self, owner_user_id: int) -> "SyncStatusCounts":
+        """Return sync status counts for one greenhouse owner across all types.
 
         Counts:
         - pending_count: entities with remote_sync_status in (pending, syncing)
@@ -442,15 +461,16 @@ class SyncStateRepository:
             last_sync_at = None
 
             for model_class in _ENTITY_MODELS.values():
-                # Count by status
-                rows = (
-                    session.query(
-                        model_class.remote_sync_status,
-                        func.count(model_class.id),
-                    )
-                    .group_by(model_class.remote_sync_status)
-                    .all()
+                owned_query = session.query(model_class.id)
+                for relationship in _OWNER_JOINS[model_class]:
+                    owned_query = owned_query.join(relationship)
+                owned_query = owned_query.filter(
+                    GreenhouseModel.owner_user_id == owner_user_id
                 )
+
+                rows = owned_query.with_entities(
+                    model_class.remote_sync_status, func.count(model_class.id)
+                ).group_by(model_class.remote_sync_status).all()
 
                 for status, count in rows:
                     if status in ("pending", "syncing", None):
@@ -463,10 +483,9 @@ class SyncStateRepository:
                         pending_total += count
 
                 # Find latest last_synced_at
-                max_synced = (
-                    session.query(func.max(model_class.last_synced_at))
-                    .scalar()
-                )
+                max_synced = owned_query.with_entities(
+                    func.max(model_class.last_synced_at)
+                ).scalar()
                 if max_synced is not None:
                     if last_sync_at is None or max_synced > last_sync_at:
                         last_sync_at = max_synced

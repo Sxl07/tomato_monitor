@@ -163,6 +163,103 @@ def seeded_ids(session_factory):
     return ids
 
 
+@pytest.fixture
+def owned_sync_hierarchies(session_factory):
+    """Create all seven syncable types for two owners and a legacy root."""
+    session = session_factory()
+    activity_type = ActivityTypeModel(
+        code="scoped_status", name="Scoped status", category="mantenimiento"
+    )
+    users = [
+        UserModel(full_name=f"Owner {index}", email=f"owner{index}@test.com",
+                  password_hash="hash", role="operator")
+        for index in (1, 2)
+    ]
+    session.add_all([activity_type, *users])
+    session.flush()
+
+    timestamps = [
+        datetime(2025, 1, 1, 12, 0),
+        datetime(2025, 2, 1, 12, 0),
+        datetime(2025, 3, 1, 12, 0),
+    ]
+    statuses = [
+        ("pending", "synced", "error", "syncing", "pending", "synced", "pending"),
+        ("synced", "error", "synced", "pending", "synced", "pending", "syncing"),
+        ("error",) * 7,
+    ]
+    for index, owner_id in enumerate((users[0].id, users[1].id, None)):
+        greenhouse = GreenhouseModel(name=f"Scoped GH {index}", owner_user_id=owner_id)
+        session.add(greenhouse)
+        session.flush()
+        module = ModuleModel(greenhouse_id=greenhouse.id, name="Module")
+        session.add(module)
+        session.flush()
+        monitoring = MonitoringModel(module_id=module.id)
+        session.add(monitoring)
+        session.flush()
+        metrics = MonitoringMetricsModel(
+            monitoring_id=monitoring.id, total_tomatoes=1, healthy_count=1,
+            unhealthy_count=0, pct_healthy=100.0, pct_unhealthy=0.0,
+            snapshots_with_detections=1,
+        )
+        snapshot = SnapshotModel(
+            monitoring_id=monitoring.id, image_path=f"images/{index}.jpg",
+            frame_index=0,
+        )
+        session.add_all([metrics, snapshot])
+        session.flush()
+        inspection = InspectionResultModel(
+            snapshot_id=snapshot.id, detection_index=0,
+            bbox_x1=0, bbox_y1=0, bbox_x2=1, bbox_y2=1,
+            detection_score=0.9, health_label="healthy", health_confidence=0.9,
+        )
+        activity = ActivityLogModel(
+            module_id=module.id, activity_type_id=activity_type.id,
+            user_id=users[0].id,  # Actor is not the ownership source.
+        )
+        session.add_all([inspection, activity])
+
+        entities = (
+            greenhouse, module, monitoring, metrics, snapshot, inspection, activity
+        )
+        for entity, status in zip(entities, statuses[index]):
+            entity.remote_sync_status = status
+            entity.last_synced_at = timestamps[index]
+
+    session.commit()
+    owner_ids = (users[0].id, users[1].id)
+    session.close()
+    return owner_ids, timestamps
+
+
+def test_sync_status_counts_are_scoped_to_each_greenhouse_owner(
+    repo, owned_sync_hierarchies
+):
+    """Other users and ownerless descendants cannot affect either user's counts."""
+    (owner_a, owner_b), timestamps = owned_sync_hierarchies
+
+    counts_a = repo.get_sync_status_counts(owner_a)
+    assert (
+        counts_a.pending_count, counts_a.synced_count, counts_a.error_count
+    ) == (5, 2, 1)
+    assert counts_a.last_sync_at == timestamps[0]
+
+    counts_b = repo.get_sync_status_counts(owner_b)
+    assert (
+        counts_b.pending_count, counts_b.synced_count, counts_b.error_count
+    ) == (4, 3, 1)
+    assert counts_b.last_sync_at == timestamps[1]
+
+    counts_without_greenhouse = repo.get_sync_status_counts(999)
+    assert (
+        counts_without_greenhouse.pending_count,
+        counts_without_greenhouse.synced_count,
+        counts_without_greenhouse.error_count,
+        counts_without_greenhouse.last_sync_at,
+    ) == (0, 0, 0, None)
+
+
 # ===========================================================================
 # 5. All 7 entity types supported
 # ===========================================================================

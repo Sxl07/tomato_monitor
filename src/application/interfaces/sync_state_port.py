@@ -226,12 +226,16 @@ class SyncStatePort(Protocol):
         """
         ...
 
-    def get_sync_status_counts(self) -> "SyncStatusCounts":
-        """Return aggregated sync status counts across all syncable entities.
+    def get_sync_status_counts(self, owner_user_id: int) -> "SyncStatusCounts":
+        """Return sync status counts for entities owned by a local user.
 
         Counts entities by their remote_sync_status across all supported
         entity types (greenhouse, module, monitoring, monitoring_metrics,
-        snapshot, inspection_result, activity_log).
+        snapshot, inspection_result, activity_log) whose root greenhouse has
+        owner_user_id equal to the supplied local user id.
+
+        Args:
+            owner_user_id: Local id of the greenhouse owner.
 
         Returns:
             SyncStatusCounts with pending, synced, error counts and last_sync_at.
