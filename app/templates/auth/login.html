@@ -23,7 +23,10 @@
             </div>
             <div class="form-group" style="margin-top: 12px;">
                 <label for="password">Contraseña</label>
-                <input type="password" id="password" name="password" required autocomplete="current-password" class="form-input" style="width: 100%;">
+                <div class="password-field">
+                    <input type="password" id="password" name="password" required autocomplete="current-password" class="form-input">
+                    <button type="button" class="btn btn-secondary password-toggle" aria-controls="password" aria-label="Mostrar contraseña" aria-pressed="false" data-password-toggle>Mostrar</button>
+                </div>
             </div>
             <button type="submit" class="btn btn-primary btn-full" style="margin-top: 16px; width: 100%;">Iniciar sesión</button>
         </form>
@@ -33,5 +36,6 @@
         </p>
         {% endif %}
     </div>
+    <script src="/static/js/password_visibility.js"></script>
 </body>
 </html>

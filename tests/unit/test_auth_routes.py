@@ -1,5 +1,7 @@
 """Unit tests for authentication routes (login, logout)."""
 
+from html.parser import HTMLParser
+
 import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
@@ -466,3 +468,51 @@ class TestPostRegistroPasswordNotReflected:
                 )
 
         assert 'value="SUPER_SECRET_REGISTER_PASSWORD"' not in response.text
+
+
+class _PasswordControls(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.inputs = {}
+        self.toggles = {}
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "input" and attrs.get("type") == "password":
+            self.inputs[attrs["id"]] = attrs
+        if tag == "button" and "data-password-toggle" in attrs:
+            self.toggles[attrs["aria-controls"]] = attrs
+
+
+def test_auth_password_controls_start_masked_and_target_each_input(client):
+    login = client.get("/login", follow_redirects=False)
+    with patch("app.routes.auth.get_supabase_config", return_value="config-object"):
+        register = client.get("/registro", follow_redirects=False)
+
+    for response, expected in ((login, {"password"}),
+                               (register, {"password", "confirm_password"})):
+        assert response.status_code == 200
+        markup = _PasswordControls()
+        markup.feed(response.text)
+        assert set(markup.inputs) == set(markup.toggles) == expected
+        assert '/static/js/password_visibility.js' in response.text
+        for field_id in expected:
+            field = markup.inputs[field_id]
+            toggle = markup.toggles[field_id]
+            assert field["name"] == field_id
+            assert "value" not in field
+            assert toggle["type"] == "button"
+            assert toggle["aria-label"] == "Mostrar contraseña"
+            assert toggle["aria-pressed"] == "false"
+
+
+def test_login_error_does_not_echo_password(client):
+    secret = "SUPER_SECRET_LOGIN_PASSWORD"
+    mock_svc = _mock_hybrid_service(LoginResult(
+        success=False, auth_method="none", error_message="Credenciales incorrectas."
+    ))
+    with patch("app.routes.auth.get_hybrid_auth_service", return_value=mock_svc):
+        response = client.post("/login", data={"email": "test@example.com", "password": secret},
+                               follow_redirects=False)
+    assert response.status_code == 401
+    assert secret not in response.text

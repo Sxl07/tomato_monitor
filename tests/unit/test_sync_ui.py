@@ -142,9 +142,23 @@ class TestSyncPageLayout:
         assert remote_password_details == ()
         assert remote_password["type"] == "password"
         assert "name" not in remote_password
+        assert "value" not in remote_password
+        remote_toggles = [attrs for tag, attrs, _ in page.elements
+                          if tag == "button" and attrs.get("aria-controls") == "sync-password"]
+        assert len(remote_toggles) == 1
+        assert remote_toggles[0]["type"] == "button"
+        assert remote_toggles[0]["aria-pressed"] == "false"
+        assert remote_toggles[0]["data-password-toggle"] is None
         _, _, recovery_password, recovery_password_details = page.by_id("recovery-password")
         assert recovery_password["name"] == "password"
         assert recovery_password["type"] == "password"
+        assert "value" not in recovery_password
+        recovery_toggles = [attrs for tag, attrs, _ in page.elements
+                            if tag == "button" and attrs.get("aria-controls") == "recovery-password"]
+        assert len(recovery_toggles) == 1
+        assert recovery_toggles[0]["type"] == "button"
+        assert recovery_toggles[0]["aria-pressed"] == "false"
+        assert recovery_toggles[0]["data-password-toggle"] is None
         assert recovery_password_details == ()  # Modal remains outside closed details.
         assert sum(tag == "form" and attrs.get("id") == "cloud-recovery-form"
                    for tag, attrs, _ in page.elements) == 1
@@ -162,6 +176,7 @@ class TestSyncPageLayout:
         assert page.by_id("cloud-recovery-modal")[3] == ()
         assert '/static/js/remote_sync.js' in response.text
         assert '/static/js/cloud_recovery.js' in response.text
+        assert '/static/js/password_visibility.js' in response.text
         static_dir = Path(__file__).resolve().parents[2] / "app" / "static" / "js"
         sync_js = (static_dir / "remote_sync.js").read_text(encoding="utf-8")
         recovery_js = (static_dir / "cloud_recovery.js").read_text(encoding="utf-8")
@@ -362,12 +377,40 @@ class TestPortraitTouchTargets:
         assert response.status_code == 200
         assert "min-height: 48px" in response.text
 
-    def test_password_input_full_width(self):
-        """Password input is full-width for portrait usability."""
+    def test_password_controls_fit_portrait_width(self):
+        """Password controls share a row and retain touch-sized buttons."""
         with TestClient(app) as client:
             app.state.supabase_config = _make_supabase_config()
             response = client.get("/sincronizacion")
 
         assert response.status_code == 200
-        # Input has width: 100% for portrait-first layout
-        assert 'width: 100%' in response.text
+        assert response.text.count('class="password-field"') == 2
+        css = Path("app/static/css/agricultural.css").read_text(encoding="utf-8")
+        assert ".password-field .form-input" in css
+        assert "min-width: 0" in css
+        assert ".password-toggle" in css
+
+
+def test_remote_sync_password_cleared_only_after_success():
+    source = Path("app/static/js/remote_sync.js").read_text(encoding="utf-8")
+    trigger = source.split("function triggerSync()", 1)[1].split("// --- Init ---", 1)[0]
+
+    assert 'passwordInput.value = ""' in source
+    assert trigger.count("clearPassword()") == 1
+    assert "if (d.success) clearPassword();" in trigger
+    assert "clearPassword()" not in trigger.rsplit(".catch(function () {", 1)[-1]
+
+
+def test_password_visibility_script_has_no_storage():
+    js_dir = Path("app/static/js")
+    source = (js_dir / "password_visibility.js").read_text(encoding="utf-8")
+    assert 'document.querySelectorAll("[data-password-toggle]")' in source
+    assert 'button.getAttribute("aria-controls")' in source
+    assert 'input.type = visible ? "text" : "password"' in source
+    assert 'button.setAttribute("aria-pressed"' in source
+    assert 'button.setAttribute("aria-label"' in source
+    for name in ("password_visibility.js", "remote_sync.js", "cloud_recovery.js"):
+        script = (js_dir / name).read_text(encoding="utf-8")
+        assert all(storage not in script for storage in (
+            "localStorage", "sessionStorage", "document.cookie", "indexedDB"
+        ))

@@ -179,11 +179,20 @@ class TestRecoveryJs:
         assert "setInterval" not in js_source
         assert "pollRecovery" not in js_source
 
-    def test_password_cleared(self, js_source):
-        # A dedicated clear function assigning "" and used in finally/cancel.
+    def test_password_retained_on_failure_and_cleared_on_success_or_cancel(self, js_source):
         assert 'passwordInput.value = ""' in js_source
-        assert "clearPassword" in js_source
-        assert ".finally(" in js_source
+        close_modal = js_source.split("function closeModal()", 1)[1].split("function setSyncBlockedByRecovery", 1)[0]
+        assert "clearPassword();" in close_modal
+        trigger = js_source.split("function triggerRecovery()", 1)[1].split("// --- Wiring ---", 1)[0]
+        assert "if (result.data.success === false)" in trigger
+        assert "hideModal(); // Keep the password for a partial recovery retry." in trigger
+        assert "hideModal(); // Keep the password for retry in the same page." in trigger
+        assert "closeModal();" in trigger
+        assert "clearPassword();" not in trigger
+        assert "hideModal();" in trigger.rsplit(".catch(function () {", 1)[-1]
+        wiring = js_source.split("// --- Wiring ---", 1)[1]
+        assert "cancelBtn.addEventListener" in wiring
+        assert "closeModal();" in wiring
 
     def test_disables_controls_during_request(self, js_source):
         assert "setBusy(true)" in js_source

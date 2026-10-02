@@ -320,6 +320,24 @@ img {
     background-color: var(--color-bg);
 }
 
+/* Password visibility controls share the existing form and button styles. */
+.password-field {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+}
+
+.password-field .form-input {
+    flex: 1;
+    min-width: 0;
+}
+
+.password-toggle {
+    flex: none;
+    min-width: 76px;
+    padding: 10px 12px;
+}
+
 /* Icon button (header actions like edit, delete, add) */
 .btn-icon {
     display: inline-flex;

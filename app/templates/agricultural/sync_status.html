@@ -45,14 +45,18 @@
                     <label for="sync-password" style="display: block; margin-bottom: 8px; font-weight: 500;">
                         Contraseña para autenticación remota
                     </label>
-                    <input
-                        type="password"
-                        id="sync-password"
-                        autocomplete="current-password"
-                        placeholder="Tu contraseña"
-                        class="form-input"
-                        style="width: 100%; margin-bottom: 12px;"
-                    >
+                    <div class="password-field" style="margin-bottom: 12px;">
+                        <input
+                            type="password"
+                            id="sync-password"
+                            autocomplete="current-password"
+                            placeholder="Tu contraseña"
+                            class="form-input"
+                        >
+                        <button type="button" class="btn btn-secondary password-toggle"
+                                aria-controls="sync-password" aria-label="Mostrar contraseña"
+                                aria-pressed="false" data-password-toggle>Mostrar</button>
+                    </div>
                     <button
                         type="button"
                         id="remote-sync-btn"
@@ -181,15 +185,19 @@
                     <label for="recovery-password" style="display: block; margin-bottom: 8px; font-weight: 500;">
                         Contraseña
                     </label>
-                    <input
-                        type="password"
-                        id="recovery-password"
-                        name="password"
-                        autocomplete="current-password"
-                        placeholder="Tu contraseña"
-                        class="form-input"
-                        style="width: 100%; margin-bottom: 16px;"
-                    >
+                    <div class="password-field" style="margin-bottom: 16px;">
+                        <input
+                            type="password"
+                            id="recovery-password"
+                            name="password"
+                            autocomplete="current-password"
+                            placeholder="Tu contraseña"
+                            class="form-input"
+                        >
+                        <button type="button" class="btn btn-secondary password-toggle"
+                                aria-controls="recovery-password" aria-label="Mostrar contraseña"
+                                aria-pressed="false" data-password-toggle>Mostrar</button>
+                    </div>
 
                     <div style="display: flex; gap: 8px;">
                         <button
@@ -232,6 +240,7 @@
 
 {% block scripts %}
 {% if supabase_configured %}
+<script src="/static/js/password_visibility.js"></script>
 <script src="/static/js/remote_sync.js"></script>
 <script src="/static/js/cloud_recovery.js"></script>
 {% endif %}
