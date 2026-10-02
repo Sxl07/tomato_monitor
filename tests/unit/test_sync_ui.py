@@ -109,6 +109,8 @@ class TestSyncPageLayout:
                 response = client.get("/sincronizacion")
 
         assert response.status_code == 200
+        assert response.text.count('href="/static/css/agricultural.css?v=20261002-2"') == 1
+        assert 'href="/static/css/agricultural.css"' not in response.text
         page = _SyncPageStructure()
         page.feed(response.text)
 

@@ -61,6 +61,8 @@ class TestLoginPage:
         response = client.get("/login", follow_redirects=False)
         assert response.status_code == 200
         assert "Iniciar sesión" in response.text
+        assert response.text.count('href="/static/css/agricultural.css?v=20261002-2"') == 1
+        assert 'href="/static/css/agricultural.css"' not in response.text
 
     def test_login_page_shows_agriscope_branding(self, client):
         response = client.get("/login", follow_redirects=False)
@@ -230,6 +232,8 @@ class TestGetRegistroConfigured:
         assert 'name="email"' in response.text
         assert 'name="password"' in response.text
         assert 'name="confirm_password"' in response.text
+        assert response.text.count('href="/static/css/agricultural.css?v=20261002-2"') == 1
+        assert 'href="/static/css/agricultural.css"' not in response.text
 
     def test_shows_agriscope_branding(self, client):
         with patch("app.routes.auth.get_supabase_config", return_value="config-object"):
