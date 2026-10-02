@@ -7,6 +7,8 @@ C. Dashboard: remote pending badge appears when Supabase configured.
 D. Portrait: sync button meets minimum touch target (48px via inline style).
 """
 
+from html.parser import HTMLParser
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -48,6 +50,150 @@ def _make_supabase_config():
         publishable_key="pk_test_key",
         storage_bucket="test-bucket",
     )
+
+
+class _SyncPageStructure(HTMLParser):
+    """Record the rendered controls and their enclosing native disclosures."""
+
+    def __init__(self):
+        super().__init__()
+        self.stack = []
+        self.elements = []
+        self.summaries = []
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        disclosures = tuple(
+            item[1].get("id") for item in self.stack if item[0] == "details"
+        )
+        self.elements.append((tag, attributes, disclosures))
+        if tag not in {"area", "br", "hr", "img", "input", "link", "meta"}:
+            self.stack.append((tag, attributes))
+
+    def handle_endtag(self, tag):
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index][0] == tag:
+                del self.stack[index:]
+                break
+
+    def handle_data(self, data):
+        if self.stack and self.stack[-1][0] == "summary":
+            self.summaries.append(data.strip())
+
+    def by_id(self, element_id):
+        return next(
+            (index, tag, attrs, disclosures)
+            for index, (tag, attrs, disclosures) in enumerate(self.elements)
+            if attrs.get("id") == element_id
+        )
+
+
+def _pending_zip_status():
+    return {
+        "total_pending": 1, "total_exported": 0, "total_synced": 0,
+        "monitorings_pending": 1, "monitorings_exported": 0,
+        "monitorings_synced": 0, "activities_pending": 0,
+        "activities_exported": 0, "activities_synced": 0,
+    }
+
+
+class TestSyncPageLayout:
+    """The remote action stays visible while secondary controls collapse."""
+
+    def test_remote_first_and_existing_controls_preserved(self):
+        from src.application.services.sync_service import SyncService
+
+        with patch.object(SyncService, "compute_sync_status", return_value=_pending_zip_status()):
+            with TestClient(app) as client:
+                app.state.supabase_config = _make_supabase_config()
+                response = client.get("/sincronizacion")
+
+        assert response.status_code == 200
+        page = _SyncPageStructure()
+        page.feed(response.text)
+
+        status_index, _, _, status_details = page.by_id("remote-sync-status")
+        form_index, form_tag, _, form_details = page.by_id("remote-sync-form")
+        button_index, _, button, button_details = page.by_id("remote-sync-btn")
+        local_index, _, local, _ = page.by_id("local-export-section")
+        recovery_index, _, recovery, _ = page.by_id("cloud-recovery-section")
+        _, _, help_details, _ = page.by_id("sync-state-help")
+
+        assert status_details == form_details == button_details == ()
+        assert form_tag == "div"  # Remote sync remains JS-driven, not an HTML form.
+        assert button["type"] == "button"
+        assert status_index < form_index < button_index < local_index < recovery_index
+        assert "open" not in local and "open" not in recovery
+        assert "open" not in help_details
+        assert {"Exportación local", "Recuperación desde la nube", "Información sobre estados"} <= set(page.summaries)
+
+        local_forms = [attrs for tag, attrs, disclosures in page.elements
+                       if tag == "form" and attrs.get("action") == "/sincronizacion/local"
+                       and disclosures == ("local-export-section",)]
+        assert len(local_forms) == 1
+        assert local_forms[0]["method"] == "post"
+        assert sum(tag == "form" and attrs.get("action") == "/sincronizacion/local"
+                   for tag, attrs, _ in page.elements) == 1
+        form_actions = [attrs["action"] for tag, attrs, _ in page.elements
+                        if tag == "form" and "action" in attrs]
+        assert len(form_actions) == len(set(form_actions))
+
+        _, _, remote_password, remote_password_details = page.by_id("sync-password")
+        assert remote_password_details == ()
+        assert remote_password["type"] == "password"
+        assert "name" not in remote_password
+        _, _, recovery_password, recovery_password_details = page.by_id("recovery-password")
+        assert recovery_password["name"] == "password"
+        assert recovery_password["type"] == "password"
+        assert recovery_password_details == ()  # Modal remains outside closed details.
+        assert sum(tag == "form" and attrs.get("id") == "cloud-recovery-form"
+                   for tag, attrs, _ in page.elements) == 1
+        assert "method" not in page.by_id("cloud-recovery-form")[2]
+        assert "action" not in page.by_id("cloud-recovery-form")[2]
+
+        for element_id in (
+            "remote-sync-progress", "remote-sync-phase", "remote-sync-counter",
+            "remote-sync-result", "cloud-recovery-btn", "cloud-recovery-result",
+            "cloud-recovery-modal", "cloud-recovery-form",
+            "cloud-recovery-cancel-btn", "cloud-recovery-confirm-btn",
+        ):
+            page.by_id(element_id)
+        assert page.by_id("cloud-recovery-btn")[3] == ("cloud-recovery-section",)
+        assert page.by_id("cloud-recovery-modal")[3] == ()
+        assert '/static/js/remote_sync.js' in response.text
+        assert '/static/js/cloud_recovery.js' in response.text
+        static_dir = Path(__file__).resolve().parents[2] / "app" / "static" / "js"
+        sync_js = (static_dir / "remote_sync.js").read_text(encoding="utf-8")
+        recovery_js = (static_dir / "cloud_recovery.js").read_text(encoding="utf-8")
+        assert 'fetch("/api/sync/status"' in sync_js
+        assert all(f"data.{field}_count" in sync_js
+                   for field in ("pending", "synced", "error"))
+        assert 'fetch("/api/sync/trigger"' in sync_js
+        assert 'fetch("/api/recovery/trigger"' in recovery_js
+        assert 'method: "POST"' in sync_js and 'method: "POST"' in recovery_js
+
+    def test_local_mode_opens_its_status_and_export(self):
+        with TestClient(app) as client:
+            app.state.supabase_config = None
+            response = client.get("/sincronizacion")
+
+        assert response.status_code == 200
+        page = _SyncPageStructure()
+        page.feed(response.text)
+        _, _, local, _ = page.by_id("local-export-section")
+        assert "open" in local
+        assert "remote-sync-btn" not in response.text
+
+    def test_local_export_error_opens_disclosure(self):
+        with TestClient(app) as client:
+            app.state.supabase_config = _make_supabase_config()
+            response = client.get("/sincronizacion?error=Error+de+exportación")
+
+        assert response.status_code == 200
+        page = _SyncPageStructure()
+        page.feed(response.text)
+        assert "open" in page.by_id("local-export-section")[2]
+        assert "Error de exportación" in response.text
 
 
 # ---------------------------------------------------------------------------

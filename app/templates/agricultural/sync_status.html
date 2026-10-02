@@ -14,81 +14,12 @@
 
     <p class="text-secondary">Estado de sincronización de datos</p>
 
-    <!-- State explanations -->
-    <div class="card" style="margin-bottom: 16px;">
-        <div class="card-body">
-            <p style="margin-bottom: 8px;"><strong>Pendiente:</strong> dato aún no incluido en un respaldo local.</p>
-            <p style="margin-bottom: 8px;"><strong>Exportado:</strong> dato incluido en un paquete ZIP local.</p>
-            <p style="margin-bottom: 0;"><strong>Sincronizado:</strong> reservado para futura sincronización remota.</p>
-        </div>
-    </div>
-
     {% if error %}
     <div class="alert alert-error" role="alert">{{ error }}</div>
     {% endif %}
     {% if success_message %}
     <div class="alert alert-info" role="alert">{{ success_message }}</div>
     {% endif %}
-
-    <!-- Sync status counts (local ZIP) -->
-    <section class="dashboard-metrics">
-        <div class="metric-card">
-            <span class="metric-value">{{ sync_status.total_pending }}</span>
-            <span class="metric-label">Pendientes</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-value">{{ sync_status.total_exported }}</span>
-            <span class="metric-label">Exportados</span>
-        </div>
-        <div class="metric-card">
-            <span class="metric-value">{{ sync_status.total_synced }}</span>
-            <span class="metric-label">Sincronizados</span>
-        </div>
-    </section>
-
-    <!-- Detailed breakdown -->
-    <section class="dashboard-section">
-        <h2 class="section-header">Detalle por tipo</h2>
-        <div class="card">
-            <div class="card-body">
-                <p><strong>Monitoreos:</strong> {{ sync_status.monitorings_pending }} pendiente(s), {{ sync_status.monitorings_exported }} exportado(s), {{ sync_status.monitorings_synced }} sincronizado(s)</p>
-                <p><strong>Actividades:</strong> {{ sync_status.activities_pending }} pendiente(s), {{ sync_status.activities_exported }} exportado(s), {{ sync_status.activities_synced }} sincronizado(s)</p>
-            </div>
-        </div>
-    </section>
-
-    <!-- Last export info -->
-    <section class="dashboard-section">
-        <h2 class="section-header">Última exportación</h2>
-        {% if last_export %}
-        <div class="card">
-            <div class="card-body">
-                <p><strong>Fecha:</strong> {{ last_export.created_at | to_bogota if last_export.created_at else 'N/A' }}</p>
-                <p><strong>Estado:</strong> {{ last_export.status }}</p>
-                <p><strong>Registros:</strong> {{ last_export.records_count }}</p>
-            </div>
-        </div>
-        {% else %}
-        <p class="empty-text">No se han generado exportaciones aún.</p>
-        {% endif %}
-    </section>
-
-    <!-- Manual local sync action (ZIP) -->
-    <section class="dashboard-section">
-        <h2 class="section-header">Sincronización local</h2>
-        <div class="card">
-            <div class="card-body">
-                <p>En esta versión, la sincronización se realiza mediante un paquete ZIP local. Los registros pendientes se marcarán como exportados al generar el paquete.</p>
-                {% if sync_status.total_pending > 0 %}
-                <form method="post" action="/sincronizacion/local" style="margin-top: 12px;">
-                    <button type="submit" class="btn btn-primary">Generar paquete local</button>
-                </form>
-                {% else %}
-                <p class="empty-text" style="margin-top: 8px;">No hay registros pendientes de exportar.</p>
-                {% endif %}
-            </div>
-        </div>
-    </section>
 
     {% if supabase_configured %}
     <!-- Remote sync section -->
@@ -134,10 +65,76 @@
             </div>
         </div>
     </section>
+    {% endif %}
 
+    <details class="analytics-operational" id="local-export-section" {% if not supabase_configured or error or success_message %}open{% endif %}>
+        <summary>Exportación local</summary>
+
+        <!-- Sync status counts (local ZIP) -->
+        <section class="dashboard-metrics">
+            <div class="metric-card">
+                <span class="metric-value">{{ sync_status.total_pending }}</span>
+                <span class="metric-label">Pendientes</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-value">{{ sync_status.total_exported }}</span>
+                <span class="metric-label">Exportados</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-value">{{ sync_status.total_synced }}</span>
+                <span class="metric-label">Sincronizados</span>
+            </div>
+        </section>
+
+        <!-- Manual local sync action (ZIP) -->
+        <section class="dashboard-section">
+            <h2 class="section-header">Sincronización local</h2>
+            <div class="card">
+                <div class="card-body">
+                    <p>En esta versión, la sincronización se realiza mediante un paquete ZIP local. Los registros pendientes se marcarán como exportados al generar el paquete.</p>
+                    {% if sync_status.total_pending > 0 %}
+                    <form method="post" action="/sincronizacion/local" style="margin-top: 12px;">
+                        <button type="submit" class="btn btn-primary">Generar paquete local</button>
+                    </form>
+                    {% else %}
+                    <p class="empty-text" style="margin-top: 8px;">No hay registros pendientes de exportar.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+
+        <!-- Detailed breakdown -->
+        <section class="dashboard-section">
+            <h2 class="section-header">Detalle por tipo</h2>
+            <div class="card">
+                <div class="card-body">
+                    <p><strong>Monitoreos:</strong> {{ sync_status.monitorings_pending }} pendiente(s), {{ sync_status.monitorings_exported }} exportado(s), {{ sync_status.monitorings_synced }} sincronizado(s)</p>
+                    <p><strong>Actividades:</strong> {{ sync_status.activities_pending }} pendiente(s), {{ sync_status.activities_exported }} exportado(s), {{ sync_status.activities_synced }} sincronizado(s)</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Last export info -->
+        <section class="dashboard-section">
+            <h2 class="section-header">Última exportación</h2>
+            {% if last_export %}
+            <div class="card">
+                <div class="card-body">
+                    <p><strong>Fecha:</strong> {{ last_export.created_at | to_bogota if last_export.created_at else 'N/A' }}</p>
+                    <p><strong>Estado:</strong> {{ last_export.status }}</p>
+                    <p><strong>Registros:</strong> {{ last_export.records_count }}</p>
+                </div>
+            </div>
+            {% else %}
+            <p class="empty-text">No se han generado exportaciones aún.</p>
+            {% endif %}
+        </section>
+    </details>
+
+    {% if supabase_configured %}
     <!-- Cloud recovery section (nube -> este dispositivo) -->
-    <section class="dashboard-section" id="cloud-recovery-section">
-        <h2 class="section-header">Recuperación desde la nube</h2>
+    <details class="analytics-operational" id="cloud-recovery-section">
+        <summary>Recuperación desde la nube</summary>
         <div class="card">
             <div class="card-body">
                 <p class="text-secondary" id="cloud-recovery-description" style="margin-bottom: 12px;">
@@ -158,7 +155,7 @@
                 </button>
             </div>
         </div>
-    </section>
+    </details>
 
     <!-- Cloud recovery confirmation modal -->
     <div
@@ -217,6 +214,18 @@
         </div>
     </div>
     {% endif %}
+
+    <details class="analytics-operational" id="sync-state-help">
+        <summary>Información sobre estados</summary>
+        <!-- State explanations -->
+        <div class="card">
+            <div class="card-body">
+                <p style="margin-bottom: 8px;"><strong>Pendiente:</strong> dato aún no incluido en un respaldo local.</p>
+                <p style="margin-bottom: 8px;"><strong>Exportado:</strong> dato incluido en un paquete ZIP local.</p>
+                <p style="margin-bottom: 0;"><strong>Sincronizado:</strong> dato enviado correctamente al servicio remoto.</p>
+            </div>
+        </div>
+    </details>
 
 </div>
 {% endblock %}
