@@ -146,10 +146,10 @@ EDGE_PROFILE = ExecutionProfile(
     inference_input_width=512,
     inference_input_height=384,
     skip_maturity=True,
-    # Final V6 operating point selected from validation and deployment-development
-    # data before opening the held-out test set. Threshold 0.475 prioritizes recall
-    # for operational targets with projected max side >= 16 px.
-    detection_score_threshold=0.475,
+    # v1.0.0 frozen thesis evaluation used 0.475. This post-v1.0.0 operational
+    # refinement uses 0.60 for the live presentation to reduce low-confidence
+    # false positives.
+    detection_score_threshold=0.60,
     run_maturity_only_for_healthy=True,
     thermal_poll_interval_seconds=5.0,
     thermal_warning_temp=72.0,
