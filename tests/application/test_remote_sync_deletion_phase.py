@@ -301,7 +301,7 @@ class FakeSyncState:
     def set_storage_paths(self, snapshot_id, raw_path, annotated_path) -> None:  # pragma: no cover
         pass
 
-    def get_sync_status_counts(self) -> SyncStatusCounts:  # pragma: no cover
+    def get_sync_status_counts(self, owner_user_id: int) -> SyncStatusCounts:  # pragma: no cover
         return SyncStatusCounts()
 
 

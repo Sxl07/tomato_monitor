@@ -568,6 +568,9 @@ class TestGetSyncStatus:
         assert data["synced_count"] == 10
         assert data["error_count"] == 1
         assert data["current_progress"] is None
+        mock_sync_state_repo.get_sync_status_counts.assert_called_once_with(
+            user_with_remote_id.id
+        )
 
     def test_status_shows_progress_when_syncing(
         self, sync_runtime, mock_registry, mock_sync_state_repo, user_with_remote_id
@@ -1160,6 +1163,8 @@ class TestSyncStatusIncludesDeletionOutbox:
         data = response.json()
         assert data["pending_count"] == 1
         assert data["error_count"] == 0
+        state_repo.get_sync_status_counts.assert_called_once_with(user_with_remote_id.id)
+        assert outbox.requested_owner_user_id == user_with_remote_id.id
 
     def test_error_deletion_counted_in_pending_and_error(
         self, sync_runtime, mock_registry, user_with_remote_id
@@ -1193,6 +1198,8 @@ class TestSyncStatusIncludesDeletionOutbox:
         # entity pending(2) + 1 error deletion == 3; entity error(1) + 1 == 2.
         assert data["pending_count"] == 3
         assert data["error_count"] == 2
+        state_repo.get_sync_status_counts.assert_called_once_with(user_with_remote_id.id)
+        assert outbox.requested_owner_user_id == user_with_remote_id.id
 
 
 class TestSyncTriggerReturnsDeletionCounters:

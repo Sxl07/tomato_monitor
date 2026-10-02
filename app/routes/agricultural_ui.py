@@ -1827,8 +1827,15 @@ async def sync_status_page(request: Request, user=Depends(require_current_user_h
 
     from src.application.services.sync_service import SyncService
 
-    monitorings = monitoring_repo.list_all()
-    activity_logs = activity_log_repo.list_all()
+    # Match the current-user hierarchy used by the local ZIP export route.
+    greenhouse_repo = get_greenhouse_repository(request)
+    module_repo = get_module_repository(request)
+    monitorings = []
+    activity_logs = []
+    for greenhouse in greenhouse_repo.get_all_by_owner(user.id):
+        for module in module_repo.get_by_greenhouse(greenhouse.id):
+            monitorings.extend(monitoring_repo.get_by_module(module.id))
+            activity_logs.extend(activity_log_repo.list_by_module(module.id))
 
     sync_service = SyncService()
     sync_status = sync_service.compute_sync_status(monitorings, activity_logs)

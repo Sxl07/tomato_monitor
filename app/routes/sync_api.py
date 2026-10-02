@@ -279,7 +279,7 @@ async def get_sync_status(
         }
 
     # Counts from persistent state
-    counts = sync_state_repo.get_sync_status_counts()
+    counts = sync_state_repo.get_sync_status_counts(current_user.id)
 
     # Include Deletion_Outbox entries actually eligible for propagation
     # (get_pending_for_propagation already filters local_delete_status=='completed'
