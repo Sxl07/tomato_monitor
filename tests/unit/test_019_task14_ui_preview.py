@@ -19,6 +19,7 @@ Heavy deps (torch/detectron2/cv2/picamera2) are mocked at import so the route
 layer can be exercised without hardware. numpy is kept real for the copy check.
 """
 
+from html.parser import HTMLParser
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -54,6 +55,100 @@ def _start_client():
 
 
 class TestStartActionNoFileSelection:
+    def test_setup_keeps_camera_actions_and_optional_fields_in_one_form(self):
+        """The start action precedes collapsed optional inputs in DOM order."""
+        client = _start_client()
+        module = MagicMock(id=1, name="Módulo Test", crop_type="Tomate Cherry")
+        with patch(
+            "app.routes.agricultural_ui._module_owned_by_user", return_value=module
+        ), patch("app.routes.agricultural_ui.ModelService") as model_service:
+            model_service.return_value.check_availability.return_value.value = "available"
+            response = client.get("/modulos/1/monitoreo/nuevo")
+
+        assert response.status_code == 200
+
+        class SetupStructure(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.stack = []
+                self.elements = []
+                self.summary_text = ""
+
+            def handle_starttag(self, tag, attrs):
+                attributes = dict(attrs)
+                form = next(
+                    (item[1].get("action") for item in reversed(self.stack)
+                     if item[0] == "form"),
+                    None,
+                )
+                in_details = any(item[0] == "details" for item in self.stack)
+                self.elements.append((tag, attributes, form, in_details))
+                if tag not in {"img", "input", "link", "meta", "br"}:
+                    self.stack.append((tag, attributes))
+
+            def handle_endtag(self, tag):
+                for index in range(len(self.stack) - 1, -1, -1):
+                    if self.stack[index][0] == tag:
+                        del self.stack[index:]
+                        break
+
+            def handle_data(self, data):
+                if self.stack and self.stack[-1][0] == "summary":
+                    self.summary_text += data
+
+        structure = SetupStructure()
+        structure.feed(response.text)
+        action = "/modulos/1/monitoreo/iniciar"
+        forms = [attrs for tag, attrs, _, _ in structure.elements
+                 if tag == "form" and attrs.get("action") == action]
+        assert len(forms) == 1
+        assert forms[0]["method"] == "post"
+
+        def element_with_id(element_id):
+            return next(
+                (index, item) for index, item in enumerate(structure.elements)
+                if item[1].get("id") == element_id
+            )
+
+        preview_index, preview = element_with_id("camera-preview-img")
+        _, placeholder = element_with_id("camera-preview-placeholder")
+        _, camera_badge = element_with_id("camera-badge")
+        _, model_badge = element_with_id("model-badge")
+        refresh_index, refresh = element_with_id("btn-refresh-camera")
+        start_index, start = element_with_id("btn-start-monitoring")
+        for element in (preview, placeholder, camera_badge, model_badge, refresh, start):
+            assert element[2] == action
+        assert "src" not in preview[1]
+        assert refresh[1]["type"] == "button"
+        assert refresh[1]["onclick"] == "refreshCamera()"
+        assert start[1]["type"] == "submit"
+        assert "disabled" in start[1]
+        assert preview_index < refresh_index < start_index
+
+        fields = {}
+        for index, (tag, attrs, form, in_details) in enumerate(structure.elements):
+            if attrs.get("name") in {"width_m", "length_m", "notes"}:
+                fields[attrs["name"]] = (index, tag, form, in_details)
+        assert set(fields) == {"width_m", "length_m", "notes"}
+        assert all(index > start_index and form == action and in_details
+                   for index, _, form, in_details in fields.values())
+        assert fields["notes"][1] == "textarea"
+        assert "Detalles opcionales" in structure.summary_text
+        assert any(tag == "details" and "open" not in attrs and form == action
+                   for tag, attrs, form, _ in structure.elements)
+        assert any(tag == "a" and attrs.get("href") == "/modulos/1" and form == action
+                   for tag, attrs, form, _ in structure.elements)
+
+        # The existing MJPEG load/error and availability wiring remains intact.
+        assert 'previewImg.onload = function()' in response.text
+        assert 'previewImg.onerror = function()' in response.text
+        assert 'previewImg.src = "/api/camera/preview-stream?t=" + Date.now();' in response.text
+        assert 'fetchCameraStatus();  // diagnostics only' in response.text
+        assert 'window.refreshCamera = refreshCamera;' in response.text
+        assert 'if (cameraStatus === "available") {' in response.text
+        assert 'btnStart.disabled = false;' in response.text
+        assert 'btnStart.disabled = true;' in response.text
+
     def test_setup_page_has_no_video_file_selection(self):
         """The setup screen must not expose a manual video-file picker."""
         client = _start_client()
