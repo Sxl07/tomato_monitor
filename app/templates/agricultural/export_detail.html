@@ -26,6 +26,21 @@
         {% endif %}
     </div>
 
+    {% if package.status == 'completed' %}
+    <div class="alert alert-info" role="status" style="margin-bottom: 16px;">
+        Exportación lista para descargar. El archivo fue generado correctamente, pero aún debes descargarlo en tu dispositivo.
+    </div>
+    <div data-export-download-container>
+        <div data-export-download-actions>
+            <a href="/exportar/{{ package.id }}/descargar" class="btn btn-primary btn-full-width" data-export-download>Descargar ZIP</a>
+        </div>
+        <div class="alert alert-info" role="status" data-export-download-feedback hidden style="display: none; margin-top: 8px;">
+            <span>Descarga iniciada. Revisa la carpeta Descargas de tu dispositivo.<br>
+                Si la descarga no comenzó, <a href="/exportar/{{ package.id }}/descargar" data-export-download>descargar de nuevo</a>.</span>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Error message -->
     {% if package.status == 'error' and package.error_message %}
     <div class="alert alert-error" role="alert">
@@ -73,12 +88,11 @@
     </div>
     {% endif %}
 
-    <!-- Download button -->
-    {% if package.status == 'completed' %}
-    <a href="/exportar/{{ package.id }}/descargar" class="btn btn-primary btn-full-width">Descargar ZIP</a>
-    {% endif %}
-
     <a href="/exportar" class="btn btn-secondary btn-full-width" style="margin-top: 8px;">Volver a exportaciones</a>
 
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/export_download_feedback.js?v=20261002-1" defer></script>
 {% endblock %}

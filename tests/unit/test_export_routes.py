@@ -451,3 +451,66 @@ class TestExportDetailFeedback:
         resp = authenticated_client.get(f"/exportar/{pkg_id}")
         assert resp.status_code == 200
         assert "/eliminar" not in resp.text
+
+
+class TestExportDownloadGuidance:
+    """A generated ZIP remains a separate, retryable browser download."""
+
+    def test_generated_export_and_retry_use_existing_zip(self, authenticated_client):
+        created = authenticated_client.post("/exportar", follow_redirects=False)
+        assert created.status_code == 303
+        detail_url = created.headers["location"]
+        export_id = int(detail_url.rstrip("/").split("/")[-1])
+        download_url = f"/exportar/{export_id}/descargar"
+
+        detail = authenticated_client.get(detail_url)
+        assert detail.status_code == 200
+        assert "Exportación lista para descargar." in detail.text
+        assert "aún debes descargarlo en tu dispositivo" in detail.text
+        assert detail.text.count(f'href="{download_url}"') == 2
+        assert "Descargar ZIP" in detail.text
+        assert "Descarga iniciada. Revisa la carpeta Descargas de tu dispositivo." in detail.text
+        assert "Si la descarga no comenzó," in detail.text
+        assert "descargar de nuevo" in detail.text
+        assert "Descarga completada" not in detail.text
+        assert "Archivo descargado correctamente" not in detail.text
+
+        listing = authenticated_client.get("/exportar")
+        assert listing.status_code == 200
+        assert listing.text.count(f'href="{download_url}"') == 2
+        assert "Descargar" in listing.text
+        assert "descargar de nuevo" in listing.text
+
+        # A repeated GET uses the existing ZIP and cannot create an export.
+        from app.main import app
+        from src.infrastructure.persistence.models import ExportPackageModel
+
+        session = app.state.db_manager.get_session()
+        try:
+            before = session.query(ExportPackageModel).count()
+        finally:
+            session.close()
+        downloaded = authenticated_client.get(download_url, follow_redirects=False)
+        assert downloaded.status_code in (200, 303)
+        session = app.state.db_manager.get_session()
+        try:
+            assert session.query(ExportPackageModel).count() == before
+        finally:
+            session.close()
+
+    def test_feedback_preserves_normal_anchor_navigation(self):
+        from pathlib import Path
+
+        script = Path("app/static/js/export_download_feedback.js").read_text(encoding="utf-8")
+        detail = Path("app/templates/agricultural/export_detail.html").read_text(encoding="utf-8")
+        listing = Path("app/templates/agricultural/export_list.html").read_text(encoding="utf-8")
+
+        assert 'document.addEventListener("click"' in script
+        assert 'feedback.hidden = false' in script
+        assert 'feedback.style.display = ""' in script
+        assert "preventDefault" not in script
+        assert "fetch(" not in script
+        for template in (detail, listing):
+            assert 'data-export-download-feedback hidden style="display: none;' in template
+            assert 'data-export-download>descargar de nuevo</a>' in template
+            assert '/static/js/export_download_feedback.js?v=20261002-1' in template
