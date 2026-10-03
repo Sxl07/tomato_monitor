@@ -7,6 +7,27 @@ from app.dependencies import (
     get_monitoring_repository,
 )
 from src.application.services.alert_service import AlertService
+from src.domain.entities.operational_alert import OperationalAlert
+
+
+def format_operational_alert(alert: OperationalAlert) -> dict:
+    """Build the shared header/API presentation of one existing alert."""
+    url = None
+    if alert.alert_type in ("monitoring_pending", "monitoring_overdue"):
+        if alert.module_id is not None:
+            url = f"/modulos/{alert.module_id}"
+    elif alert.alert_type == "analysis_error":
+        if alert.monitoring_id is not None:
+            url = f"/monitoreos/{alert.monitoring_id}/reporte"
+        elif alert.module_id is not None:
+            url = f"/modulos/{alert.module_id}"
+
+    return {
+        "severity": alert.severity,
+        "title": alert.title,
+        "message": alert.message,
+        "url": url,
+    }
 
 
 def load_operational_alerts(

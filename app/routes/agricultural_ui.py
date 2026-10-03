@@ -24,7 +24,7 @@ from app.context_builders import (
     _format_date_spanish,
     _format_time,
 )
-from app.operational_alerts import load_operational_alerts
+from app.operational_alerts import format_operational_alert, load_operational_alerts
 from src.application.validators import (
     ValidationError,
     validate_greenhouse_name,
@@ -284,7 +284,7 @@ async def dashboard(request: Request, user=Depends(require_current_user_html)):
         "analytics_selected_greenhouse_id": selected_greenhouse_id,
         "analytics_selected_module_id": selected_module_id,
         "header_alert_count": len(full_alerts),
-        "header_alerts": full_alerts[:5],
+        "header_alerts": [format_operational_alert(alert) for alert in full_alerts[:5]],
         **context,
     })
 

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Request
 
 from app.dependencies import require_current_user_api
-from app.operational_alerts import load_operational_alerts
+from app.operational_alerts import format_operational_alert, load_operational_alerts
 
 
 router = APIRouter(prefix="/api/operational-alerts", tags=["operational-alerts"])
@@ -15,8 +15,5 @@ def operational_alert_status(request: Request, user=Depends(require_current_user
     alerts = load_operational_alerts(request, user)
     return {
         "count": len(alerts),
-        "alerts": [
-            {"severity": alert.severity, "title": alert.title, "message": alert.message}
-            for alert in alerts[:5]
-        ],
+        "alerts": [format_operational_alert(alert) for alert in alerts[:5]],
     }

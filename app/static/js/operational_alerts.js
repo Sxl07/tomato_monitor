@@ -30,7 +30,8 @@
 
             list.replaceChildren();
             data.alerts.forEach(function (alert) {
-                var item = document.createElement("div");
+                var item = document.createElement(alert.url ? "a" : "div");
+                if (alert.url) item.href = alert.url;
                 var severity = ["critical", "warning", "info"].includes(alert.severity)
                     ? alert.severity : "info";
                 item.className = "header-alerts__item header-alerts__item--" + severity;
