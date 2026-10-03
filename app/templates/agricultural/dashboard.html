@@ -93,7 +93,7 @@
         </div>
 
         <div class="analytics-kpi">
-            <span class="analytics-kpi__label">Estado sanitario</span>
+            <span class="analytics-kpi__label">{% if analytics_selected_module_id %}Estado sanitario del último monitoreo{% else %}Estado sanitario · último de cada módulo{% endif %}</span>
             <span class="analytics-kpi__value">
                 {% if kpis.health_pct_healthy is not none %}{{ kpis.health_pct_healthy | round(1) }} % sanos{% else %}—{% endif %}
             </span>
@@ -155,6 +155,7 @@
              aria-labelledby="tab-sanidad" data-panel="sanidad" hidden>
         <h2 class="analytics-panel__title">Sanidad</h2>
         {% if kpis.health_pct_healthy is not none %}
+        <p class="analytics-note">{% if analytics_selected_module_id %}Último monitoreo del módulo{% else %}Último monitoreo válido de cada módulo{% endif %}</p>
         <p class="analytics-health-row">
             <span class="analytics-health-row__item">Sanos {{ kpis.health_pct_healthy | round(1) }} %</span>
             <span class="analytics-health-row__item">No sanos {{ kpis.health_pct_unhealthy | round(1) }} %</span>
@@ -286,7 +287,7 @@
     {% endif %}{# greenhouses exist #}
 
     {# ================= Operational block (preserved) ================= #}
-    <details class="analytics-operational">
+    <details class="analytics-operational" id="informacion-operativa">
         <summary>Información operativa</summary>
 
         <section class="dashboard-metrics">
@@ -405,6 +406,19 @@
 
 {% block scripts %}
 <script src="/static/js/dashboard_analytics.js" defer></script>
+<script>
+(function () {
+    function openOperationalInfo() {
+        if (window.location.hash !== "#informacion-operativa") return;
+        var section = document.getElementById("informacion-operativa");
+        if (!section) return;
+        section.open = true;
+        requestAnimationFrame(function () { section.scrollIntoView({ block: "start" }); });
+    }
+    window.addEventListener("hashchange", openOperationalInfo);
+    openOperationalInfo();
+})();
+</script>
 {% if supabase_configured %}
 <script>
 (function() {

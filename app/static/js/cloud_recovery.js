@@ -11,8 +11,8 @@
  * no overwrite). This is DISTINCT from sync (local -> nube).
  *
  * No polling. No recovery-status endpoint. No background tasks. No secrets
- * stored: the password lives only in the input + POST body and is cleared in
- * every terminal path (success/error/cancel/close).
+ * stored: the password lives only in the input + POST body. Failed attempts
+ * retain it in the current page for retry; success and explicit Cancel clear it.
  */
 
 (function () {
@@ -41,9 +41,12 @@
         if (passwordInput) passwordInput.focus();
     }
 
+    function hideModal() {
+        if (modal) modal.style.display = "none";
+    }
+
     function closeModal() {
-        if (!modal) return;
-        modal.style.display = "none";
+        hideModal();
         clearPassword();
     }
 
@@ -249,10 +252,15 @@
                     });
             })
             .then(function (result) {
-                closeModal(); // also clears the password
                 if (result.ok) {
+                    if (result.data.success === false) {
+                        hideModal(); // Keep the password for a partial recovery retry.
+                    } else {
+                        closeModal();
+                    }
                     handleSuccess(result.data);
                 } else {
+                    hideModal(); // Keep the password for retry in the same page.
                     showResult(
                         mapErrorDetail(result.status, result.data.detail),
                         "alert alert-error"
@@ -260,14 +268,13 @@
                 }
             })
             .catch(function () {
-                closeModal();
+                hideModal();
                 showResult(
                     "No se pudo conectar con el servicio de recuperación.",
                     "alert alert-error"
                 );
             })
             .finally(function () {
-                clearPassword();
                 setBusy(false);
             });
     }

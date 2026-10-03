@@ -135,6 +135,7 @@ class TestDashboardServiceAlerts:
             today=date(2025, 6, 20),
         )
         assert len(ctx["alerts"]) <= 5
+        assert ctx["alert_count"] == 7
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@
  * - Triggering sync via POST /api/sync/trigger
  * - Temporary polling during active sync for progress
  * - Displaying results and errors
- * - Clearing password immediately after use
+ * - Clearing the password after a successful sync; failed attempts remain retryable
  *
  * No secrets stored. No permanent intervals. No auto-sync.
  */
@@ -191,7 +191,6 @@
             body: JSON.stringify({ password: password }),
         })
             .then(function (r) {
-                clearPassword();
                 if (r.ok) return r.json().then(function (data) { return { ok: true, data: data }; });
                 return r.json().then(function (data) { return { ok: false, status: r.status, data: data }; })
                     .catch(function () { return { ok: false, status: r.status, data: {} }; });
@@ -225,6 +224,7 @@
                     }
                     msg += " (" + d.duration_seconds.toFixed(1) + "s).";
                     showResult(msg, !d.success);
+                    if (d.success) clearPassword();
                 } else {
                     var detail = mapErrorDetail(result.status, result.data.detail);
                     showResult(detail, true);
@@ -234,7 +234,6 @@
                 fetchStatus().then(renderStatus).catch(function () {});
             })
             .catch(function () {
-                clearPassword();
                 stopPolling();
                 setButtonEnabled(true);
                 setRecoveryBlockedBySync(false);

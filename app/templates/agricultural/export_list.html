@@ -26,7 +26,7 @@
         <div class="card-list">
             {% for pkg in packages %}
             <div class="card">
-                <div class="card-body">
+                <div class="card-body" data-export-download-container>
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <div>
                             <p class="card-title">Exportación #{{ pkg.id }}</p>
@@ -48,16 +48,22 @@
                             {% endif %}
                         </div>
                     </div>
-                    <div style="margin-top: 8px; display: flex; align-items: center; gap: 8px;">
+                    <div style="margin-top: 8px; display: flex; align-items: center; gap: 8px;" data-export-download-actions>
                         <a href="/exportar/{{ pkg.id }}" class="btn btn-secondary">Ver detalle</a>
                         {% if pkg.status == 'completed' %}
-                        <a href="/exportar/{{ pkg.id }}/descargar" class="btn btn-primary">Descargar</a>
+                        <a href="/exportar/{{ pkg.id }}/descargar" class="btn btn-primary" data-export-download>Descargar</a>
                         {% endif %}
                         {% if pkg.status in ('completed', 'error') %}
                         <button type="button" class="btn-icon btn-icon--danger" aria-label="Eliminar exportación"
                                 onclick="showConfirmDialog('confirm-delete-{{ pkg.id }}')">{{ icon('delete') }}</button>
                         {% endif %}
                     </div>
+                    {% if pkg.status == 'completed' %}
+                    <div class="alert alert-info" role="status" data-export-download-feedback hidden style="display: none; margin-top: 8px;">
+                        <span>Descarga iniciada. Revisa la carpeta Descargas de tu dispositivo.<br>
+                            Si la descarga no comenzó, <a href="/exportar/{{ pkg.id }}/descargar" data-export-download>descargar de nuevo</a>.</span>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
 
@@ -78,4 +84,8 @@
     </section>
 
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/export_download_feedback.js?v=20261002-1" defer></script>
 {% endblock %}

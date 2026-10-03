@@ -33,96 +33,49 @@
     </div>
 </div>
 
-<!-- Camera Preview Section -->
-<div class="card mb-md">
-    <h2 class="section-header mt-0">Vista previa de cámara</h2>
-
-    <div id="camera-preview-container" style="background-color: var(--color-bg); border-radius: var(--border-radius); overflow: hidden; min-height: 180px; display: flex; align-items: center; justify-content: center;">
-        <img
-            id="camera-preview-img"
-            alt="Vista previa de la cámara"
-            style="width: 100%; max-height: 240px; object-fit: contain; display: none;"
-        >
-        <p id="camera-preview-placeholder" class="text-secondary text-center" style="padding: 16px;">
-            Cargando vista previa...
-        </p>
-    </div>
-
-    <!-- Status Badges -->
-    <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;">
-        <span id="camera-badge" class="alert" style="padding: 8px 12px; font-size: var(--font-size-small); min-height: auto; border-radius: 20px;">
-            Verificando cámara...
-        </span>
-        <span id="model-badge" class="alert" style="padding: 8px 12px; font-size: var(--font-size-small); min-height: auto; border-radius: 20px;">
-            {% if model_status == "available" %}
-                Modelo disponible
-            {% else %}
-                Modelo no encontrado
-            {% endif %}
-        </span>
-    </div>
-
-    <!-- Refresh Camera Button -->
-    <div style="margin-top: 12px;">
-        <button
-            type="button"
-            id="btn-refresh-camera"
-            class="btn btn-secondary"
-            onclick="refreshCamera()"
-            style="min-height: var(--touch-min); min-width: var(--touch-min);"
-        >
-            Actualizar cámara
-        </button>
-    </div>
-</div>
-
 <!-- Monitoring Form -->
 <form method="post" action="/modulos/{{ module.id }}/monitoreo/iniciar" class="form" novalidate>
-    <div class="form-row">
-        <div class="form-field">
-            <label for="width_m" class="form-label">Ancho (metros)</label>
-            <input
-                type="number"
-                id="width_m"
-                name="width_m"
-                class="form-input"
-                value="{{ width_m }}"
-                placeholder="Ej: 2.0"
-                step="0.1"
-                min="0.1"
+    <!-- Camera Preview Section -->
+    <div class="card">
+        <h2 class="section-header mt-0">Vista previa de cámara</h2>
 
-                autocomplete="off"
+        <div id="camera-preview-container" style="background-color: var(--color-bg); border-radius: var(--border-radius); overflow: hidden; min-height: 180px; display: flex; align-items: center; justify-content: center;">
+            <img
+                id="camera-preview-img"
+                alt="Vista previa de la cámara"
+                style="width: 100%; max-height: 240px; object-fit: contain; display: none;"
             >
+            <p id="camera-preview-placeholder" class="text-secondary text-center" style="padding: 16px;">
+                Cargando vista previa...
+            </p>
         </div>
 
-        <div class="form-field">
-            <label for="length_m" class="form-label">Largo (metros)</label>
-            <input
-                type="number"
-                id="length_m"
-                name="length_m"
-                class="form-input"
-                value="{{ length_m }}"
-                placeholder="Ej: 5.0"
-                step="0.1"
-                min="0.1"
-
-                autocomplete="off"
-            >
+        <!-- Status Badges -->
+        <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;">
+            <span id="camera-badge" class="alert" style="padding: 8px 12px; font-size: var(--font-size-small); min-height: auto; border-radius: 20px;">
+                Verificando cámara...
+            </span>
+            <span id="model-badge" class="alert" style="padding: 8px 12px; font-size: var(--font-size-small); min-height: auto; border-radius: 20px;">
+                {% if model_status == "available" %}
+                    Modelo disponible
+                {% else %}
+                    Modelo no encontrado
+                {% endif %}
+            </span>
         </div>
-    <p class="form-hint" style="margin-top: 4px; font-size: 14px; color: var(--color-text-secondary);">Opcional — ingresa ambas dimensiones o deja ambos campos vacíos</p>
-    </div>
 
-    <div class="form-field">
-        <label for="notes" class="form-label">Notas (opcional)</label>
-        <textarea
-            id="notes"
-            name="notes"
-            class="form-input form-textarea"
-            placeholder="Ej: Revisión después de riego"
-            rows="3"
-            autocomplete="off"
-        >{{ notes }}</textarea>
+        <!-- Refresh Camera Button -->
+        <div style="margin-top: 12px;">
+            <button
+                type="button"
+                id="btn-refresh-camera"
+                class="btn btn-secondary"
+                onclick="refreshCamera()"
+                style="min-height: var(--touch-min); min-width: var(--touch-min);"
+            >
+                Actualizar cámara
+            </button>
+        </div>
     </div>
 
     <div class="form-actions">
@@ -136,6 +89,56 @@
         </button>
         <a href="/modulos/{{ module.id }}" class="btn btn-secondary">Cancelar</a>
     </div>
+
+    <details class="analytics-operational" {% if errors %}open{% endif %}>
+        <summary>Detalles opcionales</summary>
+        <div class="form">
+            <div class="form-row">
+                <div class="form-field">
+                    <label for="width_m" class="form-label">Ancho (metros)</label>
+                    <input
+                        type="number"
+                        id="width_m"
+                        name="width_m"
+                        class="form-input"
+                        value="{{ width_m }}"
+                        placeholder="Ej: 2.0"
+                        step="0.1"
+                        min="0.1"
+                        autocomplete="off"
+                    >
+                </div>
+
+                <div class="form-field">
+                    <label for="length_m" class="form-label">Largo (metros)</label>
+                    <input
+                        type="number"
+                        id="length_m"
+                        name="length_m"
+                        class="form-input"
+                        value="{{ length_m }}"
+                        placeholder="Ej: 5.0"
+                        step="0.1"
+                        min="0.1"
+                        autocomplete="off"
+                    >
+                </div>
+            </div>
+            <p class="form-hint" style="margin-top: 4px; font-size: 14px; color: var(--color-text-secondary);">Opcional — ingresa ambas dimensiones o deja ambos campos vacíos</p>
+
+            <div class="form-field">
+                <label for="notes" class="form-label">Notas (opcional)</label>
+                <textarea
+                    id="notes"
+                    name="notes"
+                    class="form-input form-textarea"
+                    placeholder="Ej: Revisión después de riego"
+                    rows="3"
+                    autocomplete="off"
+                >{{ notes }}</textarea>
+            </div>
+        </div>
+    </details>
 </form>
 {% endblock %}
 
