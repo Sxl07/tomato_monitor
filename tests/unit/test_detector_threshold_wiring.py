@@ -106,9 +106,9 @@ def detector_mod(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 class TestProfileThresholds:
-    def test_edge_threshold_is_060(self):
+    def test_edge_threshold_is_070(self):
         from src.infrastructure.config.settings import EDGE_PROFILE
-        assert EDGE_PROFILE.detection_score_threshold == 0.60
+        assert EDGE_PROFILE.detection_score_threshold == 0.70
 
     def test_full_threshold_is_080(self):
         from src.infrastructure.config.settings import FULL_PROFILE
@@ -139,8 +139,14 @@ class TestBuildDetectorThreshold:
         assert cfg.MODEL.RETINANET.SCORE_THRESH_TEST == 0.80
 
     def test_num_classes_and_device_still_set(self, detector_mod):
-        detector_mod.build_tomato_detector(score_threshold=0.60)
+        from src.infrastructure.config.settings import EDGE_PROFILE
+
+        predictor = detector_mod.build_tomato_detector(
+            score_threshold=EDGE_PROFILE.detection_score_threshold,
+        )
         cfg = detector_mod._captured["cfg"]
+        assert predictor.cfg is cfg
+        assert cfg.MODEL.RETINANET.SCORE_THRESH_TEST == 0.70
         assert cfg.MODEL.RETINANET.NUM_CLASSES == 1
         assert cfg.MODEL.DEVICE == "cpu"
 
