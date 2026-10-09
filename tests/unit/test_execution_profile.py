@@ -145,11 +145,11 @@ class TestEdgeVsFullProfileDifferences:
         assert FULL_PROFILE.skip_maturity is False
 
     def test_detection_thresholds(self):
-        # v1.0.0 thesis evaluation used EDGE=0.475; the active EDGE=0.60 is a
+        # v1.0.0 thesis evaluation used EDGE=0.475; the active EDGE=0.70 is a
         # post-v1.0.0 live-presentation refinement. FULL remains at 0.80.
         from src.infrastructure.config.settings import EDGE_PROFILE, FULL_PROFILE
 
-        assert EDGE_PROFILE.detection_score_threshold == 0.60
+        assert EDGE_PROFILE.detection_score_threshold == 0.70
         assert FULL_PROFILE.detection_score_threshold == 0.80
 
     def test_edge_lower_thermal_warning(self):
